@@ -1,0 +1,102 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python tooling
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+coverage/
+htmlcov/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+*.log
+
+# Generated
+projects/
+output/
+preview/
+frames/
+media/
+build/
+.cache/
+.pytest_cache/
+# Voice sample mp3 files in root (test artifacts)
+manbo-*.mp3
+*.mp4
+*.mov
+*.wav
+*.zip
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Browser and test outputs
+downloads/
+browser-profile/
+playwright-report/
+test-results/
+
+# VideoForge local state
+_e2e_state.json
+jianying_drafts/
+drafts/
+
+# Local experimental workspaces
+video工作台/
+视频工作台/
+handoff/
+
+# Root-only recording experiment
+/package.json
+/package-lock.json
+/record.js
+/six-money-arrows.html
+
+# Local runtime settings and credentials
+tts_settings.json
+
+# Local agent/session state
+.agent-memory/
+.agents/
+.codex/
+.superpowers/
+
+# Local audit and temporary artifacts
+codex_*.png
+codex_*.json
+CON
+nul
+
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini

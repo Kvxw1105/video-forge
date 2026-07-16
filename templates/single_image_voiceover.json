@@ -1,0 +1,31 @@
+{
+  "id": "single_image_voiceover",
+  "name": "单图贯穿旁白模板",
+  "type": "workflow",
+  "version": "0.1",
+  "canvas": {
+    "ratio": "9:16",
+    "background": "#000000"
+  },
+  "segments": [
+    {
+      "type": "main_image",
+      "durationRule": "full_video",
+      "defaultTransform": {
+        "x": 0.5,
+        "y": 0.5,
+        "scale": 0.85,
+        "fit": "contain"
+      }
+    }
+  ],
+  "audio": {
+    "voiceover": { "api": "manbo_vip", "speed": 0 },
+    "bgm": { "volume": 0.3 }
+  },
+  "overlays": {
+    "subtitle": { "position": "bottom" },
+    "title": { "position": "top_center", "enabled": false },
+    "watermark": { "position": "top_right", "enabled": false }
+  }
+}

@@ -1,0 +1,548 @@
+import json
+import re
+import struct
+import subprocess
+from process_utils import run as run_process
+from shared.voiceover import select_active_voiceover
+import zlib
+from pathlib import Path
+from pyJianYingDraft import ScriptFile, VideoSegment, AudioSegment, TextSegment, DraftFolder, TrackType, trange, ClipSettings
+from pyJianYingDraft.keyframe import KeyframeProperty
+from pyJianYingDraft.text_segment import TextStyle
+
+from shared.render_params import (
+    subtitle_to_jianying_transform,
+    overlay_to_jianying_transform,
+    font_size_to_jianying,
+    normalize_hex,
+)
+
+
+def _iter_bgm_tracks(audio: dict):
+    """Yield normalized BGM tracks. New multi-track model wins; old single-file model is fallback."""
+    bgm = audio.get("bgm", {}) if audio else {}
+    tracks = bgm.get("tracks") or []
+    if tracks:
+        for t in tracks:
+            if t.get("file"):
+                yield {
+                    "file": t.get("file", ""),
+                    "volume": float(t.get("volume", 0.3)),
+                    "trimStart": float(t.get("trimStart", 0.0) or 0.0),
+                    "trimEnd": float(t.get("trimEnd", 0.0) or 0.0),
+                    "fadeIn": float(t.get("fadeIn", 0.0) or 0.0),
+                    "fadeOut": float(t.get("fadeOut", 0.0) or 0.0),
+                    "startAt": float(t.get("startAt", 0.0) or 0.0),
+                }
+        return
+    if bgm.get("file"):
+        yield {
+            "file": bgm.get("file", ""),
+            "volume": float(bgm.get("volume", 0.3)),
+            "trimStart": 0.0,
+            "trimEnd": 0.0,
+            "fadeIn": float(bgm.get("fadeIn", 0.0) or 0.0),
+            "fadeOut": float(bgm.get("fadeOut", 0.0) or 0.0),
+            "startAt": 0.0,
+        }
+
+
+def _track_play_window(track: dict, total_duration: float, full_duration: float) -> tuple[float, float, float]:
+    """Return (target_start, source_start, play_duration).
+
+    startAt is where audio appears in the video timeline; trimStart is where
+    audio starts inside the source file. Keep them separate.
+    """
+    target_start = max(0.0, float(track.get("startAt", 0.0) or 0.0))
+    source_start = max(0.0, float(track.get("trimStart", 0.0) or 0.0))
+    trim_end = float(track.get("trimEnd", 0.0) or 0.0)
+    source_end = trim_end if trim_end > source_start else full_duration
+    source_dur = max(0.0, source_end - source_start)
+    timeline_room = max(0.0, total_duration - target_start)
+    return round(target_start, 3), round(source_start, 3), round(min(source_dur, timeline_room), 3)
+
+
+def _active_voiceover(project: dict) -> dict:
+    """Return active playable voiceover config; empty dict if none."""
+    audio = project.get("audio", {}) if isinstance(project, dict) else {}
+    return select_active_voiceover(audio)
+
+
+def _calc_duration(project: dict) -> float:
+    """推算视频总时长：激活配音偏移 + 配音 > 片段 > 字幕 > 5s 最小值"""
+    timeline = project.get("timeline", {}) if isinstance(project, dict) else {}
+    voiceover_start_at = max(0.0, float((timeline or {}).get("voiceoverStartAt", 0.0) or 0.0))
+    vo_cfg = _active_voiceover(project)
+    vo_path = vo_cfg.get("file", "")
+    vo_dur = _get_audio_duration(Path(vo_path)) if vo_path and Path(vo_path).exists() else 0
+    seg_dur = max((s.get("end", 0) for s in project.get("segments", [])), default=0)
+    sub_dur = max((s.get("end", 0) for s in project.get("subtitles", [])), default=0)
+    return max(5.0, voiceover_start_at + vo_dur, seg_dur, voiceover_start_at + sub_dur) + 0.5
+
+
+def _resolve_path(file_path: str) -> Path | None:
+    """尝试解析文件路径，找不到返回 None"""
+    if not file_path:
+        return None
+    p = Path(file_path)
+    if p.exists():
+        return p
+    return None
+
+
+def _ensure_color_image(work_dir: Path, width: int, height: int, color: str) -> Path:
+    """Create a canvas-sized solid PNG for editable JianYing color clips."""
+    width = max(1, int(width))
+    height = max(1, int(height))
+    hex_color = normalize_hex(color)
+    try:
+        rgb = bytes.fromhex(hex_color)
+    except ValueError:
+        hex_color = "000000"
+        rgb = bytes.fromhex(hex_color)
+    output = work_dir / f"_vf_color_{width}x{height}_{hex_color}.png"
+    if output.exists() and output.stat().st_size > 0:
+        return output
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        checksum = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", checksum)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    row = b"\x00" + rgb * width
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", header)
+    png += chunk(b"IDAT", zlib.compress(row * height, level=9))
+    png += chunk(b"IEND", b"")
+    output.write_bytes(png)
+    return output
+
+
+def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_points: list | None = None) -> Path:
+    """
+    生成剪映草稿。
+
+    Args:
+        project: 项目数据 dict
+        output_dir: 输出目录。为 None 时使用 project 内的 exportSettings.outputDir。
+                     传剪映草稿目录（com.lveditor.draft）则直接生成到目标位置。
+        cue_points: 可选卡点时间表。传入后与 FFmpeg 预览使用同一套素材时间线。
+    Returns:
+        草稿文件夹路径
+    """
+    canvas = project["canvas"]
+    width = canvas["width"]
+    height = canvas["height"]
+    fps = canvas.get("fps", 30)
+
+    # 确定基础输出目录
+    if output_dir is not None:
+        base_dir = output_dir
+    else:
+        base_dir = Path(project.get("exportSettings", {}).get("outputDir", "projects/temp"))
+
+    # 草稿名称 = 项目名（sanitized）
+    raw_name = project.get("name", project.get("id", "video"))
+    safe_name = _sanitize_folder_name(raw_name)
+
+    draft_dir = base_dir / safe_name
+    draft_dir.mkdir(parents=True, exist_ok=True)
+
+    draft_folder = DraftFolder(str(base_dir))
+    script = draft_folder.create_draft(
+        safe_name,
+        width, height, fps,
+        allow_replace=True
+    )
+
+    total_duration = _calc_duration(project)
+    IMAGE_LIMIT = 6.0
+
+    # Pre-process media with brightness/contrast adjustments if needed
+    overlays = project.get("overlays", {})
+    adjustments = overlays.get("adjustments", {}) if overlays else {}
+    adj_map = _preprocess_media_with_adjustments(
+        project.get("segments", []), adjustments, draft_dir
+    )
+
+    timeline = project.get("timeline", {}) if isinstance(project, dict) else {}
+    voiceover_start_at = max(0.0, float((timeline or {}).get("voiceoverStartAt", 0.0) or 0.0))
+
+    # 1. Main image/video track
+    segments = project.get("segments", [])
+    if cue_points and segments:
+        segments = _apply_cue_points(segments, cue_points)
+    segments = _expand_segments_to_duration(segments, total_duration)
+    if segments:
+        script.add_track(TrackType.video, "main")
+        main_track = script.tracks["main"]
+        for seg in segments:
+            seg_start = seg.get("start", 0)
+            seg_end = seg.get("end", total_duration)
+            is_color_clip = seg.get("type") in {"black", "color"}
+            if is_color_clip:
+                asset_path = _ensure_color_image(
+                    draft_dir,
+                    width,
+                    height,
+                    seg.get("bgColor", "#000000"),
+                )
+            else:
+                asset_path = _resolve_path(adj_map.get(seg.get("assetPath", ""), seg.get("assetPath", "")))
+            if not asset_path:
+                continue
+
+            # Build clip_settings from segment transform
+            xf = seg.get("transform", {})
+            tx = 0.5 if is_color_clip else xf.get("x", 0.5)
+            ty = 0.5 if is_color_clip else xf.get("y", 0.5)
+            sc = 1.0 if is_color_clip else xf.get("scale", 0.85)
+            rot = 0 if is_color_clip else xf.get("rotation", 0)
+
+            # Convert to JianYing coordinate system: (0,0)=center, ±0.5=edge
+            clip = ClipSettings(
+                scale_x=sc, scale_y=sc,
+                transform_x=(tx - 0.5) * 2,  # 0.5→0(center), 0→-1(left edge)
+                transform_y=(ty - 0.5) * 2,
+                rotation=rot,
+            )
+
+            for cursor, chunk in _segment_chunks(seg, IMAGE_LIMIT):
+                v = VideoSegment(
+                    str(asset_path),
+                    target_timerange=trange(f"{cursor}s", f"{chunk}s"),
+                    clip_settings=clip,
+                )
+                script.add_material(v.material_instance)
+                main_track.add_segment(v)
+
+    # 2. BGM tracks — each track has independent timeline startAt and source trim
+    audio = project.get("audio", {})
+    bgm_tracks = list(_iter_bgm_tracks(audio))
+    if bgm_tracks:
+        script.add_track(TrackType.audio, "bgm")
+        for i, track in enumerate(bgm_tracks):
+            bgm_path = _resolve_path(track.get("file", ""))
+            if not bgm_path:
+                continue
+            full_dur = _get_audio_duration(bgm_path)
+            target_start, trim_start, play_dur = _track_play_window(track, total_duration, full_dur)
+            if play_dur <= 0:
+                continue
+            a = AudioSegment(
+                str(bgm_path),
+                target_timerange=trange(f"{target_start}s", f"{play_dur}s"),
+                source_timerange=trange(f"{trim_start}s", f"{play_dur}s"),
+                volume=max(0.0, min(1.0, float(track.get("volume", 0.3))))
+            )
+            fade_in, fade_out = _audio_fade_seconds(track, play_dur)
+            if fade_in > 0 or fade_out > 0:
+                a.add_fade(f"{fade_in}s", f"{fade_out}s")
+                script.materials.audio_fades.append(a.fade)
+            script.add_material(a.material_instance)
+            script.tracks["bgm"].add_segment(a)
+
+    # 2.5 SFX tracks — local sound effects at explicit timeline positions
+    sfx_tracks = audio.get("sfx", []) if isinstance(audio, dict) else []
+    if sfx_tracks:
+        script.add_track(TrackType.audio, "sfx")
+        for i, track in enumerate(sfx_tracks):
+            sfx_path = _resolve_path(track.get("file", ""))
+            if not sfx_path:
+                continue
+            full_dur = _get_audio_duration(sfx_path)
+            target_start, trim_start, play_dur = _track_play_window(track, total_duration, full_dur)
+            if play_dur <= 0:
+                continue
+            a = AudioSegment(
+                str(sfx_path),
+                target_timerange=trange(f"{target_start}s", f"{play_dur}s"),
+                source_timerange=trange(f"{trim_start}s", f"{play_dur}s"),
+                volume=max(0.0, min(1.0, float(track.get("volume", 0.8))))
+            )
+            script.add_material(a.material_instance)
+            script.tracks["sfx"].add_segment(a)
+
+    # 3. Voiceover track — 用当前激活配音的实际音频时长
+    voiceover_cfg = _active_voiceover(project)
+    voiceover_path = _resolve_path(voiceover_cfg.get("file", ""))
+    voiceover_vol = float(voiceover_cfg.get("volume", 1.0))
+    if voiceover_path:
+        dur = _get_audio_duration(voiceover_path)
+        if dur > 0:
+            script.add_track(TrackType.audio, "voiceover")
+            va = AudioSegment(
+                str(voiceover_path),
+                target_timerange=trange(f"{voiceover_start_at}s", f"{dur}s"),
+                volume=max(0.0, min(1.0, voiceover_vol)),
+            )
+            script.add_material(va.material_instance)
+            script.tracks["voiceover"].add_segment(va)
+
+    # 4. Subtitle track (if enabled)
+    overlays = project.get("overlays", {})
+    subtitle_enabled = overlays.get("subtitle_enabled", True) if overlays else True
+    subtitles = project.get("subtitles", [])
+    if subtitle_enabled and subtitles:
+        script.add_track(TrackType.text, "subtitles")
+        subtitle_track = script.tracks["subtitles"]
+        for sub in subtitles:
+            txt = str(sub.get("text", "")).strip()
+            if not txt:
+                continue
+            style_cfg = sub.get("style", {}) or {}
+            font_size = max(6.0, min(120.0, float(style_cfg.get("fontSize", 48))))
+            tsize = font_size_to_jianying(font_size)
+            position = style_cfg.get("position", "bottom_center")
+            _, _, horiz = position.partition("_")
+            text_align = {"left": 1, "right": 2}.get(horiz, 0)
+            subtitle_style = TextStyle(size=tsize, align=text_align, auto_wrapping=True)
+            s = max(0.0, float(sub.get("start", 0.0)) + voiceover_start_at)
+            e = max(s, float(sub.get("end", 0.0)) + voiceover_start_at)
+            ts = TextSegment(
+                txt,
+                timerange=trange(f"{s}s", f"{max(0.01, e - s)}s"),
+                style=subtitle_style,
+            )
+            transform_x, transform_y = subtitle_to_jianying_transform(position)
+            try:
+                ts.clip_settings.transform_y = transform_y
+                ts.clip_settings.transform_x = transform_x
+            except Exception:
+                pass
+            subtitle_track.add_segment(ts)
+
+    # 5. Title text
+    title_cfg = overlays.get("title", {})
+    if title_cfg.get("enabled") and title_cfg.get("text"):
+        script.add_track(TrackType.text, "title")
+        title_fs = font_size_to_jianying(
+            max(6.0, min(120.0, float(title_cfg.get("fontSize", 48))))
+        )
+        title_style = TextStyle(size=title_fs, align=0, auto_wrapping=True)
+        ts = TextSegment(title_cfg["text"], timerange=trange("0s", f"{total_duration}s"), style=title_style)
+        # Apply position
+        try:
+            tx = float(title_cfg.get("x", 0.5))
+            ty = float(title_cfg.get("y", 0.08))
+            jx, jy = overlay_to_jianying_transform(tx, ty)
+            ts.clip_settings.transform_x = jx
+            ts.clip_settings.transform_y = jy
+        except Exception:
+            pass
+        script.tracks["title"].add_segment(ts)
+
+    # 6. Watermark text
+    watermark_cfg = overlays.get("watermark", {})
+    if watermark_cfg.get("enabled") and watermark_cfg.get("text"):
+        script.add_track(TrackType.text, "watermark")
+        wm_fs = font_size_to_jianying(
+            max(4.0, min(60.0, float(watermark_cfg.get("fontSize", 24))))
+        )
+        wm_style = TextStyle(size=wm_fs, align=2, auto_wrapping=True)  # align=2: right
+        ws = TextSegment(watermark_cfg["text"], timerange=trange("0s", f"{total_duration}s"), style=wm_style)
+        # Apply position
+        try:
+            wx = float(watermark_cfg.get("x", 0.85))
+            wy = float(watermark_cfg.get("y", 0.92))
+            jx, jy = overlay_to_jianying_transform(wx, wy)
+            ws.clip_settings.transform_x = jx
+            ws.clip_settings.transform_y = jy
+        except Exception:
+            pass
+        script.tracks["watermark"].add_segment(ws)
+
+    # 6.5 Directory progress — editable text, with position keyframes when supported.
+    # ponytail: no full keyframe editor; just start/end X over the active voiceover range.
+    dp_cfg = overlays.get("directoryProgress", {})
+    vo_dur = _get_audio_duration(voiceover_path) if voiceover_path else 0
+    if dp_cfg.get("enabled") and dp_cfg.get("text") and vo_dur > 0:
+        script.add_track(TrackType.text, "directory_progress")
+        fs = font_size_to_jianying(max(8.0, min(80.0, float(dp_cfg.get("fontSize", 22) or 22))))
+        style = TextStyle(size=fs, align=0, auto_wrapping=False)
+        start_x = float(dp_cfg.get("startX", -0.35) or -0.35)
+        end_x = float(dp_cfg.get("endX", 1.05) or 1.05)
+        y = float(dp_cfg.get("y", 0.94) or 0.94)
+        clip = ClipSettings(transform_x=(start_x - 0.5) * 2, transform_y=(y - 0.5) * 2)
+        ds = TextSegment(
+            str(dp_cfg.get("text", "")),
+            timerange=trange(f"{voiceover_start_at}s", f"{vo_dur}s"),
+            style=style,
+            clip_settings=clip,
+        )
+        try:
+            ds.add_keyframe(KeyframeProperty.position_x, "0s", (start_x - 0.5) * 2)
+            ds.add_keyframe(KeyframeProperty.position_x, f"{vo_dur}s", (end_x - 0.5) * 2)
+        except Exception:
+            pass  # fallback: fixed editable text if this pyJianYingDraft version changes
+        script.tracks["directory_progress"].add_segment(ds)
+
+    # 7. Save draft
+    script.save()
+
+    # 如果直接导出到剪映草稿目录，修正 draft_meta_info.json 的路径
+    if output_dir is not None:
+        _fix_meta_paths(draft_dir, safe_name)
+
+    return draft_dir
+
+
+def _expand_segments_to_duration(segments: list[dict], target_duration: float) -> list[dict]:
+    if not segments or target_duration <= 0:
+        return []
+    source = []
+    for seg in segments:
+        duration = float(seg.get("end", 0)) - float(seg.get("start", 0))
+        if duration > 0:
+            source.append((seg, duration))
+    if not source:
+        return []
+    out = []
+    cursor = 0.0
+    idx = 0
+    max_items = max(1, min(10000, int(target_duration / 0.05) + len(source) + 2))
+    while cursor < target_duration - 1e-6 and len(out) < max_items:
+        seg, source_duration = source[idx % len(source)]
+        dur = min(source_duration, target_duration - cursor)
+        item = dict(seg)
+        item["start"] = cursor
+        item["end"] = cursor + dur
+        out.append(item)
+        cursor += dur
+        idx += 1
+    return out
+
+
+def _audio_fade_seconds(track: dict, duration: float) -> tuple[float, float]:
+    """Clamp fade-in/out so fade durations never exceed the audio segment length."""
+    fade_in = max(0.0, float(track.get("fadeIn", 0.0) or 0.0))
+    fade_out = max(0.0, float(track.get("fadeOut", 0.0) or 0.0))
+    if duration <= 0:
+        return 0.0, 0.0
+    if fade_in + fade_out > duration:
+        scale = duration / (fade_in + fade_out)
+        fade_in *= scale
+        fade_out *= scale
+    return round(fade_in, 3), round(fade_out, 3)
+
+
+def _apply_cue_points(segments: list[dict], cue_points: list[dict]) -> list[dict]:
+    """Apply cue-point timing to source segments without changing their order/assets."""
+    out = []
+    for i, seg in enumerate(segments):
+        if i >= len(cue_points):
+            break
+        cp = cue_points[i]
+        start = float(cp.get("time", seg.get("start", 0)) or 0.0)
+        duration = float(cp.get("duration", 0) or 0.0)
+        if duration <= 0:
+            duration = float(seg.get("end", 0)) - float(seg.get("start", 0))
+        if duration <= 0:
+            continue
+        item = dict(seg)
+        item["start"] = start
+        item["end"] = start + duration
+        out.append(item)
+    return out
+
+
+def _segment_chunks(seg: dict, image_limit: float = 6.0) -> list[tuple[float, float]]:
+    """Return (timeline_start, duration) chunks. Images are split for JianYing; videos stay whole."""
+    start = float(seg.get("start", 0) or 0)
+    end = float(seg.get("end", start) or start)
+    remaining = max(0.0, end - start)
+    if remaining <= 0:
+        return []
+    if seg.get("type") == "video":
+        return [(start, remaining)]
+    out = []
+    cursor = start
+    while remaining > 0:
+        chunk = min(remaining, image_limit)
+        out.append((cursor, chunk))
+        cursor += chunk
+        remaining -= chunk
+    return out
+
+
+def _sanitize_folder_name(name: str) -> str:
+    """把项目名变成合法的文件夹名"""
+    s = re.sub(r'[<>:"/\\|?*]', '_', name)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s or "untitled"
+
+
+def _fix_meta_paths(draft_dir: Path, draft_name: str):
+    """修正 draft_meta_info.json 中的路径字段"""
+    meta_file = draft_dir / "draft_meta_info.json"
+    if not meta_file.exists():
+        return
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        meta["draft_fold_path"] = str(draft_dir.resolve()).replace("\\", "/")
+        meta["draft_name"] = draft_name
+        meta["draft_root_path"] = str(draft_dir.parent.resolve()).replace("\\", "/")
+        meta_file.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass  # 不阻塞导出
+
+
+def _get_audio_duration(path: Path) -> float:
+    """用 ffprobe 获取音频文件时长（秒），失败返回 0"""
+    try:
+        r = run_process(
+            ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_streams', str(path)],
+            capture_output=True, text=True, timeout=10
+        )
+        data = json.loads(r.stdout)
+        for s in data.get('streams', []):
+            dur = s.get('duration')
+            if dur:
+                return float(dur)
+    except Exception:
+        pass
+    # fallback: 看文件大小和默认比特率估算
+    size = path.stat().st_size
+    return max(1.0, size / 16000)  # ~16KB/s for mp3
+
+
+def _fmt_time(seconds: float) -> str:
+    """秒 → SRT 时间格式 HH:MM:SS,mmm"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds - int(seconds)) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _preprocess_media_with_adjustments(segments: list[dict], adjustments: dict, work_dir: Path) -> dict[str, str]:
+    """用 FFmpeg 给素材预处理亮度/对比度，返回 {原路径: 调整后路径} 映射。"""
+    brightness = float(adjustments.get("brightness", 0))
+    contrast = float(adjustments.get("contrast", 1))
+    if brightness == 0 and contrast == 1:
+        return {}  # 无调整，不需要预处理
+
+    mapping = {}
+    eq_filter = f"eq=brightness={brightness}:contrast={contrast}"
+    for seg in segments:
+        src = seg.get("assetPath", "")
+        if not src or src in mapping:
+            continue
+        src_path = Path(src)
+        if not src_path.exists():
+            continue
+        # 图片直接加滤镜输出 PNG；视频用 -vf 输出 MP4
+        is_video = src_path.suffix.lower() in {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+        out_name = f"_adj_{src_path.stem}{src_path.suffix if is_video else '.png'}"
+        out_path = work_dir / out_name
+        cmd = ["ffmpeg", "-y", "-i", str(src_path), "-vf", eq_filter]
+        if is_video:
+            cmd.extend(["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-an"])
+        cmd.append(str(out_path))
+        try:
+            r = run_process(cmd, capture_output=True, timeout=60, encoding="utf-8", errors="replace")
+            if r.returncode == 0 and out_path.exists():
+                mapping[src] = str(out_path)
+        except Exception:
+            pass  # 预处理失败，用原文件
+    return mapping

@@ -1,0 +1,26 @@
+{
+  "name": "auto-demo",
+  "description": "示例：从零创建一个竖屏短视频并导出到剪映",
+  "steps": [
+    {
+      "cmd": "create",
+      "args": {"name": "auto-demo", "ratio": "9:16"}
+    },
+    {
+      "cmd": "upload",
+      "args": {"pid": "$prev.id", "file_path": "D:/A-Project/video-forge/test_img.png"}
+    },
+    {
+      "cmd": "voiceover",
+      "args": {
+        "pid": "$prev.id",
+        "text": "这是 vforge 工作流示例。AI Agent 接管后，可以一键生成视频。",
+        "engine": "edge"
+      }
+    },
+    {
+      "cmd": "render",
+      "args": {"pid": "$prev.id"}
+    }
+  ]
+}

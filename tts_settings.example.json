@@ -1,0 +1,17 @@
+{
+  "engine": "edge",
+  "edgeVoice": "zh-CN-XiaoxiaoNeural",
+  "edgeRate": "+0%",
+  "edgePitch": "+0Hz",
+  "manboApiUrl": "",
+  "manboApiKey": "",
+  "fishApiKey": "",
+  "fishReferenceId": "",
+  "fishModel": "s2.1-pro-free",
+  "fishSpeed": 1.0,
+  "fishVoicePresets": [],
+  "customApiUrl": "",
+  "customApiKey": "",
+  "customVoice": "",
+  "customSpeed": 1.0
+}
