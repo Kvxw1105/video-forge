@@ -1,11 +1,15 @@
 import json
 import re
+import shutil
 import struct
 import subprocess
 from process_utils import run as run_process
 from shared.voiceover import select_active_voiceover
 import zlib
 from pathlib import Path
+from dataclasses import dataclass
+from datetime import datetime
+from uuid import uuid4
 from pyJianYingDraft import ScriptFile, VideoSegment, AudioSegment, TextSegment, DraftFolder, TrackType, trange, ClipSettings
 from pyJianYingDraft.keyframe import KeyframeProperty
 from pyJianYingDraft.text_segment import TextStyle
@@ -118,7 +122,92 @@ def _ensure_color_image(work_dir: Path, width: int, height: int, color: str) -> 
     return output
 
 
-def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_points: list | None = None) -> Path:
+@dataclass(frozen=True)
+class DraftWriteResult:
+    policy: str
+    final_path: Path
+    source_draft: str | None = None
+    backup_path: Path | None = None
+    revision: int | None = None
+    warnings: tuple[str, ...] = ()
+
+    def to_metadata(self) -> dict:
+        return {"policy": self.policy, "draftName": self.final_path.name,
+                "finalDraftName": self.final_path.name, "finalPath": str(self.final_path.resolve()),
+                "sourceDraft": self.source_draft, "revision": self.revision,
+                "backupPath": str(self.backup_path.resolve()) if self.backup_path else None,
+                "warnings": list(self.warnings)}
+
+    def __getattr__(self, name):
+        return getattr(self.final_path, name)
+
+
+def _rename_directory(source: Path, target: Path) -> Path:
+    return source.rename(target)
+
+
+def _validate_source_draft(base_dir: Path, source_draft: str | None) -> Path:
+    if not isinstance(source_draft, str) or not source_draft or source_draft in {".", ".."}:
+        raise ValueError("replace_explicit requires a source_draft folder name")
+    if "/" in source_draft or "\\" in source_draft or ".." in source_draft:
+        raise ValueError("source_draft must be a single folder name")
+    root = base_dir.resolve()
+    target = (root / source_draft).resolve()
+    if target.parent != root or not (target / "draft_content.json").is_file():
+        raise ValueError("source_draft must name an existing JianYing draft")
+    return target
+
+
+def _next_versioned_name(base_dir: Path, raw_name: str) -> tuple[str, int]:
+    safe_name = _sanitize_folder_name(raw_name)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    revision = 1
+    while (base_dir / f"{safe_name}_{stamp}_r{revision}").exists():
+        revision += 1
+    return f"{safe_name}_{stamp}_r{revision}", revision
+
+
+def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_points: list | None = None, *, policy: str = "create_new", source_draft: str | None = None, direct_export: bool = False) -> DraftWriteResult:
+    if policy not in {"create_new", "replace_explicit"}:
+        raise ValueError("policy must be create_new or replace_explicit")
+    if policy == "replace_explicit" and not direct_export:
+        raise ValueError("replace_explicit is only supported by direct JianYing export")
+    base_dir = Path(output_dir) if output_dir is not None else Path(project.get("exportSettings", {}).get("outputDir", "projects/temp"))
+    base_dir.mkdir(parents=True, exist_ok=True)
+    source_path = _validate_source_draft(base_dir, source_draft) if policy == "replace_explicit" else None
+    raw_name = project.get("name", project.get("id", "video"))
+    final_name, revision = _next_versioned_name(base_dir, raw_name) if policy == "create_new" else (source_path.name, None)
+    staging_root = base_dir / f".videoforge-staging-{uuid4().hex}"
+    published = False
+    try:
+        staging_root.mkdir()
+        staged_draft = _render_jianying_draft(project, staging_root, final_name, cue_points)
+        if policy == "create_new":
+            final_path = base_dir / final_name
+            _rename_directory(staged_draft, final_path)
+            backup_path = None
+        else:
+            backup_path = base_dir / f"{source_path.name}.videoforge-backup-{datetime.now().strftime('%Y%m%d_%H%M%S')}-{uuid4().hex[:8]}"
+            _rename_directory(source_path, backup_path)
+            try:
+                _rename_directory(staged_draft, source_path)
+                final_path = source_path
+            except Exception:
+                _rename_directory(backup_path, source_path)
+                raise
+        _fix_meta_paths(final_path, final_name)
+        published = True
+        return DraftWriteResult(policy, final_path, source_draft if policy == "replace_explicit" else None, backup_path, revision)
+    finally:
+        if staging_root.exists():
+            shutil.rmtree(staging_root, ignore_errors=True)
+        if policy == "create_new" and not published:
+            final_path = base_dir / final_name
+            if final_path.exists():
+                shutil.rmtree(final_path, ignore_errors=True)
+
+
+def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_points: list | None = None) -> Path:
     """
     生成剪映草稿。
 
@@ -136,23 +225,15 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     fps = canvas.get("fps", 30)
 
     # 确定基础输出目录
-    if output_dir is not None:
-        base_dir = output_dir
-    else:
-        base_dir = Path(project.get("exportSettings", {}).get("outputDir", "projects/temp"))
-
     # 草稿名称 = 项目名（sanitized）
-    raw_name = project.get("name", project.get("id", "video"))
-    safe_name = _sanitize_folder_name(raw_name)
-
     draft_dir = base_dir / safe_name
-    draft_dir.mkdir(parents=True, exist_ok=True)
+    draft_dir.mkdir(parents=True, exist_ok=False)
 
     draft_folder = DraftFolder(str(base_dir))
     script = draft_folder.create_draft(
         safe_name,
         width, height, fps,
-        allow_replace=True
+        allow_replace=False
     )
 
     total_duration = _calc_duration(project)
@@ -381,9 +462,6 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     script.save()
 
     # 如果直接导出到剪映草稿目录，修正 draft_meta_info.json 的路径
-    if output_dir is not None:
-        _fix_meta_paths(draft_dir, safe_name)
-
     return draft_dir
 
 

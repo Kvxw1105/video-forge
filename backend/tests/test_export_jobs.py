@@ -1,6 +1,10 @@
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -50,7 +54,9 @@ def test_start_export_jianying_direct_returns_job_result(monkeypatch, tmp_path):
     monkeypatch.setattr(
         export,
         "generate_jianying_draft",
-        lambda project, output_dir=None, cue_points=None: draft_dir,
+        lambda project, output_dir=None, cue_points=None, **kwargs: SimpleNamespace(
+            to_metadata=lambda: {"draftName": draft_dir.name, "finalPath": str(draft_dir)},
+        ),
     )
 
     response = export.start_export_jianying_direct("proj_test")
@@ -60,3 +66,10 @@ def test_start_export_jianying_direct_returns_job_result(monkeypatch, tmp_path):
     assert result["status"] == "succeeded"
     assert result["result"]["status"] == "ok"
     assert result["result"]["draft_name"] == "draft_1"
+
+
+def test_zip_export_rejects_replace_explicit_policy():
+    with pytest.raises(HTTPException, match="replace_explicit is only supported by direct JianYing export") as error:
+        export.export_jianying("proj_test", policy="replace_explicit")
+
+    assert error.value.status_code == 400
