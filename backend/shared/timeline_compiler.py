@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Callable
 
@@ -17,6 +18,14 @@ SUPPORTED_VISUAL_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
 
 
 @dataclass(frozen=True)
+class CompiledKeyframe:
+    property: str
+    time: float
+    value: float
+    easing: str = "linear"
+
+
+@dataclass(frozen=True)
 class CompiledVisualClip:
     id: str
     asset_path: str
@@ -28,6 +37,7 @@ class CompiledVisualClip:
     animation: dict | None
     source_start: float = 0.0
     bg_color: str | None = None
+    keyframes: tuple[CompiledKeyframe, ...] = ()
 
     def to_segment(self) -> dict:
         segment = {
@@ -42,6 +52,11 @@ class CompiledVisualClip:
         }
         if self.bg_color is not None:
             segment["bgColor"] = self.bg_color
+        if self.keyframes:
+            segment["keyframes"] = [
+                {"property": item.property, "time": item.time, "value": item.value, "easing": item.easing}
+                for item in self.keyframes
+            ]
         return segment
 
 
@@ -134,7 +149,7 @@ def compile_project_timeline(
     content_duration = max(content_duration, pattern_end)
     tail_padding = 0.5
     total_duration = round(content_duration + tail_padding, 6)
-    visual_clips = _expand_visuals(pattern, content_duration)
+    visual_clips = _expand_visuals(pattern, content_duration, warnings)
     bgm_clips = _compile_audio_tracks(audio.get("bgm") or {}, total_duration, duration_resolver, warnings, "bgm")
     sfx_clips = _compile_audio_tracks(audio.get("sfx") or [], total_duration, duration_resolver, warnings, "sfx")
 
@@ -309,7 +324,61 @@ def _validate_visual_sources(
     return valid
 
 
-def _expand_visuals(pattern: list[dict], target: float) -> list[CompiledVisualClip]:
+SUPPORTED_VISUAL_KEYFRAME_PROPERTIES = {
+    "position_x", "position_y", "scale_x", "scale_y", "rotation", "opacity",
+}
+_KEYFRAME_TIME_EPSILON = 1e-6
+
+
+def _compile_visual_keyframes(
+    raw_keyframes: list, clip_duration: float, warnings: list[str], clip_id: str,
+) -> tuple[CompiledKeyframe, ...]:
+    if not raw_keyframes:
+        return ()
+    dedup: dict[tuple[str, float], CompiledKeyframe] = {}
+    for raw in raw_keyframes:
+        if not isinstance(raw, dict):
+            warnings.append(f"Clip {clip_id} has invalid keyframe object")
+            continue
+        property_name = raw.get("property")
+        if property_name not in SUPPORTED_VISUAL_KEYFRAME_PROPERTIES:
+            warnings.append(f"Clip {clip_id} has unsupported keyframe property: {property_name}")
+            continue
+        try:
+            time = float(raw.get("time"))
+        except (TypeError, ValueError):
+            warnings.append(f"Clip {clip_id} keyframe {property_name} has invalid time")
+            continue
+        if not math.isfinite(time) or time < 0 or time > clip_duration + _KEYFRAME_TIME_EPSILON:
+            warnings.append(f"Clip {clip_id} keyframe {property_name} time is outside clip duration")
+            continue
+        if abs(time - clip_duration) <= _KEYFRAME_TIME_EPSILON:
+            time = clip_duration
+        try:
+            value = float(raw.get("value"))
+        except (TypeError, ValueError):
+            warnings.append(f"Clip {clip_id} keyframe {property_name} has invalid value")
+            continue
+        if not math.isfinite(value):
+            warnings.append(f"Clip {clip_id} keyframe {property_name} value is not finite")
+            continue
+        if property_name in {"scale_x", "scale_y"} and value <= 0:
+            warnings.append(f"Clip {clip_id} keyframe {property_name} value must be positive")
+            continue
+        if property_name == "opacity":
+            clamped = max(0.0, min(1.0, value))
+            if clamped != value:
+                warnings.append(f"Clip {clip_id} keyframe opacity was clamped to [0, 1]")
+            value = clamped
+        easing = str(raw.get("easing", "linear") or "linear")
+        if easing != "linear":
+            warnings.append(f"Clip {clip_id} keyframe {property_name} uses unsupported easing: {easing}")
+            easing = "linear"
+        dedup[(property_name, round(time, 6))] = CompiledKeyframe(property_name, round(time, 6), value, easing)
+    return tuple(sorted(dedup.values(), key=lambda item: (item.property, item.time)))
+
+
+def _expand_visuals(pattern: list[dict], target: float, warnings: list[str]) -> list[CompiledVisualClip]:
     sources = [segment for segment in pattern if float(segment.get("end", 0) or 0) > float(segment.get("start", 0) or 0)]
     if not sources:
         return []
@@ -329,6 +398,21 @@ def _expand_visuals(pattern: list[dict], target: float) -> list[CompiledVisualCl
             duration = max(0.0, end - start)
             if duration <= 0:
                 continue
+            semantic_start = float(segment.get("start", 0) or 0)
+            semantic_duration = max(0.0, float(segment.get("end", 0) or 0) - semantic_start)
+            semantic_keyframes = _compile_visual_keyframes(
+                segment.get("keyframes") or [], semantic_duration, warnings, str(segment.get("id", "clip"))
+            )
+            local_offset = start - (offset + semantic_start)
+            child_keyframes = tuple(
+                item for item in semantic_keyframes
+                if item.time >= local_offset - _KEYFRAME_TIME_EPSILON
+                and item.time <= local_offset + duration + _KEYFRAME_TIME_EPSILON
+            )
+            child_keyframes = tuple(
+                CompiledKeyframe(item.property, round(item.time - local_offset, 6), item.value, item.easing)
+                for item in child_keyframes
+            )
             clips.append(CompiledVisualClip(
                 id=f"{segment.get('id', 'clip')}__c{cycle}_p{position}",
                 asset_path=str(segment.get("assetPath", "") or ""),
@@ -338,6 +422,7 @@ def _expand_visuals(pattern: list[dict], target: float) -> list[CompiledVisualCl
                 animation=deepcopy(segment.get("animation")),
                 source_start=float(segment.get("sourceStart", 0) or 0),
                 bg_color=segment.get("bgColor"),
+                keyframes=child_keyframes,
             ))
         cycle += 1
     return clips

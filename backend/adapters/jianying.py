@@ -5,6 +5,8 @@ import struct
 import subprocess
 from process_utils import run as run_process
 from shared.timeline_compiler import CompiledTimeline, compile_project_timeline
+from shared.timeline_compiler import CompiledKeyframe
+from adapters.jianying_keyframes import apply_keyframes_to_video_segment, lower_keyframes_for_segment
 from shared.media_probe import probe_media_duration
 import zlib
 from pathlib import Path
@@ -267,6 +269,22 @@ def _render_jianying_draft(
                 target_timerange=trange(f"{seg_start}s", f"{duration}s"),
                 clip_settings=clip,
             )
+            raw_keyframes = tuple(
+                CompiledKeyframe(
+                    str(item.get("property")), float(item.get("time", 0)),
+                    float(item.get("value", 0)), str(item.get("easing", "linear") or "linear"),
+                )
+                for item in (seg.get("keyframes") or [])
+            )
+            keyframe_warnings: list[str] = []
+            lowered_keyframes = lower_keyframes_for_segment(
+                semantic_keyframes=raw_keyframes,
+                semantic_duration=float(seg.get("_semanticDuration", duration) or duration),
+                child_start=float(seg.get("_semanticOffset", 0) or 0),
+                child_duration=duration,
+                warnings=keyframe_warnings,
+            )
+            apply_keyframes_to_video_segment(v, lowered_keyframes, keyframe_warnings)
             script.add_material(v.material_instance)
             main_track.add_segment(v)
 
@@ -449,6 +467,8 @@ def _lower_jianying_visual_segments(
             item = dict(segment)
             item["id"] = f"{segment.get('id', 'clip')}__jy{part}"
             item["start"], item["end"] = cursor, part_end
+            item["_semanticOffset"] = round(cursor - start, 6)
+            item["_semanticDuration"] = round(end - start, 6)
             lowered.append(item)
             cursor = part_end
             part += 1
