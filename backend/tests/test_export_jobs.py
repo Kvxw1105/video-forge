@@ -92,6 +92,7 @@ def test_zip_export_returns_safe_draft_metadata_headers(monkeypatch, tmp_path):
             final_path=draft_dir,
             policy="create_new",
             revision=3,
+            warnings=("one", "two"),
         ),
     )
 
@@ -100,6 +101,7 @@ def test_zip_export_returns_safe_draft_metadata_headers(monkeypatch, tmp_path):
     assert response.headers["X-VideoForge-Policy"] == "create_new"
     assert response.headers["X-VideoForge-Draft-Name"] == "draft_1"
     assert response.headers["X-VideoForge-Revision"] == "3"
+    assert response.headers["X-VideoForge-Warnings-Count"] == "2"
     assert "X-VideoForge-Final-Path" not in response.headers
 
 

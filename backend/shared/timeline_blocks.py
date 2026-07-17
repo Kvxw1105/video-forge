@@ -14,6 +14,7 @@ def build_segments_from_blocks(
     total_duration: float,
     *,
     default_per_asset_duration: float = 1.0,
+    warnings: list[str] | None = None,
 ) -> list[dict]:
     if total_duration <= 0:
         return []
@@ -46,6 +47,17 @@ def build_segments_from_blocks(
         source = block.get("source", "all")
         pool = [a for a in assets if source == "all" or (source == "images" and a.get("type") == "image") or (source == "videos" and a.get("type") == "video")]
         if not pool:
+            out.append({
+                "id": f"seg_block_fallback_{block_index}",
+                "assetPath": "",
+                "type": "black",
+                "start": cursor,
+                "end": cursor + block_dur,
+                "transform": {"x": 0.5, "y": 0.5, "scale": 1, "rotation": 0, "fit": "stretch"},
+                "bgColor": block.get("bgColor", "#000000"),
+            })
+            if warnings is not None:
+                warnings.append(f"Timeline block {block_index} has no matching visual assets; using black fallback")
             cursor += block_dur
             continue
         if block.get("mode", "random") == "ordered":

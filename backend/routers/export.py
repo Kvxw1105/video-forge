@@ -126,6 +126,7 @@ def export_jianying(project_id: str, cue_mode: str | None = None, policy: str = 
                 "X-VideoForge-Policy": result.policy,
                 "X-VideoForge-Draft-Name": quote(result.final_path.name, safe=""),
                 "X-VideoForge-Revision": str(result.revision),
+                "X-VideoForge-Warnings-Count": str(len(result.warnings)),
             }
         )
         shutil.rmtree(draft_dir, ignore_errors=True)

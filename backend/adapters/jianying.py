@@ -5,7 +5,7 @@ import struct
 import subprocess
 from process_utils import run as run_process
 from shared.voiceover import select_active_voiceover
-from shared.timeline_compiler import compile_project_timeline
+from shared.timeline_compiler import CompiledTimeline, compile_project_timeline
 import zlib
 from pathlib import Path
 from dataclasses import dataclass
@@ -143,6 +143,10 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     base_dir = Path(output_dir) if output_dir is not None else Path(project.get("exportSettings", {}).get("outputDir", "projects/temp"))
     base_dir.mkdir(parents=True, exist_ok=True)
     source_path = _validate_source_draft(base_dir, source_draft) if policy == "replace_explicit" else None
+    compiled = compile_project_timeline(
+        project, cue_points,
+        duration_resolver=lambda path: _get_audio_duration(Path(path)),
+    )
     raw_name = project.get("name", project.get("id", "video"))
     if policy == "create_new":
         final_name, revision, reservation_path = _reserve_versioned_name(base_dir, raw_name)
@@ -151,7 +155,9 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     staging_root = base_dir / f".videoforge-staging-{uuid4().hex}"
     try:
         staging_root.mkdir()
-        staged_draft = _render_jianying_draft(project, staging_root, final_name, cue_points)
+        staged_draft = _render_jianying_draft(
+            project, staging_root, final_name, cue_points, compiled
+        )
         if policy == "create_new":
             final_path = base_dir / final_name
             _rename_directory(staged_draft, final_path)
@@ -173,7 +179,11 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
                     ) from rollback_error
                 raise
         _fix_meta_paths(final_path, final_name)
-        return DraftWriteResult(policy, final_path, source_draft if policy == "replace_explicit" else None, backup_path, revision)
+        return DraftWriteResult(
+            policy, final_path,
+            source_draft if policy == "replace_explicit" else None,
+            backup_path, revision, tuple(compiled.warnings),
+        )
     finally:
         if staging_root.exists():
             shutil.rmtree(staging_root, ignore_errors=True)
@@ -181,7 +191,10 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
             reservation_path.rmdir()
 
 
-def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_points: list | None = None) -> Path:
+def _render_jianying_draft(
+    project: dict, base_dir: Path, safe_name: str,
+    cue_points: list | None, compiled_timeline: CompiledTimeline,
+) -> Path:
     """
     生成剪映草稿。
 
@@ -193,10 +206,7 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
     Returns:
         草稿文件夹路径
     """
-    compiled = compile_project_timeline(
-        project, cue_points,
-        duration_resolver=lambda path: _get_audio_duration(Path(path)),
-    )
+    compiled = compiled_timeline
     canvas = compiled.canvas
     width = canvas["width"]
     height = canvas["height"]
@@ -214,8 +224,6 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
     )
 
     total_duration = compiled.total_duration
-    IMAGE_LIMIT = 6.0
-
     # Pre-process media with brightness/contrast adjustments if needed
     overlays = compiled.overlays
     adjustments = overlays.get("adjustments", {}) if overlays else {}
@@ -262,14 +270,14 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
                 rotation=rot,
             )
 
-            for cursor, chunk in _segment_chunks(seg, IMAGE_LIMIT):
-                v = VideoSegment(
-                    str(asset_path),
-                    target_timerange=trange(f"{cursor}s", f"{chunk}s"),
-                    clip_settings=clip,
-                )
-                script.add_material(v.material_instance)
-                main_track.add_segment(v)
+            duration = max(0.0, float(seg_end) - float(seg_start))
+            v = VideoSegment(
+                str(asset_path),
+                target_timerange=trange(f"{seg_start}s", f"{duration}s"),
+                clip_settings=clip,
+            )
+            script.add_material(v.material_instance)
+            main_track.add_segment(v)
 
     # 2. BGM tracks — each track has independent timeline startAt and source trim
     bgm_tracks = list(compiled.bgm_clips)
@@ -442,25 +450,6 @@ def _audio_fade_seconds(track: dict, duration: float) -> tuple[float, float]:
         fade_in *= scale
         fade_out *= scale
     return round(fade_in, 3), round(fade_out, 3)
-
-
-def _segment_chunks(seg: dict, image_limit: float = 6.0) -> list[tuple[float, float]]:
-    """Return (timeline_start, duration) chunks. Images are split for JianYing; videos stay whole."""
-    start = float(seg.get("start", 0) or 0)
-    end = float(seg.get("end", start) or start)
-    remaining = max(0.0, end - start)
-    if remaining <= 0:
-        return []
-    if seg.get("type") == "video":
-        return [(start, remaining)]
-    out = []
-    cursor = start
-    while remaining > 0:
-        chunk = min(remaining, image_limit)
-        out.append((cursor, chunk))
-        cursor += chunk
-        remaining -= chunk
-    return out
 
 
 def _sanitize_folder_name(name: str) -> str:

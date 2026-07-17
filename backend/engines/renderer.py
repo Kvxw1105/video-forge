@@ -56,6 +56,8 @@ def _drawtext_font_arg() -> str:
 
 def render_preview(project: dict, output_path: Path, cue_points: list = None) -> Path:
     compiled = compile_project_timeline(project, cue_points, duration_resolver=_get_duration)
+    for warning in compiled.warnings:
+        logger.warning("Timeline compiler: %s", warning)
     segments = compiled.visual_segments()
     subtitles = list(compiled.subtitles)
     overlays = compiled.overlays
