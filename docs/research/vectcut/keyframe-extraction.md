@@ -59,9 +59,29 @@ warnings. Opacity is clamped to `[0, 1]` with a warning. Easing is retained as
 stably sorted.
 
 The JianYing-only module `backend/adapters/jianying_keyframes.py` performs
-seconds-to-microseconds-compatible string lowering, linear interpolation, and
-the `opacity -> KeyframeProperty.alpha` mapping. It is intentionally separate
+linear window slicing through the shared compiler math, canonical position
+conversion, and the `opacity -> KeyframeProperty.alpha` mapping. The adapter
+passes child-local string times to the currently installed public
+`VideoSegment.add_keyframe()` API; the generated JSON was checked to contain
+integer microsecond `time_offset` values. The module is intentionally separate
 from the adapter's draft orchestration.
+
+Canonical position values use the same normalized canvas coordinate system as
+static transforms: `0.0` is the left/bottom edge, `0.5` is center, and `1.0`
+is the right/top edge. JianYing lowering converts either position property with
+`(value - 0.5) * 2`; scale, rotation, and opacity/alpha are not additionally
+scaled.
+
+Window slicing is shared by compiler and JianYing lowering. It interpolates a
+property at both window boundaries, retains interior source points, converts
+to window-local time, deduplicates by `(property, rounded_time)`, and sorts
+deterministically. Thus a `0s=1, 10s=2` curve cut at 6 seconds ends at `1.6`,
+and the 14-second POC's 6/12-second boundaries remain continuous.
+
+Adapter warnings are accumulated during lowering and merged with compiler
+warnings into `DraftWriteResult.warnings`; a supported keyframe write failure
+raises a contextual `RuntimeError` instead of producing a superficially valid
+draft.
 
 ## Long-image boundary POC
 

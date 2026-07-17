@@ -7,11 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from adapters.jianying_keyframes import (
     apply_keyframes_to_video_segment,
-    interpolate_linear,
+    convert_keyframe_value,
     lower_keyframes_for_segment,
-    seconds_to_jianying_time,
 )
-from shared.timeline_compiler import CompiledKeyframe
+from shared.timeline_compiler import CompiledKeyframe, interpolate_keyframe_value, slice_keyframes_for_window
 
 
 def _keys():
@@ -29,16 +28,25 @@ def _keys():
     )
 
 
-def test_seconds_to_jianying_time_rounds_to_microseconds():
-    assert [seconds_to_jianying_time(value) for value in (0, 1, 1.5, 6, 14)] == [0, 1_000_000, 1_500_000, 6_000_000, 14_000_000]
-
-
 def test_linear_interpolation_handles_boundaries_and_gaps():
     keys = _keys()
-    assert interpolate_linear(keys, "scale_x", -1) == 1.0
-    assert interpolate_linear(keys, "scale_x", 6) == pytest.approx(1.12)
-    assert interpolate_linear(keys, "scale_x", 14) == 1.0
-    assert interpolate_linear(keys, "missing", 2) is None
+    assert interpolate_keyframe_value(keys, "scale_x", -1) == 1.0
+    assert interpolate_keyframe_value(keys, "scale_x", 6) == pytest.approx(1.12)
+    assert interpolate_keyframe_value(keys, "scale_x", 14) == 1.0
+    assert interpolate_keyframe_value(keys, "missing", 2) is None
+
+
+def test_shared_slice_adds_interpolated_window_boundaries():
+    keys = (CompiledKeyframe("scale_x", 0, 1), CompiledKeyframe("scale_x", 10, 2))
+    sliced = slice_keyframes_for_window(keys, 0, 6)
+    assert [(item.time, item.value) for item in sliced] == [(0.0, 1.0), (6.0, 1.6)]
+
+
+def test_position_values_convert_from_canonical_canvas_coordinates():
+    assert convert_keyframe_value("position_x", 0.0) == -1.0
+    assert convert_keyframe_value("position_x", 0.5) == 0.0
+    assert convert_keyframe_value("position_x", 1.0) == 1.0
+    assert convert_keyframe_value("position_y", 0.5) == 0.0
 
 
 def test_lowering_preserves_boundary_state_for_each_six_second_child():
@@ -67,9 +75,9 @@ def test_apply_keyframes_uses_provider_mapping_and_local_times():
     apply_keyframes_to_video_segment(
         target,
         lower_keyframes_for_segment(
-            semantic_keyframes=(CompiledKeyframe("opacity", 0, 1), CompiledKeyframe("opacity", 6, 0.5)),
+            semantic_keyframes=(CompiledKeyframe("position_x", 0, 0.5), CompiledKeyframe("position_x", 6, 1.0)),
             semantic_duration=6, child_start=0, child_duration=6, warnings=warnings,
         ),
         warnings,
     )
-    assert [(call[0].name, call[1], call[2]) for call in target.calls] == [("alpha", "0s", 1.0), ("alpha", "6s", 0.5)]
+    assert [(call[0].name, call[1], call[2]) for call in target.calls] == [("position_x", "0s", 0.0), ("position_x", "6s", 1.0)]

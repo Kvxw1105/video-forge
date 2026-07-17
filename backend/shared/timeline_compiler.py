@@ -330,6 +330,53 @@ SUPPORTED_VISUAL_KEYFRAME_PROPERTIES = {
 _KEYFRAME_TIME_EPSILON = 1e-6
 
 
+def interpolate_keyframe_value(
+    keyframes: tuple[CompiledKeyframe, ...], property_name: str, at_time: float,
+) -> float | None:
+    points = sorted(
+        (item for item in keyframes if item.property == property_name),
+        key=lambda item: item.time,
+    )
+    if not points:
+        return None
+    if at_time <= points[0].time:
+        return points[0].value
+    if at_time >= points[-1].time:
+        return points[-1].value
+    for left, right in zip(points, points[1:]):
+        if left.time <= at_time <= right.time:
+            if right.time == left.time:
+                return right.value
+            ratio = (at_time - left.time) / (right.time - left.time)
+            return left.value + ratio * (right.value - left.value)
+    return points[-1].value
+
+
+def slice_keyframes_for_window(
+    keyframes: tuple[CompiledKeyframe, ...], window_start: float, window_duration: float,
+) -> tuple[CompiledKeyframe, ...]:
+    window_end = window_start + window_duration
+    result: dict[tuple[str, float], CompiledKeyframe] = {}
+    properties = list(dict.fromkeys(item.property for item in keyframes))
+    for property_name in properties:
+        start_value = interpolate_keyframe_value(keyframes, property_name, window_start)
+        end_value = interpolate_keyframe_value(keyframes, property_name, window_end)
+        if start_value is not None:
+            result[(property_name, 0.0)] = CompiledKeyframe(property_name, 0.0, start_value, "linear")
+        for item in keyframes:
+            if item.property == property_name and window_start < item.time < window_end:
+                local_time = round(item.time - window_start, 6)
+                result[(property_name, local_time)] = CompiledKeyframe(
+                    item.property, local_time, item.value, item.easing
+                )
+        if end_value is not None:
+            local_end = round(window_duration, 6)
+            result[(property_name, local_end)] = CompiledKeyframe(
+                property_name, local_end, end_value, "linear"
+            )
+    return tuple(sorted(result.values(), key=lambda item: (item.property, item.time)))
+
+
 def _compile_visual_keyframes(
     raw_keyframes: list, clip_duration: float, warnings: list[str], clip_id: str,
 ) -> tuple[CompiledKeyframe, ...]:
@@ -407,15 +454,12 @@ def _expand_visuals(pattern: list[dict], target: float, warnings: list[str]) -> 
             if duration <= 0:
                 continue
             local_offset = start - (offset + semantic_start)
-            child_keyframes = tuple(
-                item for item in semantic_keyframes
-                if item.time >= local_offset - _KEYFRAME_TIME_EPSILON
-                and item.time <= local_offset + duration + _KEYFRAME_TIME_EPSILON
-            )
-            child_keyframes = tuple(
-                CompiledKeyframe(item.property, round(item.time - local_offset, 6), item.value, item.easing)
-                for item in child_keyframes
-            )
+            if abs(local_offset) <= _KEYFRAME_TIME_EPSILON and abs(duration - semantic_duration) <= _KEYFRAME_TIME_EPSILON:
+                child_keyframes = semantic_keyframes
+            else:
+                child_keyframes = slice_keyframes_for_window(
+                    semantic_keyframes, window_start=local_offset, window_duration=duration,
+                )
             clips.append(CompiledVisualClip(
                 id=f"{segment.get('id', 'clip')}__c{cycle}_p{position}",
                 asset_path=str(segment.get("assetPath", "") or ""),
