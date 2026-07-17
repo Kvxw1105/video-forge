@@ -59,6 +59,7 @@ def test_jianying_subtitles_are_exported_as_positioned_text_segments(monkeypatch
             self.base_dir = base_dir
 
         def create_draft(self, *args, **kwargs):
+            (Path(self.base_dir) / args[0]).mkdir()
             script = FakeScript()
             scripts.append(script)
             return script

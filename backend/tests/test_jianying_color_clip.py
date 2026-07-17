@@ -63,6 +63,7 @@ def test_black_segment_exports_as_real_jianying_video_clip(monkeypatch, tmp_path
             self.base_dir = base_dir
 
         def create_draft(self, *args, **kwargs):
+            (Path(self.base_dir) / args[0]).mkdir()
             script = FakeScript()
             scripts.append(script)
             return script

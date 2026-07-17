@@ -1,11 +1,15 @@
 import json
 import re
+import shutil
 import struct
 import subprocess
 from process_utils import run as run_process
 from shared.voiceover import select_active_voiceover
 import zlib
 from pathlib import Path
+from dataclasses import dataclass
+from datetime import datetime
+from uuid import uuid4
 from pyJianYingDraft import ScriptFile, VideoSegment, AudioSegment, TextSegment, DraftFolder, TrackType, trange, ClipSettings
 from pyJianYingDraft.keyframe import KeyframeProperty
 from pyJianYingDraft.text_segment import TextStyle
@@ -118,7 +122,121 @@ def _ensure_color_image(work_dir: Path, width: int, height: int, color: str) -> 
     return output
 
 
-def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_points: list | None = None) -> Path:
+@dataclass(frozen=True)
+class DraftWriteResult:
+    policy: str
+    final_path: Path
+    source_draft: str | None = None
+    backup_path: Path | None = None
+    revision: int | None = None
+    warnings: tuple[str, ...] = ()
+
+    def to_metadata(self) -> dict:
+        return {"policy": self.policy, "draftName": self.final_path.name,
+                "finalDraftName": self.final_path.name, "finalPath": str(self.final_path.resolve()),
+                "sourceDraft": self.source_draft, "revision": self.revision,
+                "backupPath": str(self.backup_path.resolve()) if self.backup_path else None,
+                "warnings": list(self.warnings)}
+
+    def __getattr__(self, name):
+        return getattr(self.final_path, name)
+
+
+class DraftRollbackError(RuntimeError):
+    def __init__(self, backup_path: Path, publish_error: Exception, rollback_error: Exception):
+        self.backup_path = backup_path
+        self.publish_error = publish_error
+        self.rollback_error = rollback_error
+        super().__init__(
+            f"JianYing draft publish failed ({publish_error}); rollback also failed "
+            f"({rollback_error}). Original draft backup remains at: {backup_path}"
+        )
+
+
+def _rename_directory(source: Path, target: Path) -> Path:
+    return source.rename(target)
+
+
+def _validate_source_draft(base_dir: Path, source_draft: str | None) -> Path:
+    if not isinstance(source_draft, str) or not source_draft or source_draft in {".", ".."}:
+        raise ValueError("replace_explicit requires a source_draft folder name")
+    if "/" in source_draft or "\\" in source_draft or ".." in source_draft:
+        raise ValueError("source_draft must be a single folder name")
+    root = base_dir.resolve()
+    target = (root / source_draft).resolve()
+    if target.parent != root or not (target / "draft_content.json").is_file():
+        raise ValueError("source_draft must name an existing JianYing draft")
+    return target
+
+
+def _reserve_versioned_name(base_dir: Path, raw_name: str) -> tuple[str, int, Path]:
+    safe_name = _sanitize_folder_name(raw_name)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    reservation_root = base_dir / ".videoforge-reservations"
+    reservation_root.mkdir(exist_ok=True)
+    for revision in range(1, 1001):
+        draft_name = f"{safe_name}_{stamp}_r{revision}"
+        if (base_dir / draft_name).exists():
+            continue
+        reservation = reservation_root / draft_name
+        try:
+            reservation.mkdir()
+        except FileExistsError:
+            continue
+        if (base_dir / draft_name).exists():
+            reservation.rmdir()
+            continue
+        return draft_name, revision, reservation
+    raise RuntimeError("unable to reserve a JianYing draft revision after 1000 attempts")
+
+
+def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_points: list | None = None, *, policy: str = "create_new", source_draft: str | None = None, direct_export: bool = False) -> DraftWriteResult:
+    if policy not in {"create_new", "replace_explicit"}:
+        raise ValueError("policy must be create_new or replace_explicit")
+    if policy == "replace_explicit" and not direct_export:
+        raise ValueError("replace_explicit is only supported by direct JianYing export")
+    base_dir = Path(output_dir) if output_dir is not None else Path(project.get("exportSettings", {}).get("outputDir", "projects/temp"))
+    base_dir.mkdir(parents=True, exist_ok=True)
+    source_path = _validate_source_draft(base_dir, source_draft) if policy == "replace_explicit" else None
+    raw_name = project.get("name", project.get("id", "video"))
+    if policy == "create_new":
+        final_name, revision, reservation_path = _reserve_versioned_name(base_dir, raw_name)
+    else:
+        final_name, revision, reservation_path = source_path.name, None, None
+    staging_root = base_dir / f".videoforge-staging-{uuid4().hex}"
+    try:
+        staging_root.mkdir()
+        staged_draft = _render_jianying_draft(project, staging_root, final_name, cue_points)
+        if policy == "create_new":
+            final_path = base_dir / final_name
+            _rename_directory(staged_draft, final_path)
+            backup_path = None
+        else:
+            backup_root = base_dir / ".videoforge-backups"
+            backup_root.mkdir(exist_ok=True)
+            backup_path = backup_root / f"{source_path.name}-{datetime.now().strftime('%Y%m%d_%H%M%S')}-{uuid4().hex[:8]}"
+            _rename_directory(source_path, backup_path)
+            try:
+                _rename_directory(staged_draft, source_path)
+                final_path = source_path
+            except Exception as publish_error:
+                try:
+                    _rename_directory(backup_path, source_path)
+                except Exception as rollback_error:
+                    raise DraftRollbackError(
+                        backup_path, publish_error, rollback_error
+                    ) from rollback_error
+                raise
+        _fix_meta_paths(final_path, final_name)
+        return DraftWriteResult(policy, final_path, source_draft if policy == "replace_explicit" else None, backup_path, revision)
+    finally:
+        if staging_root.exists():
+            shutil.rmtree(staging_root, ignore_errors=True)
+        if reservation_path is not None and reservation_path.exists():
+            reservation_path.rmdir()
+
+
+def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_points: list | None = None) -> Path:
     """
     生成剪映草稿。
 
@@ -136,23 +254,14 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     fps = canvas.get("fps", 30)
 
     # 确定基础输出目录
-    if output_dir is not None:
-        base_dir = output_dir
-    else:
-        base_dir = Path(project.get("exportSettings", {}).get("outputDir", "projects/temp"))
-
     # 草稿名称 = 项目名（sanitized）
-    raw_name = project.get("name", project.get("id", "video"))
-    safe_name = _sanitize_folder_name(raw_name)
-
     draft_dir = base_dir / safe_name
-    draft_dir.mkdir(parents=True, exist_ok=True)
 
     draft_folder = DraftFolder(str(base_dir))
     script = draft_folder.create_draft(
         safe_name,
         width, height, fps,
-        allow_replace=True
+        allow_replace=False
     )
 
     total_duration = _calc_duration(project)
@@ -381,9 +490,6 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     script.save()
 
     # 如果直接导出到剪映草稿目录，修正 draft_meta_info.json 的路径
-    if output_dir is not None:
-        _fix_meta_paths(draft_dir, safe_name)
-
     return draft_dir
 
 

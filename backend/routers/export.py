@@ -1,6 +1,7 @@
 import io
 import json
 import re
+import shutil
 import zipfile
 from urllib.parse import quote
 from pathlib import Path
@@ -89,8 +90,12 @@ def sync_jianying_params(project_id: str, data: dict | None = None):
 # ── 项目特定导出 ──
 
 @router.post("/api/projects/{project_id}/export/jianying")
-def export_jianying(project_id: str, cue_mode: str | None = None):
+def export_jianying(project_id: str, cue_mode: str | None = None, policy: str = "create_new"):
     """导出剪映草稿（ZIP 下载）"""
+    if policy != "create_new":
+        if policy == "replace_explicit":
+            raise HTTPException(400, "replace_explicit is only supported by direct JianYing export")
+        raise HTTPException(400, "policy must be create_new")
     p = get_project(project_id)
     if not p:
         raise HTTPException(404, "项目不存在")
@@ -98,8 +103,13 @@ def export_jianying(project_id: str, cue_mode: str | None = None):
     proj_dict = resolve_project_paths(_project_dir(project_id), proj_dict)
     _require_active_voiceover(proj_dict)
     cue_points = _safe_cue_points(proj_dict, cue_mode)
+    draft_dir = None
     try:
-        draft_dir = generate_jianying_draft(proj_dict, cue_points=cue_points)
+        zip_output_dir = _project_dir(project_id) / "exports" / ".jianying-zip"
+        result = generate_jianying_draft(
+            proj_dict, output_dir=zip_output_dir, cue_points=cue_points, policy="create_new"
+        )
+        draft_dir = result.final_path
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for f in draft_dir.rglob("*"):
@@ -108,17 +118,26 @@ def export_jianying(project_id: str, cue_mode: str | None = None):
         buf.seek(0)
         safe_name = re.sub(r'[<>:"/\\|?*]', '_', p.name) or "export"
         filename = f"{safe_name}_draft.zip"
-        return StreamingResponse(
+        response = StreamingResponse(
             buf,
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename*=UTF-8\'\'{quote(filename)}'}
+            headers={
+                "Content-Disposition": f'attachment; filename*=UTF-8\'\'{quote(filename)}',
+                "X-VideoForge-Policy": result.policy,
+                "X-VideoForge-Draft-Name": quote(result.final_path.name, safe=""),
+                "X-VideoForge-Revision": str(result.revision),
+            }
         )
+        shutil.rmtree(draft_dir, ignore_errors=True)
+        return response
     except Exception as e:
-        raise HTTPException(500, f"导出失败: {str(e)}")
+        if draft_dir is not None:
+            shutil.rmtree(draft_dir, ignore_errors=True)
+        raise HTTPException(500, str(e)) from e
 
 
 @router.post("/api/projects/{project_id}/export/jianying-direct")
-def export_jianying_direct(project_id: str, cue_mode: str | None = None):
+def export_jianying_direct(project_id: str, cue_mode: str | None = None, policy: str = "create_new", source_draft: str | None = None):
     """直接导出到剪映草稿目录（零解压，打开剪映即可见）"""
     if not JIANYING_DRAFT_DIR:
         raise HTTPException(400, "未检测到剪映草稿目录。请手动设置 JIANYING_DRAFT_DIR 环境变量。")
@@ -132,24 +151,31 @@ def export_jianying_direct(project_id: str, cue_mode: str | None = None):
     _require_active_voiceover(proj_dict)
     cue_points = _safe_cue_points(proj_dict, cue_mode)
     try:
-        draft_dir = generate_jianying_draft(proj_dict, output_dir=JIANYING_DRAFT_DIR, cue_points=cue_points)
+        result = generate_jianying_draft(
+            proj_dict, output_dir=JIANYING_DRAFT_DIR, cue_points=cue_points,
+            policy=policy, source_draft=source_draft, direct_export=True,
+        )
+        metadata = result.to_metadata()
         return JSONResponse({
             "status": "ok",
             "message": "已导出到剪映草稿目录",
-            "path": str(draft_dir.resolve()),
-            "draft_name": draft_dir.name
+            "path": metadata["finalPath"],
+            "draft_name": metadata["draftName"],
+            **metadata,
         })
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     except Exception as e:
         raise HTTPException(500, f"直接导出到剪映失败: {str(e)}")
 
 
 @router.post("/api/projects/{project_id}/export/jianying-direct/start")
-def start_export_jianying_direct(project_id: str, cue_mode: str | None = None):
+def start_export_jianying_direct(project_id: str, cue_mode: str | None = None, policy: str = "create_new", source_draft: str | None = None):
     def work(update):
         update(8, "validate", "检查剪映目录")
         update(22, "prepare", "准备草稿数据")
         update(60, "export", "写入剪映草稿")
-        result = export_jianying_direct(project_id, cue_mode)
+        result = export_jianying_direct(project_id, cue_mode, policy, source_draft)
         update(92, "finalize", "读取导出结果")
         if isinstance(result, JSONResponse):
             return json.loads(result.body.decode("utf-8"))
@@ -183,7 +209,7 @@ def _list_jianying_drafts() -> list[dict]:
         return []
     results = []
     for d in sorted(JIANYING_DRAFT_DIR.iterdir(), key=lambda x: x.name, reverse=True):
-        if d.is_dir() and (d / "draft_content.json").exists():
+        if d.is_dir() and not d.name.startswith(".videoforge-") and (d / "draft_content.json").exists():
             meta = d / "draft_meta_info.json"
             name = d.name
             if meta.exists():
