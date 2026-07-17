@@ -37,7 +37,7 @@ def test_compile_is_deterministic_and_loops_without_cue_points(tmp_path):
     second = compile_project_timeline(project)
 
     assert first == second
-    assert _times(first) == [(0.0, 2.0), (2.0, 4.0), (4.0, 5.5)]
+    assert _times(first) == [(0.0, 2.0), (2.0, 4.0), (4.0, 5.0)]
 
 
 def test_cue_points_are_applied_once_before_looping(tmp_path):
@@ -49,7 +49,7 @@ def test_cue_points_are_applied_once_before_looping(tmp_path):
         project, cue_points=[{"time": 0, "duration": 1.5}]
     )
 
-    assert _times(compiled) == [(0.0, 1.5), (1.5, 3.0), (3.0, 4.5), (4.5, 5.5)]
+    assert _times(compiled) == [(0.0, 1.5), (1.5, 3.0), (3.0, 4.5), (4.5, 5.0)]
 
 
 def test_absolute_cue_gap_is_materialized_and_looped_with_unique_ids(tmp_path):
@@ -72,7 +72,6 @@ def test_absolute_cue_gap_is_materialized_and_looped_with_unique_ids(tmp_path):
         ("black", 1.0, 3.0),
         ("image", 3.0, 4.0),
         ("image", 4.0, 5.0),
-        ("black", 5.0, 5.5),
     ]
     assert len({clip.id for clip in compiled.visual_clips}) == len(compiled.visual_clips)
 
@@ -108,7 +107,7 @@ def test_numeric_last_cue_uses_natural_duration_for_total_end(tmp_path):
     compiled = compile_project_timeline(project, cue_points=[0, 10])
 
     assert compiled.total_duration == 12.5
-    assert _times(compiled)[:2] == [(0.0, 6.0), (6.0, 10.0)]
+    assert _times(compiled)[:2] == [(0.0, 10.0), (10.0, 12.0)]
     assert any(clip.start == 10 and clip.end == 12 for clip in compiled.visual_clips)
 
 
@@ -118,8 +117,8 @@ def test_last_clip_is_truncated_to_total_duration(tmp_path):
 
     compiled = compile_project_timeline(_project(str(asset)))
 
-    assert compiled.visual_clips[-1].duration == 1.5
-    assert compiled.visual_clips[-1].end == compiled.total_duration
+    assert compiled.visual_clips[-1].duration == 1.0
+    assert compiled.visual_clips[-1].end == compiled.total_duration - 0.5
 
 
 def test_voiceover_start_offset_contributes_to_duration(tmp_path):
@@ -169,7 +168,53 @@ def test_fixed_timeline_blocks_contribute_their_full_duration(tmp_path):
     compiled = compile_project_timeline(project)
 
     assert compiled.total_duration == 10.5
-    assert compiled.visual_clips[-1].end == 10.5
+    assert compiled.visual_clips[-1].end == 10.0
+
+
+def test_rest_block_adds_tail_padding_only_once(tmp_path):
+    asset = tmp_path / "frame.png"
+    asset.write_bytes(b"image")
+    project = _project(str(asset), segments=[], blocks=[
+        {"type": "assets", "duration": "rest", "source": "all", "mode": "ordered"},
+    ])
+
+    compiled = compile_project_timeline(project)
+
+    assert compiled.total_duration == 5.5
+    assert compiled.visual_clips[-1].end == 5.0
+
+
+def test_voiceover_eight_seconds_drives_rest_content_before_single_tail(tmp_path):
+    asset = tmp_path / "frame.png"
+    voice = tmp_path / "voice.mp3"
+    asset.write_bytes(b"image")
+    voice.write_bytes(b"audio")
+    project = _project(str(asset), segments=[], blocks=[
+        {"type": "assets", "duration": "rest", "source": "all", "mode": "ordered"},
+    ])
+    project["audio"]["voiceovers"] = [
+        {"id": "vo", "file": str(voice), "duration": 8, "isActive": True}
+    ]
+
+    compiled = compile_project_timeline(project)
+
+    assert compiled.total_duration == 8.5
+    assert compiled.visual_clips[-1].end == 8.0
+
+
+def test_fourteen_second_image_remains_one_canonical_clip(tmp_path):
+    asset = tmp_path / "frame.png"
+    asset.write_bytes(b"image")
+    project = _project(str(asset), segments=[
+        {"id": "long", "assetPath": str(asset), "type": "image", "start": 0, "end": 14}
+    ])
+
+    compiled = compile_project_timeline(project)
+
+    assert [(clip.start, clip.end, clip.duration) for clip in compiled.visual_clips] == [
+        (0.0, 14.0, 14.0)
+    ]
+    assert compiled.total_duration == 14.5
 
 
 def test_empty_block_pool_keeps_interval_as_black_fallback(tmp_path):
@@ -251,6 +296,21 @@ def test_duration_resolver_failure_warns_and_falls_back_to_declared(tmp_path):
 
     assert compiled.voiceover_clips[0].duration == 3
     assert any("probe failed" in warning for warning in compiled.warnings)
+
+
+def test_zero_probe_result_falls_back_to_declared_duration(tmp_path):
+    asset = tmp_path / "frame.png"
+    voice = tmp_path / "voice.mp3"
+    asset.write_bytes(b"image")
+    voice.write_bytes(b"audio")
+    project = _project(str(asset))
+    project["audio"]["voiceovers"] = [{
+        "id": "vo", "file": str(voice), "duration": 3, "isActive": True
+    }]
+
+    compiled = compile_project_timeline(project, duration_resolver=lambda _path: 0)
+
+    assert compiled.voiceover_clips[0].duration == 3
 
 
 def test_bgm_and_sfx_share_actual_duration_and_volume_rules(tmp_path):

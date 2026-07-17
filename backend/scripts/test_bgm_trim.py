@@ -9,7 +9,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from process_utils import run as run_process
-from engines.renderer import _prepare_multi_bgm, _get_duration, _premix_audio
+from engines.renderer import _prepare_multi_bgm, _premix_audio
+from shared.media_probe import probe_media_duration
 from adapters.jianying import generate_jianying_draft
 
 
@@ -50,7 +51,7 @@ def test_multi_bgm_trim():
             "fadeOut": 0.0,
         }]
         prepared = _prepare_multi_bgm(tracks, td)
-        dur = _get_duration(prepared)
+        dur = probe_media_duration(prepared)
         print(f"multi_bgm_trim: prepared={prepared}, duration={dur:.2f}")
         assert abs(dur - 20.0) < 0.5, f"Expected 20s, got {dur}s"
         print("PASS test_multi_bgm_trim")

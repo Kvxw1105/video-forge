@@ -13,7 +13,7 @@ def _project(name: str = "Safety Project") -> dict:
     return {"id": "proj_safety", "name": name, "canvas": {"width": 1080, "height": 1920}}
 
 
-def _fake_render(_project: dict, base_dir: Path, draft_name: str, _cue_points=None, _compiled=None) -> Path:
+def _fake_render(base_dir: Path, draft_name: str, _compiled=None) -> Path:
     draft_dir = base_dir / draft_name
     draft_dir.mkdir(parents=True)
     (draft_dir / "draft_content.json").write_bytes(b"new draft")
@@ -41,7 +41,7 @@ def test_create_new_preserves_existing_draft_and_returns_metadata(monkeypatch, t
 
 
 def test_failed_create_new_removes_owned_staging_directory(monkeypatch, tmp_path):
-    def fail_after_staging(_project: dict, base_dir: Path, draft_name: str, _cue_points=None, _compiled=None) -> Path:
+    def fail_after_staging(base_dir: Path, draft_name: str, _compiled=None) -> Path:
         draft_dir = base_dir / draft_name
         draft_dir.mkdir(parents=True)
         (draft_dir / "draft_content.json").write_bytes(b"partial")
@@ -82,15 +82,16 @@ def test_create_new_publish_conflict_never_deletes_other_writer_result(monkeypat
 def test_concurrent_create_new_writers_complete_with_distinct_revisions(monkeypatch, tmp_path):
     nested_results = []
     render_calls = 0
+    project = _project()
 
-    def overlapping_render(project: dict, base_dir: Path, draft_name: str, cue_points=None, compiled=None):
+    def overlapping_render(base_dir: Path, draft_name: str, compiled=None):
         nonlocal render_calls
         render_calls += 1
         if render_calls == 1:
             nested_results.append(
                 jianying.generate_jianying_draft(project, output_dir=tmp_path)
             )
-        return _fake_render(project, base_dir, draft_name, cue_points, compiled)
+        return _fake_render(base_dir, draft_name, compiled)
 
     monkeypatch.setattr(jianying, "_render_jianying_draft", overlapping_render)
 
@@ -220,9 +221,9 @@ def test_generate_compiles_once_and_propagates_warnings(monkeypatch, tmp_path):
         compile_calls.append((args, kwargs))
         return compiled
 
-    def fake_render(project, base_dir, draft_name, cue_points, compiled_timeline):
+    def fake_render(base_dir, draft_name, compiled_timeline):
         assert compiled_timeline is compiled
-        return _fake_render(project, base_dir, draft_name, cue_points, compiled_timeline)
+        return _fake_render(base_dir, draft_name, compiled_timeline)
 
     monkeypatch.setattr(jianying, "compile_project_timeline", fake_compile)
     monkeypatch.setattr(jianying, "_render_jianying_draft", fake_render)

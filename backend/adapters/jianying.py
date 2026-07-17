@@ -4,8 +4,8 @@ import shutil
 import struct
 import subprocess
 from process_utils import run as run_process
-from shared.voiceover import select_active_voiceover
 from shared.timeline_compiler import CompiledTimeline, compile_project_timeline
+from shared.media_probe import probe_media_duration
 import zlib
 from pathlib import Path
 from dataclasses import dataclass
@@ -21,12 +21,6 @@ from shared.render_params import (
     font_size_to_jianying,
     normalize_hex,
 )
-
-
-def _active_voiceover(project: dict) -> dict:
-    """Return active playable voiceover config; empty dict if none."""
-    audio = project.get("audio", {}) if isinstance(project, dict) else {}
-    return select_active_voiceover(audio)
 
 
 def _resolve_path(file_path: str) -> Path | None:
@@ -145,7 +139,7 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     source_path = _validate_source_draft(base_dir, source_draft) if policy == "replace_explicit" else None
     compiled = compile_project_timeline(
         project, cue_points,
-        duration_resolver=lambda path: _get_audio_duration(Path(path)),
+        duration_resolver=probe_media_duration,
     )
     raw_name = project.get("name", project.get("id", "video"))
     if policy == "create_new":
@@ -156,7 +150,7 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     try:
         staging_root.mkdir()
         staged_draft = _render_jianying_draft(
-            project, staging_root, final_name, cue_points, compiled
+            staging_root, final_name, compiled
         )
         if policy == "create_new":
             final_path = base_dir / final_name
@@ -192,17 +186,14 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
 
 
 def _render_jianying_draft(
-    project: dict, base_dir: Path, safe_name: str,
-    cue_points: list | None, compiled_timeline: CompiledTimeline,
+    base_dir: Path, safe_name: str, compiled_timeline: CompiledTimeline,
 ) -> Path:
     """
     生成剪映草稿。
 
     Args:
-        project: 项目数据 dict
         output_dir: 输出目录。为 None 时使用 project 内的 exportSettings.outputDir。
                      传剪映草稿目录（com.lveditor.draft）则直接生成到目标位置。
-        cue_points: 可选卡点时间表。传入后与 FFmpeg 预览使用同一套素材时间线。
     Returns:
         草稿文件夹路径
     """
@@ -235,7 +226,7 @@ def _render_jianying_draft(
     voiceover_start_at = voiceover.start if voiceover else 0.0
 
     # 1. Main image/video track
-    segments = compiled.visual_segments()
+    segments = _lower_jianying_visual_segments(compiled.visual_segments())
     if segments:
         script.add_track(TrackType.video, "main")
         main_track = script.tracks["main"]
@@ -410,7 +401,7 @@ def _render_jianying_draft(
     # 6.5 Directory progress — editable text, with position keyframes when supported.
     # ponytail: no full keyframe editor; just start/end X over the active voiceover range.
     dp_cfg = overlays.get("directoryProgress", {})
-    vo_dur = _get_audio_duration(voiceover_path) if voiceover_path else 0
+    vo_dur = voiceover.duration if voiceover else 0
     if dp_cfg.get("enabled") and dp_cfg.get("text") and vo_dur > 0:
         script.add_track(TrackType.text, "directory_progress")
         fs = font_size_to_jianying(max(8.0, min(80.0, float(dp_cfg.get("fontSize", 22) or 22))))
@@ -437,6 +428,31 @@ def _render_jianying_draft(
 
     # 如果直接导出到剪映草稿目录，修正 draft_meta_info.json 的路径
     return draft_dir
+
+
+def _lower_jianying_visual_segments(
+    segments: list[dict], image_limit: float = 6.0,
+) -> list[dict]:
+    """Lower semantic clips to JianYing's physical still-image segment limit."""
+    lowered = []
+    for segment in segments:
+        start = float(segment.get("start", 0) or 0)
+        end = max(start, float(segment.get("end", start) or start))
+        media_type = segment.get("type")
+        if media_type == "video":
+            lowered.append(dict(segment))
+            continue
+        cursor = start
+        part = 0
+        while cursor < end - 1e-6:
+            part_end = min(cursor + image_limit, end)
+            item = dict(segment)
+            item["id"] = f"{segment.get('id', 'clip')}__jy{part}"
+            item["start"], item["end"] = cursor, part_end
+            lowered.append(item)
+            cursor = part_end
+            part += 1
+    return lowered
 
 
 def _audio_fade_seconds(track: dict, duration: float) -> tuple[float, float]:
@@ -472,25 +488,6 @@ def _fix_meta_paths(draft_dir: Path, draft_name: str):
         meta_file.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass  # 不阻塞导出
-
-
-def _get_audio_duration(path: Path) -> float:
-    """用 ffprobe 获取音频文件时长（秒），失败返回 0"""
-    try:
-        r = run_process(
-            ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_streams', str(path)],
-            capture_output=True, text=True, timeout=10
-        )
-        data = json.loads(r.stdout)
-        for s in data.get('streams', []):
-            dur = s.get('duration')
-            if dur:
-                return float(dur)
-    except Exception:
-        pass
-    # fallback: 看文件大小和默认比特率估算
-    size = path.stat().st_size
-    return max(1.0, size / 16000)  # ~16KB/s for mp3
 
 
 def _fmt_time(seconds: float) -> str:

@@ -114,14 +114,14 @@ def compile_project_timeline(
     voice_end = max((clip.end for clip in voiceover_clips), default=0.0)
     subtitle_end = max((float(item.get("end", 0) or 0) for item in subtitles), default=0.0)
     segment_end = max((float(item.get("end", 0) or 0) for item in valid_persisted), default=0.0)
-    base_duration = max(5.0, voice_end, subtitle_end, segment_end, fixed_block_duration)
+    content_duration = max(5.0, voice_end, subtitle_end, segment_end, fixed_block_duration)
 
     source_segments = valid_persisted
     if not source_segments and blocks:
         source_segments = build_segments_from_blocks(
             _valid_block_assets(deepcopy(project.get("assets") or []), warnings),
             deepcopy(blocks),
-            base_duration + 0.5,
+            content_duration,
             default_per_asset_duration=float(project.get("perImageDuration", 1.0) or 1.0),
             warnings=warnings,
         )
@@ -131,8 +131,10 @@ def compile_project_timeline(
 
     pattern = _resolve_visual_pattern(source_segments, cue_points, warnings)
     pattern_end = max((float(item.get("end", 0) or 0) for item in pattern), default=0.0)
-    total_duration = round(max(base_duration, pattern_end) + 0.5, 6)
-    visual_clips = _expand_visuals(pattern, total_duration)
+    content_duration = max(content_duration, pattern_end)
+    tail_padding = 0.5
+    total_duration = round(content_duration + tail_padding, 6)
+    visual_clips = _expand_visuals(pattern, content_duration)
     bgm_clips = _compile_audio_tracks(audio.get("bgm") or {}, total_duration, duration_resolver, warnings, "bgm")
     sfx_clips = _compile_audio_tracks(audio.get("sfx") or [], total_duration, duration_resolver, warnings, "sfx")
 
@@ -327,25 +329,16 @@ def _expand_visuals(pattern: list[dict], target: float) -> list[CompiledVisualCl
             duration = max(0.0, end - start)
             if duration <= 0:
                 continue
-            media_type = str(segment.get("type", "image"))
-            max_chunk = duration if media_type == "video" else 6.0
-            chunk_start = start
-            chunk_index = 0
-            while chunk_start < end - 1e-6:
-                chunk_end = min(chunk_start + max_chunk, end)
-                clips.append(CompiledVisualClip(
-                    id=f"{segment.get('id', 'clip')}__c{cycle}_p{position}_s{chunk_index}",
-                    asset_path=str(segment.get("assetPath", "") or ""),
-                    media_type=media_type,
-                    start=round(chunk_start, 6), end=round(chunk_end, 6),
-                    duration=round(chunk_end - chunk_start, 6),
-                    transform=deepcopy(segment.get("transform") or {}),
-                    animation=deepcopy(segment.get("animation")),
-                    source_start=float(segment.get("sourceStart", 0) or 0),
-                    bg_color=segment.get("bgColor"),
-                ))
-                chunk_start = chunk_end
-                chunk_index += 1
+            clips.append(CompiledVisualClip(
+                id=f"{segment.get('id', 'clip')}__c{cycle}_p{position}",
+                asset_path=str(segment.get("assetPath", "") or ""),
+                media_type=str(segment.get("type", "image")),
+                start=round(start, 6), end=round(end, 6), duration=round(duration, 6),
+                transform=deepcopy(segment.get("transform") or {}),
+                animation=deepcopy(segment.get("animation")),
+                source_start=float(segment.get("sourceStart", 0) or 0),
+                bg_color=segment.get("bgColor"),
+            ))
         cycle += 1
     return clips
 

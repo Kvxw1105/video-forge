@@ -17,6 +17,7 @@ from shared.render_params import (
     overlay_to_ffmpeg_exprs,
 )
 from shared.timeline_compiler import compile_project_timeline
+from shared.media_probe import probe_media_duration
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def _drawtext_font_arg() -> str:
 
 
 def render_preview(project: dict, output_path: Path, cue_points: list = None) -> Path:
-    compiled = compile_project_timeline(project, cue_points, duration_resolver=_get_duration)
+    compiled = compile_project_timeline(project, cue_points, duration_resolver=probe_media_duration)
     for warning in compiled.warnings:
         logger.warning("Timeline compiler: %s", warning)
     segments = compiled.visual_segments()
@@ -291,7 +292,7 @@ def _prepare_single_bgm(
         filters.append(f"afade=t=in:st=0:d={fade_in}")
 
     if fade_out > 0:
-        full_dur = _get_duration(track_path)
+        full_dur = probe_media_duration(track_path)
         actual_dur = max(0.0, full_dur - trim_start)
         if trim_end > trim_start:
             actual_dur = min(actual_dur, trim_end - trim_start)
@@ -334,7 +335,7 @@ def _prepare_multi_bgm(tracks: list[dict], work_dir: Path) -> str:
         if fade_in > 0:
             filters.append(f"afade=t=in:st=0:d={fade_in}")
         if fade_out > 0:
-            full_dur = _get_duration(track_path)
+            full_dur = probe_media_duration(track_path)
             actual_dur = max(0.0, full_dur - trim_start)
             if trim_end > trim_start:
                 actual_dur = min(actual_dur, trim_end - trim_start)
@@ -568,19 +569,6 @@ def _strip_video_audio(video_path: str, work_dir: Path) -> str | None:
     logger.warning("Video audio strip failed for %s, using original: %s", video_path,
                    r.stderr[-200:] if r.stderr else "")
     return None
-
-
-def _get_duration(path: str) -> float:
-    try:
-        r = _run_cmd(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(path)],
-            timeout=10,
-        )
-        import json
-        data = json.loads(r.stdout)
-        return float(data.get("format", {}).get("duration", 0))
-    except Exception:
-        return 0.0
 
 
 def _build_scale_filter(w: int, h: int, scale: float = 0.85, fit: str = "contain", bg_ffmpeg: str = "000000") -> str:

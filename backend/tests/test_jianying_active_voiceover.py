@@ -4,6 +4,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from adapters import jianying
+from shared.media_probe import probe_media_duration
+from shared.voiceover import select_active_voiceover
 
 
 def test_active_voiceover_ignores_placeholder_active_entry(tmp_path):
@@ -19,7 +21,7 @@ def test_active_voiceover_ignores_placeholder_active_entry(tmp_path):
         }
     }
     # Multi-version mode must not fall back to inactive when active is unplayable.
-    active = jianying._active_voiceover(project)
+    active = select_active_voiceover(project["audio"])
     assert active == {}
 
 
@@ -33,20 +35,9 @@ def test_active_voiceover_uses_active_playable(tmp_path):
             ],
         }
     }
-    active = jianying._active_voiceover(project)
+    active = select_active_voiceover(project["audio"])
     assert active.get("id") == "live"
 
 
-def test_jianying_duration_probe_uses_no_window_helper(monkeypatch):
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(kwargs)
-        class R:
-            stdout = '{"streams":[{"duration":"1.25"}]}'
-        return R()
-
-    monkeypatch.setattr(jianying, "run_process", fake_run)
-    dur = jianying._get_audio_duration(Path("dummy.mp3"))
-    assert dur == 1.25
-    assert calls, "expected run_process to be used"
+def test_jianying_uses_shared_media_probe():
+    assert jianying.probe_media_duration is probe_media_duration

@@ -18,9 +18,13 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
     first = tmp_path / "first.png"
     second = tmp_path / "second.png"
     voice = tmp_path / "voice.mp3"
+    bgm = tmp_path / "bgm.mp3"
+    sfx = tmp_path / "sfx.wav"
     first.write_bytes(b"image")
     second.write_bytes(b"image")
     voice.write_bytes(b"audio")
+    bgm.write_bytes(b"audio")
+    sfx.write_bytes(b"audio")
     project = {
         "id": "parity",
         "name": "Parity",
@@ -32,10 +36,18 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
         "assets": [],
         "audio": {
             "voiceovers": [{"id": "vo", "file": str(voice), "duration": 2, "isActive": True, "volume": 1}],
-            "bgm": {"tracks": []}, "sfx": [],
+            "bgm": {"tracks": [{
+                "file": str(bgm), "startAt": 1, "trimStart": 2, "trimEnd": 8, "volume": 0.4
+            }]},
+            "sfx": [{
+                "file": str(sfx), "startAt": 2, "trimStart": 1, "trimEnd": 4, "volume": 0.7
+            }],
         },
         "subtitles": [{"id": "sub", "text": "once", "start": 0, "end": 1, "style": {}}],
-        "overlays": {"subtitle_enabled": True},
+        "overlays": {
+            "subtitle_enabled": True,
+            "directoryProgress": {"enabled": True, "text": "progress", "fontSize": 22},
+        },
         "timeline": {"voiceoverStartAt": 0.5, "blocks": []},
     }
     cue_points = [{"time": 0, "duration": 1}, {"time": 3, "duration": 1}]
@@ -54,6 +66,11 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
         return compile_project_timeline(*args, **kwargs)
 
     final_commands = []
+    renderer_probe_calls = []
+    renderer_bgm_tracks = []
+    renderer_sfx_tracks = []
+    renderer_mix = []
+    durations = {str(voice): 2.0, str(bgm): 10.0, str(sfx): 5.0}
 
     def fake_run(cmd, **kwargs):
         final_commands.append(cmd)
@@ -61,8 +78,22 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
         return SimpleNamespace(returncode=0, stderr="", stdout="")
 
     monkeypatch.setattr(renderer, "compile_project_timeline", renderer_compile)
-    monkeypatch.setattr(renderer, "_get_duration", lambda _path: 2.0)
-    monkeypatch.setattr(renderer, "_premix_audio", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        renderer, "probe_media_duration",
+        lambda path: renderer_probe_calls.append(str(path)) or durations[str(path)],
+    )
+    monkeypatch.setattr(
+        renderer, "_prepare_bgm",
+        lambda tracks, *args, **kwargs: renderer_bgm_tracks.extend(tracks) or None,
+    )
+    monkeypatch.setattr(
+        renderer, "_prepare_multi_bgm",
+        lambda tracks, *args, **kwargs: renderer_sfx_tracks.extend(tracks) or "",
+    )
+    monkeypatch.setattr(
+        renderer, "_premix_audio",
+        lambda *args, **kwargs: renderer_mix.append((args, kwargs)) or None,
+    )
     monkeypatch.setattr(renderer, "_run_cmd", fake_run)
     renderer.render_preview(project, tmp_path / "preview.mp4", cue_points)
 
@@ -92,6 +123,8 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
 
+    audio_ranges = {}
+
     class FakeSegment:
         def __init__(self, path, **kwargs):
             self.path = path
@@ -99,12 +132,19 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
             self.material_instance = {"path": path}
             self.clip_settings = kwargs.get("clip_settings") or FakeClipSettings()
             self.fade = None
+            if str(path) in {str(voice), str(bgm), str(sfx)}:
+                audio_ranges[str(path)] = (
+                    kwargs.get("target_timerange"), kwargs.get("source_timerange")
+                )
 
         def add_fade(self, *args):
             self.fade = args
 
+        def add_keyframe(self, *args):
+            return None
+
     video_ranges = []
-    subtitle_ranges = []
+    text_ranges = {}
 
     class FakeVideoSegment(FakeSegment):
         def __init__(self, path, **kwargs):
@@ -114,7 +154,7 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
     class FakeTextSegment(FakeSegment):
         def __init__(self, text, **kwargs):
             super().__init__(text, **kwargs)
-            subtitle_ranges.append(kwargs["timerange"])
+            text_ranges[text] = kwargs["timerange"]
 
     class FakeTrack:
         def add_segment(self, segment):
@@ -145,7 +185,11 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
             return FakeScript(draft_dir)
 
     monkeypatch.setattr(jianying, "compile_project_timeline", jianying_compile)
-    monkeypatch.setattr(jianying, "_get_audio_duration", lambda _path: 2.0)
+    jianying_probe_calls = []
+    monkeypatch.setattr(
+        jianying, "probe_media_duration",
+        lambda path: jianying_probe_calls.append(str(path)) or durations[str(path)],
+    )
     monkeypatch.setattr(jianying, "_preprocess_media_with_adjustments", lambda *args: {})
     monkeypatch.setattr(jianying, "DraftFolder", FakeDraftFolder)
     monkeypatch.setattr(jianying, "VideoSegment", FakeVideoSegment)
@@ -165,6 +209,41 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
     assert renderer_compile_calls == 1
     assert jianying_compile_calls == 1
     assert ffmpeg_timing == jianying_timing
-    assert ffmpeg_timing[-1][1] == 5.5
+    assert ffmpeg_timing[-1][1] == 5.0
+    assert command[command.index("-t", command.index("-filter_complex")) + 1] == "5.5"
     assert "between(t,0.5,1.5)" in filter_complex
-    assert subtitle_ranges == [(0.5, 1.0)]
+    assert text_ranges["once"] == (0.5, 1.0)
+    assert text_ranges["progress"] == (0.5, 2.0)
+    assert renderer_probe_calls == [str(voice), str(bgm), str(sfx)]
+    assert jianying_probe_calls == [str(voice), str(bgm), str(sfx)]
+    assert renderer_bgm_tracks[0]["startAt"] == 1
+    assert renderer_bgm_tracks[0]["trimStart"] == 2
+    assert renderer_bgm_tracks[0]["trimEnd"] == 6.5
+    assert renderer_sfx_tracks[0]["startAt"] == 2
+    assert renderer_sfx_tracks[0]["trimStart"] == 1
+    assert renderer_sfx_tracks[0]["trimEnd"] == 4
+    assert audio_ranges[str(voice)][0] == (0.5, 2.0)
+    assert audio_ranges[str(bgm)] == ((1.0, 4.5), (2.0, 4.5))
+    assert audio_ranges[str(sfx)] == ((2.0, 3.0), (1.0, 3.0))
+    assert renderer_mix[0][0][4] == 5.5
+
+
+def test_jianying_lowering_splits_long_image_without_changing_coverage(tmp_path):
+    asset = tmp_path / "long.png"
+    asset.write_bytes(b"image")
+    project = {
+        "canvas": {"width": 1080, "height": 1920, "fps": 30},
+        "segments": [{
+            "id": "long", "assetPath": str(asset), "type": "image", "start": 0, "end": 14
+        }],
+        "audio": {"voiceovers": [], "bgm": {"tracks": []}, "sfx": []},
+        "subtitles": [], "overlays": {}, "timeline": {"blocks": []},
+    }
+    compiled = compile_project_timeline(project)
+
+    lowered = jianying._lower_jianying_visual_segments(compiled.visual_segments())
+
+    assert [(clip["start"], clip["end"]) for clip in compiled.visual_segments()] == [(0.0, 14.0)]
+    assert [(clip["start"], clip["end"]) for clip in lowered] == [
+        (0.0, 6.0), (6.0, 12.0), (12.0, 14.0)
+    ]
