@@ -1,3 +1,4 @@
+import importlib
 import sys
 from pathlib import Path
 
@@ -53,6 +54,29 @@ def test_failed_create_new_removes_owned_staging_directory(monkeypatch, tmp_path
 
     assert not list(tmp_path.glob(".videoforge-staging-*"))
     assert not list(tmp_path.glob("Safety Project_*"))
+
+
+def test_create_new_publish_conflict_never_deletes_other_writer_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(jianying, "_render_jianying_draft", _fake_render)
+    real_rename = Path.rename
+
+    def lose_publish_race(source: Path, target: Path):
+        target = Path(target)
+        if source.parent.name.startswith(".videoforge-staging-"):
+            target.mkdir()
+            (target / "draft_content.json").write_bytes(b"other writer")
+            raise FileExistsError("publish collision")
+        return real_rename(source, target)
+
+    monkeypatch.setattr(jianying, "_rename_directory", lose_publish_race)
+
+    with pytest.raises(FileExistsError, match="publish collision"):
+        jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+
+    published = list(tmp_path.glob("Safety Project_*"))
+    assert len(published) == 1
+    assert (published[0] / "draft_content.json").read_bytes() == b"other writer"
+    assert not list(tmp_path.glob(".videoforge-staging-*"))
 
 
 @pytest.mark.parametrize("source_draft", [None, "", "../draft", "a/b", r"a\\b", str(Path("C:/draft"))])
@@ -122,3 +146,43 @@ def test_replace_explicit_restores_backup_when_publish_fails(monkeypatch, tmp_pa
     assert (source / "draft_content.json").read_bytes() == b"original draft"
     assert calls
     assert not list(tmp_path.glob(".videoforge-staging-*"))
+
+
+def test_replace_explicit_exposes_backup_when_publish_and_rollback_fail(monkeypatch, tmp_path):
+    source = tmp_path / "Existing Draft"
+    source.mkdir()
+    (source / "draft_content.json").write_bytes(b"original draft")
+    monkeypatch.setattr(jianying, "_render_jianying_draft", _fake_render)
+    real_rename = Path.rename
+
+    def fail_publish_and_restore(source_path: Path, target_path: Path):
+        target_path = Path(target_path)
+        if source_path.parent.name.startswith(".videoforge-staging-"):
+            raise OSError("publish failed")
+        if ".videoforge-backup-" in source_path.name and target_path.name == "Existing Draft":
+            raise PermissionError("rollback failed")
+        return real_rename(source_path, target_path)
+
+    monkeypatch.setattr(jianying, "_rename_directory", fail_publish_and_restore)
+
+    with pytest.raises(jianying.DraftRollbackError) as error:
+        jianying.generate_jianying_draft(
+            _project(),
+            output_dir=tmp_path,
+            policy="replace_explicit",
+            source_draft="Existing Draft",
+            direct_export=True,
+        )
+
+    assert "publish failed" in str(error.value)
+    assert "rollback failed" in str(error.value)
+    assert error.value.backup_path.exists()
+    assert str(error.value.backup_path) in str(error.value)
+
+
+def test_real_renderer_writes_minimal_jianying_draft(tmp_path):
+    importlib.reload(jianying)
+    result = jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+
+    assert (result.final_path / "draft_content.json").is_file()
+    assert (result.final_path / "draft_meta_info.json").is_file()

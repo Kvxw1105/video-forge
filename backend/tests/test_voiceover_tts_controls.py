@@ -177,6 +177,7 @@ def test_voiceover_volume_is_serialized_for_jianying(monkeypatch, tmp_path):
             self.base_dir = base_dir
 
         def create_draft(self, *args, **kwargs):
+            (Path(self.base_dir) / args[0]).mkdir()
             script = FakeScript()
             created_scripts.append(script)
             return script

@@ -142,6 +142,17 @@ class DraftWriteResult:
         return getattr(self.final_path, name)
 
 
+class DraftRollbackError(RuntimeError):
+    def __init__(self, backup_path: Path, publish_error: Exception, rollback_error: Exception):
+        self.backup_path = backup_path
+        self.publish_error = publish_error
+        self.rollback_error = rollback_error
+        super().__init__(
+            f"JianYing draft publish failed ({publish_error}); rollback also failed "
+            f"({rollback_error}). Original draft backup remains at: {backup_path}"
+        )
+
+
 def _rename_directory(source: Path, target: Path) -> Path:
     return source.rename(target)
 
@@ -178,7 +189,6 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     raw_name = project.get("name", project.get("id", "video"))
     final_name, revision = _next_versioned_name(base_dir, raw_name) if policy == "create_new" else (source_path.name, None)
     staging_root = base_dir / f".videoforge-staging-{uuid4().hex}"
-    published = False
     try:
         staging_root.mkdir()
         staged_draft = _render_jianying_draft(project, staging_root, final_name, cue_points)
@@ -192,19 +202,19 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
             try:
                 _rename_directory(staged_draft, source_path)
                 final_path = source_path
-            except Exception:
-                _rename_directory(backup_path, source_path)
+            except Exception as publish_error:
+                try:
+                    _rename_directory(backup_path, source_path)
+                except Exception as rollback_error:
+                    raise DraftRollbackError(
+                        backup_path, publish_error, rollback_error
+                    ) from rollback_error
                 raise
         _fix_meta_paths(final_path, final_name)
-        published = True
         return DraftWriteResult(policy, final_path, source_draft if policy == "replace_explicit" else None, backup_path, revision)
     finally:
         if staging_root.exists():
             shutil.rmtree(staging_root, ignore_errors=True)
-        if policy == "create_new" and not published:
-            final_path = base_dir / final_name
-            if final_path.exists():
-                shutil.rmtree(final_path, ignore_errors=True)
 
 
 def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_points: list | None = None) -> Path:
@@ -227,7 +237,6 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
     # 确定基础输出目录
     # 草稿名称 = 项目名（sanitized）
     draft_dir = base_dir / safe_name
-    draft_dir.mkdir(parents=True, exist_ok=False)
 
     draft_folder = DraftFolder(str(base_dir))
     script = draft_folder.create_draft(
