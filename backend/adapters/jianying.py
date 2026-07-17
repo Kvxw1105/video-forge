@@ -169,13 +169,25 @@ def _validate_source_draft(base_dir: Path, source_draft: str | None) -> Path:
     return target
 
 
-def _next_versioned_name(base_dir: Path, raw_name: str) -> tuple[str, int]:
+def _reserve_versioned_name(base_dir: Path, raw_name: str) -> tuple[str, int, Path]:
     safe_name = _sanitize_folder_name(raw_name)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    revision = 1
-    while (base_dir / f"{safe_name}_{stamp}_r{revision}").exists():
-        revision += 1
-    return f"{safe_name}_{stamp}_r{revision}", revision
+    reservation_root = base_dir / ".videoforge-reservations"
+    reservation_root.mkdir(exist_ok=True)
+    for revision in range(1, 1001):
+        draft_name = f"{safe_name}_{stamp}_r{revision}"
+        if (base_dir / draft_name).exists():
+            continue
+        reservation = reservation_root / draft_name
+        try:
+            reservation.mkdir()
+        except FileExistsError:
+            continue
+        if (base_dir / draft_name).exists():
+            reservation.rmdir()
+            continue
+        return draft_name, revision, reservation
+    raise RuntimeError("unable to reserve a JianYing draft revision after 1000 attempts")
 
 
 def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_points: list | None = None, *, policy: str = "create_new", source_draft: str | None = None, direct_export: bool = False) -> DraftWriteResult:
@@ -187,7 +199,10 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     base_dir.mkdir(parents=True, exist_ok=True)
     source_path = _validate_source_draft(base_dir, source_draft) if policy == "replace_explicit" else None
     raw_name = project.get("name", project.get("id", "video"))
-    final_name, revision = _next_versioned_name(base_dir, raw_name) if policy == "create_new" else (source_path.name, None)
+    if policy == "create_new":
+        final_name, revision, reservation_path = _reserve_versioned_name(base_dir, raw_name)
+    else:
+        final_name, revision, reservation_path = source_path.name, None, None
     staging_root = base_dir / f".videoforge-staging-{uuid4().hex}"
     try:
         staging_root.mkdir()
@@ -197,7 +212,9 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
             _rename_directory(staged_draft, final_path)
             backup_path = None
         else:
-            backup_path = base_dir / f"{source_path.name}.videoforge-backup-{datetime.now().strftime('%Y%m%d_%H%M%S')}-{uuid4().hex[:8]}"
+            backup_root = base_dir / ".videoforge-backups"
+            backup_root.mkdir(exist_ok=True)
+            backup_path = backup_root / f"{source_path.name}-{datetime.now().strftime('%Y%m%d_%H%M%S')}-{uuid4().hex[:8]}"
             _rename_directory(source_path, backup_path)
             try:
                 _rename_directory(staged_draft, source_path)
@@ -215,6 +232,8 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     finally:
         if staging_root.exists():
             shutil.rmtree(staging_root, ignore_errors=True)
+        if reservation_path is not None and reservation_path.exists():
+            reservation_path.rmdir()
 
 
 def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_points: list | None = None) -> Path:

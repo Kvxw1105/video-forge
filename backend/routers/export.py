@@ -121,7 +121,12 @@ def export_jianying(project_id: str, cue_mode: str | None = None, policy: str = 
         response = StreamingResponse(
             buf,
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename*=UTF-8\'\'{quote(filename)}'}
+            headers={
+                "Content-Disposition": f'attachment; filename*=UTF-8\'\'{quote(filename)}',
+                "X-VideoForge-Policy": result.policy,
+                "X-VideoForge-Draft-Name": quote(result.final_path.name, safe=""),
+                "X-VideoForge-Revision": str(result.revision),
+            }
         )
         shutil.rmtree(draft_dir, ignore_errors=True)
         return response
@@ -204,7 +209,7 @@ def _list_jianying_drafts() -> list[dict]:
         return []
     results = []
     for d in sorted(JIANYING_DRAFT_DIR.iterdir(), key=lambda x: x.name, reverse=True):
-        if d.is_dir() and (d / "draft_content.json").exists():
+        if d.is_dir() and not d.name.startswith(".videoforge-") and (d / "draft_content.json").exists():
             meta = d / "draft_meta_info.json"
             name = d.name
             if meta.exists():

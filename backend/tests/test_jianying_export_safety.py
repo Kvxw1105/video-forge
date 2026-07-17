@@ -79,6 +79,29 @@ def test_create_new_publish_conflict_never_deletes_other_writer_result(monkeypat
     assert not list(tmp_path.glob(".videoforge-staging-*"))
 
 
+def test_concurrent_create_new_writers_complete_with_distinct_revisions(monkeypatch, tmp_path):
+    nested_results = []
+    render_calls = 0
+
+    def overlapping_render(project: dict, base_dir: Path, draft_name: str, cue_points=None):
+        nonlocal render_calls
+        render_calls += 1
+        if render_calls == 1:
+            nested_results.append(
+                jianying.generate_jianying_draft(project, output_dir=tmp_path)
+            )
+        return _fake_render(project, base_dir, draft_name, cue_points)
+
+    monkeypatch.setattr(jianying, "_render_jianying_draft", overlapping_render)
+
+    outer_result = jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+
+    assert nested_results[0].final_path.exists()
+    assert outer_result.final_path.exists()
+    assert nested_results[0].final_path != outer_result.final_path
+    assert {nested_results[0].revision, outer_result.revision} == {1, 2}
+
+
 @pytest.mark.parametrize("source_draft", [None, "", "../draft", "a/b", r"a\\b", str(Path("C:/draft"))])
 def test_replace_explicit_requires_a_single_valid_source_folder(monkeypatch, tmp_path, source_draft):
     monkeypatch.setattr(jianying, "_render_jianying_draft", _fake_render, raising=False)
@@ -115,6 +138,7 @@ def test_replace_explicit_backs_up_and_replaces_only_named_draft(monkeypatch, tm
     assert (source / "draft_content.json").read_bytes() == b"new draft"
     assert result.backup_path is not None
     assert (result.backup_path / "draft_content.json").read_bytes() == b"original draft"
+    assert result.backup_path.parent == tmp_path / ".videoforge-backups"
 
 
 def test_replace_explicit_restores_backup_when_publish_fails(monkeypatch, tmp_path):
@@ -159,7 +183,7 @@ def test_replace_explicit_exposes_backup_when_publish_and_rollback_fail(monkeypa
         target_path = Path(target_path)
         if source_path.parent.name.startswith(".videoforge-staging-"):
             raise OSError("publish failed")
-        if ".videoforge-backup-" in source_path.name and target_path.name == "Existing Draft":
+        if source_path.parent.name == ".videoforge-backups" and target_path.name == "Existing Draft":
             raise PermissionError("rollback failed")
         return real_rename(source_path, target_path)
 

@@ -21,10 +21,14 @@ def select_draft_for_project(project: dict[str, Any], draft_root: Path) -> tuple
 
     safe_name = _sanitize_folder_name(project.get("name") or project.get("id") or "video")
     exact = draft_root / safe_name
-    if (exact / "draft_content.json").exists():
+    if not exact.name.startswith(".videoforge-") and (exact / "draft_content.json").exists():
         return exact, "project-name"
 
-    candidates = [p for p in draft_root.iterdir() if p.is_dir() and (p / "draft_content.json").exists()]
+    candidates = [
+        p for p in draft_root.iterdir()
+        if p.is_dir() and not p.name.startswith(".videoforge-")
+        and (p / "draft_content.json").exists()
+    ]
     if not candidates:
         raise FileNotFoundError("No readable JianYing drafts found")
     return max(candidates, key=lambda p: (p / "draft_content.json").stat().st_mtime), "latest"

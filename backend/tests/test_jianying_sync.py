@@ -75,6 +75,25 @@ def test_select_draft_for_project_prefers_project_name(tmp_path):
     assert matched_by == "project-name"
 
 
+def test_select_draft_for_project_ignores_internal_directories(tmp_path):
+    from adapters.jianying_sync import select_draft_for_project
+
+    visible = tmp_path / "Visible Draft"
+    visible.mkdir()
+    visible_content = visible / "draft_content.json"
+    visible_content.write_bytes(b"visible")
+    internal = tmp_path / ".videoforge-backups"
+    internal.mkdir()
+    internal_content = internal / "draft_content.json"
+    internal_content.write_bytes(b"internal")
+    internal_content.touch()
+
+    selected, matched_by = select_draft_for_project({"name": ".videoforge-backups"}, tmp_path)
+
+    assert selected == visible
+    assert matched_by == "latest"
+
+
 def test_sync_jianying_params_route_saves_updated_project(monkeypatch, tmp_path):
     from models.project import Project
     from routers import export
