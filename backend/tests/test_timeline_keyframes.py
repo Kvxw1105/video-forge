@@ -87,3 +87,15 @@ def test_truncating_repeated_visual_clip_removes_keyframes_past_new_end(tmp_path
     assert len(compiled) == 2
     assert compiled[1].start == 14.0
     assert compiled[1].keyframes[-1].time <= compiled[1].duration
+
+
+def test_repeated_visual_source_emits_each_keyframe_warning_once(tmp_path):
+    asset = tmp_path / "frame.png"
+    asset.write_bytes(b"png")
+    pattern = [{
+        "id": "clip_1", "assetPath": str(asset), "type": "image", "start": 0, "end": 14,
+        "keyframes": [{"property": "blur", "time": 1, "value": 1}],
+    }]
+    warnings = []
+    _expand_visuals(pattern, 42, warnings)
+    assert warnings.count("Clip clip_1 has unsupported keyframe property: blur") == 1

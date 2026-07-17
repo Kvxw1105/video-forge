@@ -386,11 +386,19 @@ def _expand_visuals(pattern: list[dict], target: float, warnings: list[str]) -> 
     pattern_end = max(float(segment["end"]) for segment in sources)
     if pattern_end <= 0:
         return []
+    prepared_sources = []
+    for segment in sources:
+        semantic_start = float(segment.get("start", 0) or 0)
+        semantic_duration = max(0.0, float(segment.get("end", 0) or 0) - semantic_start)
+        semantic_keyframes = _compile_visual_keyframes(
+            segment.get("keyframes") or [], semantic_duration, warnings, str(segment.get("id", "clip"))
+        )
+        prepared_sources.append((segment, semantic_start, semantic_duration, semantic_keyframes))
     cycle = 0
     cap = max(1, min(10000, int(target / 0.05) + len(sources) + 2))
     while cycle * pattern_end < target - 1e-6 and len(clips) < cap:
         offset = cycle * pattern_end
-        for position, segment in enumerate(sources):
+        for position, (segment, semantic_start, semantic_duration, semantic_keyframes) in enumerate(prepared_sources):
             start = offset + float(segment["start"])
             if start >= target - 1e-6:
                 break
@@ -398,11 +406,6 @@ def _expand_visuals(pattern: list[dict], target: float, warnings: list[str]) -> 
             duration = max(0.0, end - start)
             if duration <= 0:
                 continue
-            semantic_start = float(segment.get("start", 0) or 0)
-            semantic_duration = max(0.0, float(segment.get("end", 0) or 0) - semantic_start)
-            semantic_keyframes = _compile_visual_keyframes(
-                segment.get("keyframes") or [], semantic_duration, warnings, str(segment.get("id", "clip"))
-            )
             local_offset = start - (offset + semantic_start)
             child_keyframes = tuple(
                 item for item in semantic_keyframes
