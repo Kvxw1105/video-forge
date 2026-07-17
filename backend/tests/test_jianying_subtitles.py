@@ -83,8 +83,6 @@ def test_jianying_subtitles_are_exported_as_positioned_text_segments(monkeypatch
 
     importlib.reload(jianying)
     monkeypatch.setattr(jianying, "_preprocess_media_with_adjustments", lambda segments, adjustments, draft_dir: {})
-    monkeypatch.setattr(jianying, "_expand_segments_to_duration", lambda segments, total_duration: segments)
-    monkeypatch.setattr(jianying, "_apply_cue_points", lambda segments, cue_points: segments)
     monkeypatch.setattr(jianying, "_segment_chunks", lambda seg, limit: iter([(0.0, 2.0)]))
 
     asset_path = tmp_path / "asset.png"

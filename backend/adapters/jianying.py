@@ -5,6 +5,7 @@ import struct
 import subprocess
 from process_utils import run as run_process
 from shared.voiceover import select_active_voiceover
+from shared.timeline_compiler import compile_project_timeline
 import zlib
 from pathlib import Path
 from dataclasses import dataclass
@@ -22,66 +23,10 @@ from shared.render_params import (
 )
 
 
-def _iter_bgm_tracks(audio: dict):
-    """Yield normalized BGM tracks. New multi-track model wins; old single-file model is fallback."""
-    bgm = audio.get("bgm", {}) if audio else {}
-    tracks = bgm.get("tracks") or []
-    if tracks:
-        for t in tracks:
-            if t.get("file"):
-                yield {
-                    "file": t.get("file", ""),
-                    "volume": float(t.get("volume", 0.3)),
-                    "trimStart": float(t.get("trimStart", 0.0) or 0.0),
-                    "trimEnd": float(t.get("trimEnd", 0.0) or 0.0),
-                    "fadeIn": float(t.get("fadeIn", 0.0) or 0.0),
-                    "fadeOut": float(t.get("fadeOut", 0.0) or 0.0),
-                    "startAt": float(t.get("startAt", 0.0) or 0.0),
-                }
-        return
-    if bgm.get("file"):
-        yield {
-            "file": bgm.get("file", ""),
-            "volume": float(bgm.get("volume", 0.3)),
-            "trimStart": 0.0,
-            "trimEnd": 0.0,
-            "fadeIn": float(bgm.get("fadeIn", 0.0) or 0.0),
-            "fadeOut": float(bgm.get("fadeOut", 0.0) or 0.0),
-            "startAt": 0.0,
-        }
-
-
-def _track_play_window(track: dict, total_duration: float, full_duration: float) -> tuple[float, float, float]:
-    """Return (target_start, source_start, play_duration).
-
-    startAt is where audio appears in the video timeline; trimStart is where
-    audio starts inside the source file. Keep them separate.
-    """
-    target_start = max(0.0, float(track.get("startAt", 0.0) or 0.0))
-    source_start = max(0.0, float(track.get("trimStart", 0.0) or 0.0))
-    trim_end = float(track.get("trimEnd", 0.0) or 0.0)
-    source_end = trim_end if trim_end > source_start else full_duration
-    source_dur = max(0.0, source_end - source_start)
-    timeline_room = max(0.0, total_duration - target_start)
-    return round(target_start, 3), round(source_start, 3), round(min(source_dur, timeline_room), 3)
-
-
 def _active_voiceover(project: dict) -> dict:
     """Return active playable voiceover config; empty dict if none."""
     audio = project.get("audio", {}) if isinstance(project, dict) else {}
     return select_active_voiceover(audio)
-
-
-def _calc_duration(project: dict) -> float:
-    """推算视频总时长：激活配音偏移 + 配音 > 片段 > 字幕 > 5s 最小值"""
-    timeline = project.get("timeline", {}) if isinstance(project, dict) else {}
-    voiceover_start_at = max(0.0, float((timeline or {}).get("voiceoverStartAt", 0.0) or 0.0))
-    vo_cfg = _active_voiceover(project)
-    vo_path = vo_cfg.get("file", "")
-    vo_dur = _get_audio_duration(Path(vo_path)) if vo_path and Path(vo_path).exists() else 0
-    seg_dur = max((s.get("end", 0) for s in project.get("segments", [])), default=0)
-    sub_dur = max((s.get("end", 0) for s in project.get("subtitles", [])), default=0)
-    return max(5.0, voiceover_start_at + vo_dur, seg_dur, voiceover_start_at + sub_dur) + 0.5
 
 
 def _resolve_path(file_path: str) -> Path | None:
@@ -248,7 +193,11 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
     Returns:
         草稿文件夹路径
     """
-    canvas = project["canvas"]
+    compiled = compile_project_timeline(
+        project, cue_points,
+        duration_resolver=lambda path: _get_audio_duration(Path(path)),
+    )
+    canvas = compiled.canvas
     width = canvas["width"]
     height = canvas["height"]
     fps = canvas.get("fps", 30)
@@ -264,24 +213,21 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
         allow_replace=False
     )
 
-    total_duration = _calc_duration(project)
+    total_duration = compiled.total_duration
     IMAGE_LIMIT = 6.0
 
     # Pre-process media with brightness/contrast adjustments if needed
-    overlays = project.get("overlays", {})
+    overlays = compiled.overlays
     adjustments = overlays.get("adjustments", {}) if overlays else {}
     adj_map = _preprocess_media_with_adjustments(
-        project.get("segments", []), adjustments, draft_dir
+        compiled.visual_segments(), adjustments, draft_dir
     )
 
-    timeline = project.get("timeline", {}) if isinstance(project, dict) else {}
-    voiceover_start_at = max(0.0, float((timeline or {}).get("voiceoverStartAt", 0.0) or 0.0))
+    voiceover = compiled.voiceover_clips[0] if compiled.voiceover_clips else None
+    voiceover_start_at = voiceover.start if voiceover else 0.0
 
     # 1. Main image/video track
-    segments = project.get("segments", [])
-    if cue_points and segments:
-        segments = _apply_cue_points(segments, cue_points)
-    segments = _expand_segments_to_duration(segments, total_duration)
+    segments = compiled.visual_segments()
     if segments:
         script.add_track(TrackType.video, "main")
         main_track = script.tracks["main"]
@@ -326,25 +272,22 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
                 main_track.add_segment(v)
 
     # 2. BGM tracks — each track has independent timeline startAt and source trim
-    audio = project.get("audio", {})
-    bgm_tracks = list(_iter_bgm_tracks(audio))
+    bgm_tracks = list(compiled.bgm_clips)
     if bgm_tracks:
         script.add_track(TrackType.audio, "bgm")
         for i, track in enumerate(bgm_tracks):
-            bgm_path = _resolve_path(track.get("file", ""))
+            bgm_path = _resolve_path(track.file)
             if not bgm_path:
-                continue
-            full_dur = _get_audio_duration(bgm_path)
-            target_start, trim_start, play_dur = _track_play_window(track, total_duration, full_dur)
-            if play_dur <= 0:
                 continue
             a = AudioSegment(
                 str(bgm_path),
-                target_timerange=trange(f"{target_start}s", f"{play_dur}s"),
-                source_timerange=trange(f"{trim_start}s", f"{play_dur}s"),
-                volume=max(0.0, min(1.0, float(track.get("volume", 0.3))))
+                target_timerange=trange(f"{track.start}s", f"{track.duration}s"),
+                source_timerange=trange(f"{track.source_start}s", f"{track.duration}s"),
+                volume=max(0.0, min(1.0, track.volume))
             )
-            fade_in, fade_out = _audio_fade_seconds(track, play_dur)
+            fade_in, fade_out = _audio_fade_seconds(
+                {"fadeIn": track.fade_in, "fadeOut": track.fade_out}, track.duration
+            )
             if fade_in > 0 or fade_out > 0:
                 a.add_fade(f"{fade_in}s", f"{fade_out}s")
                 script.materials.audio_fades.append(a.fade)
@@ -352,32 +295,27 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
             script.tracks["bgm"].add_segment(a)
 
     # 2.5 SFX tracks — local sound effects at explicit timeline positions
-    sfx_tracks = audio.get("sfx", []) if isinstance(audio, dict) else []
+    sfx_tracks = list(compiled.sfx_clips)
     if sfx_tracks:
         script.add_track(TrackType.audio, "sfx")
         for i, track in enumerate(sfx_tracks):
-            sfx_path = _resolve_path(track.get("file", ""))
+            sfx_path = _resolve_path(track.file)
             if not sfx_path:
-                continue
-            full_dur = _get_audio_duration(sfx_path)
-            target_start, trim_start, play_dur = _track_play_window(track, total_duration, full_dur)
-            if play_dur <= 0:
                 continue
             a = AudioSegment(
                 str(sfx_path),
-                target_timerange=trange(f"{target_start}s", f"{play_dur}s"),
-                source_timerange=trange(f"{trim_start}s", f"{play_dur}s"),
-                volume=max(0.0, min(1.0, float(track.get("volume", 0.8))))
+                target_timerange=trange(f"{track.start}s", f"{track.duration}s"),
+                source_timerange=trange(f"{track.source_start}s", f"{track.duration}s"),
+                volume=max(0.0, min(1.0, track.volume))
             )
             script.add_material(a.material_instance)
             script.tracks["sfx"].add_segment(a)
 
     # 3. Voiceover track — 用当前激活配音的实际音频时长
-    voiceover_cfg = _active_voiceover(project)
-    voiceover_path = _resolve_path(voiceover_cfg.get("file", ""))
-    voiceover_vol = float(voiceover_cfg.get("volume", 1.0))
+    voiceover_path = _resolve_path(voiceover.file) if voiceover else None
+    voiceover_vol = voiceover.volume if voiceover else 1.0
     if voiceover_path:
-        dur = _get_audio_duration(voiceover_path)
+        dur = voiceover.duration
         if dur > 0:
             script.add_track(TrackType.audio, "voiceover")
             va = AudioSegment(
@@ -389,9 +327,9 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
             script.tracks["voiceover"].add_segment(va)
 
     # 4. Subtitle track (if enabled)
-    overlays = project.get("overlays", {})
+    overlays = compiled.overlays
     subtitle_enabled = overlays.get("subtitle_enabled", True) if overlays else True
-    subtitles = project.get("subtitles", [])
+    subtitles = list(compiled.subtitles)
     if subtitle_enabled and subtitles:
         script.add_track(TrackType.text, "subtitles")
         subtitle_track = script.tracks["subtitles"]
@@ -406,8 +344,8 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
             _, _, horiz = position.partition("_")
             text_align = {"left": 1, "right": 2}.get(horiz, 0)
             subtitle_style = TextStyle(size=tsize, align=text_align, auto_wrapping=True)
-            s = max(0.0, float(sub.get("start", 0.0)) + voiceover_start_at)
-            e = max(s, float(sub.get("end", 0.0)) + voiceover_start_at)
+            s = max(0.0, float(sub.get("start", 0.0)))
+            e = max(s, float(sub.get("end", 0.0)))
             ts = TextSegment(
                 txt,
                 timerange=trange(f"{s}s", f"{max(0.01, e - s)}s"),
@@ -493,32 +431,6 @@ def _render_jianying_draft(project: dict, base_dir: Path, safe_name: str, cue_po
     return draft_dir
 
 
-def _expand_segments_to_duration(segments: list[dict], target_duration: float) -> list[dict]:
-    if not segments or target_duration <= 0:
-        return []
-    source = []
-    for seg in segments:
-        duration = float(seg.get("end", 0)) - float(seg.get("start", 0))
-        if duration > 0:
-            source.append((seg, duration))
-    if not source:
-        return []
-    out = []
-    cursor = 0.0
-    idx = 0
-    max_items = max(1, min(10000, int(target_duration / 0.05) + len(source) + 2))
-    while cursor < target_duration - 1e-6 and len(out) < max_items:
-        seg, source_duration = source[idx % len(source)]
-        dur = min(source_duration, target_duration - cursor)
-        item = dict(seg)
-        item["start"] = cursor
-        item["end"] = cursor + dur
-        out.append(item)
-        cursor += dur
-        idx += 1
-    return out
-
-
 def _audio_fade_seconds(track: dict, duration: float) -> tuple[float, float]:
     """Clamp fade-in/out so fade durations never exceed the audio segment length."""
     fade_in = max(0.0, float(track.get("fadeIn", 0.0) or 0.0))
@@ -530,26 +442,6 @@ def _audio_fade_seconds(track: dict, duration: float) -> tuple[float, float]:
         fade_in *= scale
         fade_out *= scale
     return round(fade_in, 3), round(fade_out, 3)
-
-
-def _apply_cue_points(segments: list[dict], cue_points: list[dict]) -> list[dict]:
-    """Apply cue-point timing to source segments without changing their order/assets."""
-    out = []
-    for i, seg in enumerate(segments):
-        if i >= len(cue_points):
-            break
-        cp = cue_points[i]
-        start = float(cp.get("time", seg.get("start", 0)) or 0.0)
-        duration = float(cp.get("duration", 0) or 0.0)
-        if duration <= 0:
-            duration = float(seg.get("end", 0)) - float(seg.get("start", 0))
-        if duration <= 0:
-            continue
-        item = dict(seg)
-        item["start"] = start
-        item["end"] = start + duration
-        out.append(item)
-    return out
 
 
 def _segment_chunks(seg: dict, image_limit: float = 6.0) -> list[tuple[float, float]]:

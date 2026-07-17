@@ -16,13 +16,12 @@ from shared.render_params import (
     normalize_hex,
     overlay_to_ffmpeg_exprs,
 )
-from shared.voiceover import select_active_voiceover
+from shared.timeline_compiler import compile_project_timeline
 
 logger = logging.getLogger(__name__)
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff"}
-MEDIA_EXTS = VIDEO_EXTS | IMAGE_EXTS
 
 CHINESE_FONT_CANDIDATES = [
     r"C:\Windows\Fonts\msyh.ttc",
@@ -56,11 +55,11 @@ def _drawtext_font_arg() -> str:
 
 
 def render_preview(project: dict, output_path: Path, cue_points: list = None) -> Path:
-    segments = project.get("segments", [])
-    subtitles = project.get("subtitles", [])
-    audio = project.get("audio", {})
-    overlays = project.get("overlays", {})
-    canvas = project.get("canvas", {})
+    compiled = compile_project_timeline(project, cue_points, duration_resolver=_get_duration)
+    segments = compiled.visual_segments()
+    subtitles = list(compiled.subtitles)
+    overlays = compiled.overlays
+    canvas = compiled.canvas
     subtitle_enabled = overlays.get("subtitle_enabled", True) if overlays else True
 
     # Read adjustments (brightness: -1~1, contrast: 0~2)
@@ -77,21 +76,11 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     bg_color = bg.get("value", "#000000") if isinstance(bg, dict) else "#000000"
     bg_ffmpeg = bg_color.lstrip('#') if bg_color.startswith('#') else '000000'
 
-    # --- Duration: max of active voiceover and segments ---
-    def _active_voiceover(audio_cfg: dict) -> dict:
-        return select_active_voiceover(audio_cfg)
-
-    timeline = project.get("timeline", {}) or {}
-    voiceover_start_at = max(0.0, float(timeline.get("voiceoverStartAt", 0.0) or 0.0))
-
-    vo_cfg = _active_voiceover(audio)
-    vo_path = vo_cfg.get("file", "")
-    vo_duration = _get_duration(vo_path) if vo_path and Path(vo_path).exists() else 0
-    sub_duration = max((s.get("end", 0) for s in subtitles), default=0)
-    seg_duration = max((s.get("end", 0) for s in segments), default=0)
-
-    dur = max(5.0, voiceover_start_at + vo_duration, seg_duration, voiceover_start_at + sub_duration) + 0.5
-    pad_audio = vo_duration > 0 and voiceover_start_at + vo_duration < dur
+    voiceover = compiled.voiceover_clips[0] if compiled.voiceover_clips else None
+    voiceover_start_at = voiceover.start if voiceover else 0.0
+    vo_path = voiceover.file if voiceover else ""
+    vo_duration = voiceover.duration if voiceover else 0.0
+    dur = compiled.total_duration
 
     # --- Collect unique media paths ---
     media_paths = []
@@ -114,24 +103,16 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
 
     # --- Pre-mix ALL audio into a single WAV file ---
     # This avoids amix filter_complex issues with cover art in video segment inputs.
-    vo_vol = vo_cfg.get("volume", 1.0) if vo_cfg else 1.0
-
-    timeline = project.get("timeline", {}) or {}
-    voiceover_start_at = max(0.0, float(timeline.get("voiceoverStartAt", 0.0) or 0.0))
-
-    bgm_config = audio.get("bgm", {})
-    bgm_tracks = bgm_config.get("tracks", [])
-    bgm_single_file = bgm_config.get("file", "")
-    bgm_single_vol = bgm_config.get("volume", 0.3)
+    vo_vol = voiceover.volume if voiceover else 1.0
+    bgm_tracks = [clip.to_track() for clip in compiled.bgm_clips]
 
     # Prepare BGM/SFX: strip cover art, apply volume, timeline startAt, trim, fade
-    bgm_fade_in = float(bgm_config.get("fadeIn", 0.0) or 0.0)
-    bgm_fade_out = float(bgm_config.get("fadeOut", 0.0) or 0.0)
-    prepared_bgm = _prepare_bgm(bgm_tracks, bgm_single_file, bgm_single_vol, output_path.parent,
-                                fade_in=bgm_fade_in, fade_out=bgm_fade_out)
+    prepared_bgm = _prepare_bgm(bgm_tracks, "", 0.3, output_path.parent)
     bgm_prepared_path = prepared_bgm[0] if prepared_bgm else None
     bgm_already_baked_vol = prepared_bgm[1] if prepared_bgm else 1.0  # volume already baked into file
-    sfx_prepared_path = _prepare_multi_bgm(audio.get("sfx", []) or [], output_path.parent) if isinstance(audio, dict) else ""
+    sfx_prepared_path = _prepare_multi_bgm(
+        [clip.to_track() for clip in compiled.sfx_clips], output_path.parent
+    )
 
     # Pre-mix voiceover + BGM + SFX into single WAV
     # Use bgm_already_baked_vol (1.0) since _prepare_bgm already applied volume to the file
@@ -141,21 +122,7 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     n_media = len(media_paths)
     n_audio = 1 if has_mixed_audio else 0
 
-    # --- Apply cue-point-driven timing before expanding timeline ---
-    if cue_points and segments:
-        for i, seg in enumerate(segments):
-            if i < len(cue_points):
-                cp = cue_points[i]
-                seg["start"] = cp.get("time", seg.get("start", 0))
-                seg["end"] = cp.get("time", 0) + cp.get("duration", seg.get("end", 0) - seg.get("start", 0))
-        if cue_points:
-            last_cp = cue_points[-1]
-            dur = max(dur, last_cp.get("time", 0) + last_cp.get("duration", 3) + 0.5)
-
-    # Expand segment timeline so short image/video pools loop until the target duration.
-    # Filter out segments referencing non-media files (.zip, .json, etc.), but keep black blocks.
-    valid_segments = [s for s in segments if s.get("type") == "black" or Path(s.get("assetPath", "")).suffix.lower() in MEDIA_EXTS]
-    render_segments = _expand_segments_to_duration(valid_segments, dur)
+    render_segments = segments
 
     # --- Build FFmpeg command ---
     cmd = ["ffmpeg", "-y"]
@@ -189,7 +156,7 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     if total_inputs == 0:
         cmd.extend(["-f", "lavfi", "-i", f"color=c=0x{bg_ffmpeg}:s={w}x{h}:d={dur}:r=30"])
         lavfi_idx = total_inputs + n_audio
-        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, voiceover_start_at)
+        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, 0.0)
         chain = f"[{lavfi_idx}:v]"
         filters = [x for x in (drawtexts, overlay_drawtexts) if x]
         if filters:
@@ -206,7 +173,7 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
         sc = xf.get("scale", 0.85)
         fit = xf.get("fit", "contain")
         vf = _build_scale_filter(w, h, sc, fit, bg_ffmpeg)
-        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, voiceover_start_at)
+        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, 0.0)
         if drawtexts:
             vf += "," + drawtexts
         if overlay_drawtexts:
@@ -232,7 +199,7 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
         concat_in = "".join(f"[v{i}]" for i in range(total_inputs))
         fc_parts.append(f"{concat_in}concat=n={total_inputs}:v=1:a=0[vconcat]")
 
-        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, voiceover_start_at)
+        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, 0.0)
         chain = "[vconcat]"
         if drawtexts:
             chain += drawtexts
@@ -279,41 +246,6 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
 
     logger.info("Render OK: %s (%d bytes)", output_path, output_path.stat().st_size)
     return output_path
-
-
-def _expand_segments_to_duration(segments: list[dict], target_duration: float) -> list[dict]:
-    """Return sequential segments that fill target_duration by looping the source list.
-
-    Source segment start/end are treated as each item's natural display duration.
-    The returned timeline always starts at 0 and clips the last segment to the target.
-    """
-    if not segments or target_duration <= 0:
-        return []
-
-    source = []
-    for seg in segments:
-        duration = float(seg.get("end", 0)) - float(seg.get("start", 0))
-        if duration <= 0:
-            continue
-        source.append((seg, duration))
-    if not source:
-        return []
-
-    out = []
-    cursor = 0.0
-    idx = 0
-    # ponytail: hard cap prevents an accidental infinite loop on corrupt project data.
-    max_items = max(1, min(10000, int(target_duration / 0.05) + len(source) + 2))
-    while cursor < target_duration - 1e-6 and len(out) < max_items:
-        seg, source_duration = source[idx % len(source)]
-        dur = min(source_duration, target_duration - cursor)
-        item = dict(seg)
-        item["start"] = cursor
-        item["end"] = cursor + dur
-        out.append(item)
-        cursor += dur
-        idx += 1
-    return out
 
 
 def _prepare_bgm(tracks: list[dict], single_file: str, single_volume: float, work_dir: Path,

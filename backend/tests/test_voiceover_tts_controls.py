@@ -202,8 +202,6 @@ def test_voiceover_volume_is_serialized_for_jianying(monkeypatch, tmp_path):
     importlib.reload(jianying)
 
     monkeypatch.setattr(jianying, "_preprocess_media_with_adjustments", lambda segments, adjustments, draft_dir: {})
-    monkeypatch.setattr(jianying, "_expand_segments_to_duration", lambda segments, total_duration: segments)
-    monkeypatch.setattr(jianying, "_apply_cue_points", lambda segments, cue_points: segments)
     monkeypatch.setattr(jianying, "_segment_chunks", lambda seg, limit: iter([(0.0, 1.0)]))
     monkeypatch.setattr(jianying, "_resolve_path", lambda file_path: Path(file_path) if file_path else None)
     monkeypatch.setattr(jianying, "_get_audio_duration", lambda path: 2.0)
