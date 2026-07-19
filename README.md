@@ -18,6 +18,19 @@ npm run dev
 
 打开 http://localhost:5173
 
+## 本地生产运行模式
+
+构建前端后，只需启动一个后端进程即可运行完整应用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-frontend.ps1
+python backend\launcher.py
+```
+
+默认监听 `127.0.0.1:8765`；如果端口被占用，启动器会继续尝试后续本地端口，并自动打开浏览器。使用 `--no-browser` 可关闭自动打开，使用 `--port 9000` 可指定端口。前端构建缺失时，启动器会停止并提示运行构建命令。
+
+开发模式仍保持原方式：前端运行 `npm run dev`，后端运行 `python -m uvicorn main:app --port 8000`。生产运行模式是本地运行壳，不是 EXE 或安装程序。
+
 `requirements.txt` 包含运行 MCP Server 和音频分析所需的依赖。开发及测试环境使用：
 
 ```bash
