@@ -1,4 +1,3 @@
-import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pathlib import Path
@@ -6,8 +5,8 @@ from services.project_service import get_project, _project_dir, resolve_project_
 from services.jobs import start_job
 from engines.renderer import render_preview
 from engines.audio_analyzer import analyze_audio, generate_cue_points
-from process_utils import run as run_process
 from shared.voiceover import select_active_voiceover
+from shared.media_probe import probe_media_duration
 
 router = APIRouter(tags=["render"])
 
@@ -94,13 +93,4 @@ def _safe_cue_points(project: dict, image_count: int, mode: str):
 
 
 def _get_mp4_duration(path: Path) -> float:
-    """Quick ffprobe duration."""
-    try:
-        r = run_process(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(path)],
-            capture_output=True, text=True, timeout=10,
-        )
-        data = json.loads(r.stdout)
-        return float(data.get("format", {}).get("duration", 0))
-    except Exception:
-        return 0.0
+    return probe_media_duration(path)

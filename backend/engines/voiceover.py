@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from config import MANBO_API_KEY, MANBO_API_URL, MANBO_MAX_CHARS
 from process_utils import run as run_process
+from shared.media_probe import probe_media_duration
 from shared.text_processing import normalize_script_for_tts, split_script_for_subtitles
 
 EDGE_VOICE = "zh-CN-XiaoxiaoNeural"
@@ -100,20 +101,8 @@ def _split_long_sentence(text: str, max_chars: int) -> list[str]:
 # ── 音频时长探测 ──────────────────────────────────────────
 
 def probe_duration(path: Path) -> float:
-    """用 ffprobe 获取音频实际时长（秒）"""
-    try:
-        r = run_process(
-            ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_streams', str(path)],
-            capture_output=True, text=True, timeout=10
-        )
-        data = json.loads(r.stdout)
-        for s in data.get('streams', []):
-            dur = s.get('duration')
-            if dur:
-                return float(dur)
-    except Exception:
-        pass
-    return 0.0
+    """Backward-compatible alias for the shared media duration probe."""
+    return probe_media_duration(path)
 
 
 # ── 曼波 VIP API ────────────────────────────────────────────
