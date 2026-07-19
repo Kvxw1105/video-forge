@@ -30,7 +30,11 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
         "name": "Parity",
         "canvas": {"width": 1080, "height": 1920, "fps": 30},
         "segments": [
-            {"id": "first", "assetPath": str(first), "type": "image", "start": 0, "end": 1},
+            {"id": "first", "assetPath": str(first), "type": "image", "start": 0, "end": 1,
+             "keyframes": [
+                 {"property": "scale_x", "time": 0, "value": 1.0},
+                 {"property": "scale_x", "time": 1, "value": 1.2},
+             ]},
             {"id": "second", "assetPath": str(second), "type": "image", "start": 1, "end": 2},
         ],
         "assets": [],
@@ -141,9 +145,10 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
             self.fade = args
 
         def add_keyframe(self, *args):
-            return None
+            video_keyframe_calls.append((self.path, args))
 
     video_ranges = []
+    video_keyframe_calls = []
     text_ranges = {}
 
     class FakeVideoSegment(FakeSegment):
@@ -225,6 +230,10 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
     assert audio_ranges[str(voice)][0] == (0.5, 2.0)
     assert audio_ranges[str(bgm)] == ((1.0, 4.5), (2.0, 4.5))
     assert audio_ranges[str(sfx)] == ((2.0, 3.0), (1.0, 3.0))
+    assert len(video_keyframe_calls) >= 2
+    assert [(call[1][0].name, call[1][1], call[1][2]) for call in video_keyframe_calls[:2]] == [
+        ("scale_x", "0s", 1.0), ("scale_x", "1s", 1.2)
+    ]
     assert renderer_mix[0][0][4] == 5.5
 
 

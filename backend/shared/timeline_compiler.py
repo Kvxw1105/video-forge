@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Callable
 
@@ -17,6 +18,14 @@ SUPPORTED_VISUAL_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
 
 
 @dataclass(frozen=True)
+class CompiledKeyframe:
+    property: str
+    time: float
+    value: float
+    easing: str = "linear"
+
+
+@dataclass(frozen=True)
 class CompiledVisualClip:
     id: str
     asset_path: str
@@ -28,6 +37,7 @@ class CompiledVisualClip:
     animation: dict | None
     source_start: float = 0.0
     bg_color: str | None = None
+    keyframes: tuple[CompiledKeyframe, ...] = ()
 
     def to_segment(self) -> dict:
         segment = {
@@ -42,6 +52,11 @@ class CompiledVisualClip:
         }
         if self.bg_color is not None:
             segment["bgColor"] = self.bg_color
+        if self.keyframes:
+            segment["keyframes"] = [
+                {"property": item.property, "time": item.time, "value": item.value, "easing": item.easing}
+                for item in self.keyframes
+            ]
         return segment
 
 
@@ -134,7 +149,7 @@ def compile_project_timeline(
     content_duration = max(content_duration, pattern_end)
     tail_padding = 0.5
     total_duration = round(content_duration + tail_padding, 6)
-    visual_clips = _expand_visuals(pattern, content_duration)
+    visual_clips = _expand_visuals(pattern, content_duration, warnings)
     bgm_clips = _compile_audio_tracks(audio.get("bgm") or {}, total_duration, duration_resolver, warnings, "bgm")
     sfx_clips = _compile_audio_tracks(audio.get("sfx") or [], total_duration, duration_resolver, warnings, "sfx")
 
@@ -309,7 +324,108 @@ def _validate_visual_sources(
     return valid
 
 
-def _expand_visuals(pattern: list[dict], target: float) -> list[CompiledVisualClip]:
+SUPPORTED_VISUAL_KEYFRAME_PROPERTIES = {
+    "position_x", "position_y", "scale_x", "scale_y", "rotation", "opacity",
+}
+_KEYFRAME_TIME_EPSILON = 1e-6
+
+
+def interpolate_keyframe_value(
+    keyframes: tuple[CompiledKeyframe, ...], property_name: str, at_time: float,
+) -> float | None:
+    points = sorted(
+        (item for item in keyframes if item.property == property_name),
+        key=lambda item: item.time,
+    )
+    if not points:
+        return None
+    if at_time <= points[0].time:
+        return points[0].value
+    if at_time >= points[-1].time:
+        return points[-1].value
+    for left, right in zip(points, points[1:]):
+        if left.time <= at_time <= right.time:
+            if right.time == left.time:
+                return right.value
+            ratio = (at_time - left.time) / (right.time - left.time)
+            return left.value + ratio * (right.value - left.value)
+    return points[-1].value
+
+
+def slice_keyframes_for_window(
+    keyframes: tuple[CompiledKeyframe, ...], window_start: float, window_duration: float,
+) -> tuple[CompiledKeyframe, ...]:
+    window_end = window_start + window_duration
+    result: dict[tuple[str, float], CompiledKeyframe] = {}
+    properties = list(dict.fromkeys(item.property for item in keyframes))
+    for property_name in properties:
+        start_value = interpolate_keyframe_value(keyframes, property_name, window_start)
+        end_value = interpolate_keyframe_value(keyframes, property_name, window_end)
+        if start_value is not None:
+            result[(property_name, 0.0)] = CompiledKeyframe(property_name, 0.0, start_value, "linear")
+        for item in keyframes:
+            if item.property == property_name and window_start < item.time < window_end:
+                local_time = round(item.time - window_start, 6)
+                result[(property_name, local_time)] = CompiledKeyframe(
+                    item.property, local_time, item.value, item.easing
+                )
+        if end_value is not None:
+            local_end = round(window_duration, 6)
+            result[(property_name, local_end)] = CompiledKeyframe(
+                property_name, local_end, end_value, "linear"
+            )
+    return tuple(sorted(result.values(), key=lambda item: (item.property, item.time)))
+
+
+def _compile_visual_keyframes(
+    raw_keyframes: list, clip_duration: float, warnings: list[str], clip_id: str,
+) -> tuple[CompiledKeyframe, ...]:
+    if not raw_keyframes:
+        return ()
+    dedup: dict[tuple[str, float], CompiledKeyframe] = {}
+    for raw in raw_keyframes:
+        if not isinstance(raw, dict):
+            warnings.append(f"Clip {clip_id} has invalid keyframe object")
+            continue
+        property_name = raw.get("property")
+        if property_name not in SUPPORTED_VISUAL_KEYFRAME_PROPERTIES:
+            warnings.append(f"Clip {clip_id} has unsupported keyframe property: {property_name}")
+            continue
+        try:
+            time = float(raw.get("time"))
+        except (TypeError, ValueError):
+            warnings.append(f"Clip {clip_id} keyframe {property_name} has invalid time")
+            continue
+        if not math.isfinite(time) or time < 0 or time > clip_duration + _KEYFRAME_TIME_EPSILON:
+            warnings.append(f"Clip {clip_id} keyframe {property_name} time is outside clip duration")
+            continue
+        if abs(time - clip_duration) <= _KEYFRAME_TIME_EPSILON:
+            time = clip_duration
+        try:
+            value = float(raw.get("value"))
+        except (TypeError, ValueError):
+            warnings.append(f"Clip {clip_id} keyframe {property_name} has invalid value")
+            continue
+        if not math.isfinite(value):
+            warnings.append(f"Clip {clip_id} keyframe {property_name} value is not finite")
+            continue
+        if property_name in {"scale_x", "scale_y"} and value <= 0:
+            warnings.append(f"Clip {clip_id} keyframe {property_name} value must be positive")
+            continue
+        if property_name == "opacity":
+            clamped = max(0.0, min(1.0, value))
+            if clamped != value:
+                warnings.append(f"Clip {clip_id} keyframe opacity was clamped to [0, 1]")
+            value = clamped
+        easing = str(raw.get("easing", "linear") or "linear")
+        if easing != "linear":
+            warnings.append(f"Clip {clip_id} keyframe {property_name} uses unsupported easing: {easing}")
+            easing = "linear"
+        dedup[(property_name, round(time, 6))] = CompiledKeyframe(property_name, round(time, 6), value, easing)
+    return tuple(sorted(dedup.values(), key=lambda item: (item.property, item.time)))
+
+
+def _expand_visuals(pattern: list[dict], target: float, warnings: list[str]) -> list[CompiledVisualClip]:
     sources = [segment for segment in pattern if float(segment.get("end", 0) or 0) > float(segment.get("start", 0) or 0)]
     if not sources:
         return []
@@ -317,11 +433,19 @@ def _expand_visuals(pattern: list[dict], target: float) -> list[CompiledVisualCl
     pattern_end = max(float(segment["end"]) for segment in sources)
     if pattern_end <= 0:
         return []
+    prepared_sources = []
+    for segment in sources:
+        semantic_start = float(segment.get("start", 0) or 0)
+        semantic_duration = max(0.0, float(segment.get("end", 0) or 0) - semantic_start)
+        semantic_keyframes = _compile_visual_keyframes(
+            segment.get("keyframes") or [], semantic_duration, warnings, str(segment.get("id", "clip"))
+        )
+        prepared_sources.append((segment, semantic_start, semantic_duration, semantic_keyframes))
     cycle = 0
     cap = max(1, min(10000, int(target / 0.05) + len(sources) + 2))
     while cycle * pattern_end < target - 1e-6 and len(clips) < cap:
         offset = cycle * pattern_end
-        for position, segment in enumerate(sources):
+        for position, (segment, semantic_start, semantic_duration, semantic_keyframes) in enumerate(prepared_sources):
             start = offset + float(segment["start"])
             if start >= target - 1e-6:
                 break
@@ -329,6 +453,13 @@ def _expand_visuals(pattern: list[dict], target: float) -> list[CompiledVisualCl
             duration = max(0.0, end - start)
             if duration <= 0:
                 continue
+            local_offset = start - (offset + semantic_start)
+            if abs(local_offset) <= _KEYFRAME_TIME_EPSILON and abs(duration - semantic_duration) <= _KEYFRAME_TIME_EPSILON:
+                child_keyframes = semantic_keyframes
+            else:
+                child_keyframes = slice_keyframes_for_window(
+                    semantic_keyframes, window_start=local_offset, window_duration=duration,
+                )
             clips.append(CompiledVisualClip(
                 id=f"{segment.get('id', 'clip')}__c{cycle}_p{position}",
                 asset_path=str(segment.get("assetPath", "") or ""),
@@ -338,6 +469,7 @@ def _expand_visuals(pattern: list[dict], target: float) -> list[CompiledVisualCl
                 animation=deepcopy(segment.get("animation")),
                 source_start=float(segment.get("sourceStart", 0) or 0),
                 bg_color=segment.get("bgColor"),
+                keyframes=child_keyframes,
             ))
         cycle += 1
     return clips

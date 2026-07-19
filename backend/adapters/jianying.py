@@ -5,6 +5,8 @@ import struct
 import subprocess
 from process_utils import run as run_process
 from shared.timeline_compiler import CompiledTimeline, compile_project_timeline
+from shared.timeline_compiler import CompiledKeyframe
+from adapters.jianying_keyframes import apply_keyframes_to_video_segment, lower_keyframes_for_segment
 from shared.media_probe import probe_media_duration
 import zlib
 from pathlib import Path
@@ -149,9 +151,13 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     staging_root = base_dir / f".videoforge-staging-{uuid4().hex}"
     try:
         staging_root.mkdir()
-        staged_draft = _render_jianying_draft(
+        rendered = _render_jianying_draft(
             staging_root, final_name, compiled
         )
+        if isinstance(rendered, tuple):
+            staged_draft, adapter_warnings = rendered
+        else:  # compatibility for focused tests replacing the renderer
+            staged_draft, adapter_warnings = rendered, ()
         if policy == "create_new":
             final_path = base_dir / final_name
             _rename_directory(staged_draft, final_path)
@@ -173,10 +179,11 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
                     ) from rollback_error
                 raise
         _fix_meta_paths(final_path, final_name)
+        all_warnings = tuple(dict.fromkeys((*compiled.warnings, *adapter_warnings)))
         return DraftWriteResult(
             policy, final_path,
             source_draft if policy == "replace_explicit" else None,
-            backup_path, revision, tuple(compiled.warnings),
+            backup_path, revision, all_warnings,
         )
     finally:
         if staging_root.exists():
@@ -187,7 +194,7 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
 
 def _render_jianying_draft(
     base_dir: Path, safe_name: str, compiled_timeline: CompiledTimeline,
-) -> Path:
+) -> tuple[Path, tuple[str, ...]]:
     """
     生成剪映草稿。
 
@@ -198,6 +205,7 @@ def _render_jianying_draft(
         草稿文件夹路径
     """
     compiled = compiled_timeline
+    adapter_warnings: list[str] = []
     canvas = compiled.canvas
     width = canvas["width"]
     height = canvas["height"]
@@ -267,6 +275,21 @@ def _render_jianying_draft(
                 target_timerange=trange(f"{seg_start}s", f"{duration}s"),
                 clip_settings=clip,
             )
+            raw_keyframes = tuple(
+                CompiledKeyframe(
+                    str(item.get("property")), float(item.get("time", 0)),
+                    float(item.get("value", 0)), str(item.get("easing", "linear") or "linear"),
+                )
+                for item in (seg.get("keyframes") or [])
+            )
+            lowered_keyframes = lower_keyframes_for_segment(
+                semantic_keyframes=raw_keyframes,
+                semantic_duration=float(seg.get("_semanticDuration", duration) or duration),
+                child_start=float(seg.get("_semanticOffset", 0) or 0),
+                child_duration=duration,
+                warnings=adapter_warnings,
+            )
+            apply_keyframes_to_video_segment(v, lowered_keyframes, adapter_warnings)
             script.add_material(v.material_instance)
             main_track.add_segment(v)
 
@@ -427,7 +450,7 @@ def _render_jianying_draft(
     script.save()
 
     # 如果直接导出到剪映草稿目录，修正 draft_meta_info.json 的路径
-    return draft_dir
+    return draft_dir, tuple(dict.fromkeys(adapter_warnings))
 
 
 def _lower_jianying_visual_segments(
@@ -449,6 +472,8 @@ def _lower_jianying_visual_segments(
             item = dict(segment)
             item["id"] = f"{segment.get('id', 'clip')}__jy{part}"
             item["start"], item["end"] = cursor, part_end
+            item["_semanticOffset"] = round(cursor - start, 6)
+            item["_semanticDuration"] = round(end - start, 6)
             lowered.append(item)
             cursor = part_end
             part += 1

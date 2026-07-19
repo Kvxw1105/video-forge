@@ -233,3 +233,13 @@ def test_generate_compiles_once_and_propagates_warnings(monkeypatch, tmp_path):
     assert len(compile_calls) == 1
     assert result.warnings == ("missing asset",)
     assert result.to_metadata()["warnings"] == ["missing asset"]
+
+
+def test_generate_merges_adapter_warnings_into_result(monkeypatch, tmp_path):
+    def render_with_warning(base_dir, draft_name, compiled):
+        return _fake_render(base_dir, draft_name, compiled), ("adapter warning sentinel",)
+
+    monkeypatch.setattr(jianying, "_render_jianying_draft", render_with_warning)
+    result = jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+    assert result.warnings == ("adapter warning sentinel",)
+    assert result.to_metadata()["warnings"] == ["adapter warning sentinel"]
