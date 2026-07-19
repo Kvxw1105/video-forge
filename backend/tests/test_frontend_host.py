@@ -46,3 +46,28 @@ def test_spa_fallback_rejects_paths_outside_dist(tmp_path):
 def test_production_mode_requires_index_html(tmp_path):
     with pytest.raises(RuntimeError, match="Frontend production build not found"):
         create_app(serve_frontend=True, frontend_dist=tmp_path / "missing-dist")
+
+
+@pytest.mark.parametrize("assets_setup", ["missing", "empty"])
+def test_production_mode_requires_non_empty_assets_directory(tmp_path, assets_setup):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html>VideoForge</html>", encoding="utf-8")
+    if assets_setup == "empty":
+        (dist / "assets").mkdir()
+    with pytest.raises(RuntimeError, match="Frontend assets not found"):
+        create_app(serve_frontend=True, frontend_dist=dist)
+
+
+@pytest.mark.parametrize("path", ["/favicon.ico", "/missing.css", "/missing.js", "/manifest.webmanifest", "/robots.txt"])
+def test_missing_file_like_paths_return_json_404(tmp_path, path):
+    client = TestClient(create_app(serve_frontend=True, frontend_dist=_dist(tmp_path)))
+    response = client.get(path)
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+
+
+def test_nested_route_without_file_suffix_still_returns_spa(tmp_path):
+    client = TestClient(create_app(serve_frontend=True, frontend_dist=_dist(tmp_path)))
+    assert client.get("/settings/appearance").status_code == 200
+    assert client.get("/editor/project_123/details").status_code == 200

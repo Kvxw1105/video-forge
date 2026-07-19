@@ -19,9 +19,16 @@ def resolve_frontend_dist(frontend_dist: str | Path | None = None) -> Path:
 
 def validate_frontend_dist(frontend_dist: str | Path | None = None) -> Path:
     dist = resolve_frontend_dist(frontend_dist)
-    if not (dist / "index.html").is_file():
+    index = dist / "index.html"
+    assets = dist / "assets"
+    if not index.is_file():
         raise RuntimeError(
             f"Frontend production build not found: {dist}\n\n"
+            "Run:\ncd frontend\nnpm install\nnpm run build"
+        )
+    if not assets.is_dir() or not any(path.is_file() for path in assets.iterdir()):
+        raise RuntimeError(
+            f"Frontend assets not found: {assets}\n\n"
             "Run:\ncd frontend\nnpm install\nnpm run build"
         )
     return dist
@@ -49,6 +56,10 @@ def mount_frontend(app: FastAPI, frontend_dist: str | Path | None = None) -> Fas
             candidate.relative_to(dist)
         except ValueError:
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-        return FileResponse(candidate if candidate.is_file() else index)
+        if candidate.is_file():
+            return FileResponse(candidate)
+        if Path(full_path).suffix:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return FileResponse(index)
 
     return app

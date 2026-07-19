@@ -31,6 +31,8 @@ def is_port_available(port: int) -> bool:
 
 def select_port(requested: int | None) -> int:
     if requested is not None:
+        if not 1 <= requested <= 65535:
+            raise ValueError("Port must be between 1 and 65535")
         if not is_port_available(requested):
             raise RuntimeError(f"Port {requested} is unavailable")
         return requested

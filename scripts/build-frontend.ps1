@@ -13,4 +13,6 @@ try {
 }
 $index = Join-Path $frontend 'dist/index.html'
 if (-not (Test-Path $index)) { throw "Frontend build did not produce $index" }
+$assets = Join-Path $frontend 'dist/assets'
+if (-not (Test-Path $assets -PathType Container) -or -not (Get-ChildItem $assets -File | Select-Object -First 1)) { throw "Frontend build did not produce assets in $assets" }
 Write-Output "Frontend production build ready: $index"

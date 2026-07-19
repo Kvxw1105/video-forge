@@ -19,6 +19,12 @@ def test_explicit_busy_port_fails_without_fallback(monkeypatch):
         launcher.select_port(9000)
 
 
+@pytest.mark.parametrize("port", [0, -1, 65536, 99999])
+def test_invalid_explicit_port_fails_with_clear_error(monkeypatch, port):
+    with pytest.raises(ValueError, match="Port must be between 1 and 65535"):
+        launcher.select_port(port)
+
+
 def test_validate_frontend_dist_reports_repair_command(tmp_path):
     with pytest.raises(RuntimeError, match="npm run build"):
         launcher.validate_frontend_dist(tmp_path / "dist")
@@ -34,3 +40,14 @@ def test_no_browser_flag_does_not_open_browser(monkeypatch, tmp_path):
 
     assert launcher.run(["--no-browser"]) == 0
     assert opened == []
+
+
+def test_custom_frontend_dist_is_passed_to_production_app(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(launcher, "validate_frontend_dist", lambda path: path)
+    monkeypatch.setattr(launcher, "select_port", lambda requested: 8765)
+    monkeypatch.setattr(launcher, "create_app", lambda **kwargs: captured.update(kwargs) or object())
+    monkeypatch.setattr(launcher.uvicorn, "run", lambda *args, **kwargs: None)
+
+    assert launcher.run(["--frontend-dist", str(tmp_path), "--no-browser"]) == 0
+    assert captured["frontend_dist"] == tmp_path
