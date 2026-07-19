@@ -37,7 +37,7 @@ def aggregate_status(checks: list[ReadinessCheck]) -> str:
     return "ready"
 
 
-def check_writable_directory(path: str | Path, id: str, label: str, required: bool) -> ReadinessCheck:
+def _legacy_check_writable_directory(path: str | Path, id: str, label: str, required: bool) -> ReadinessCheck:
     target = Path(path)
     details = {"path": str(target.resolve())}
     probe = None
@@ -59,7 +59,58 @@ def check_writable_directory(path: str | Path, id: str, label: str, required: bo
                 pass
 
 
-def check_disk() -> ReadinessCheck:
+def check_writable_directory_v2(path: str | Path, id: str, label: str, required: bool) -> ReadinessCheck:
+    target = Path(path)
+    details = {"path": str(target.resolve())}
+    probe = None
+    write_error = None
+    cleanup_error = None
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        probe = target / f".videoforge-readiness-{os.getpid()}-{time.time_ns()}.tmp"
+        with probe.open("w", encoding="utf-8") as handle:
+            handle.write("ok")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception as exc:
+        write_error = exc
+    finally:
+        if probe is not None:
+            for attempt in range(2):
+                try:
+                    probe.unlink(missing_ok=True)
+                    break
+                except OSError as exc:
+                    if attempt == 1:
+                        cleanup_error = exc
+                    else:
+                        time.sleep(0.05)
+    if cleanup_error is not None:
+        return _check(id, label, "fail", required, f"{label} cleanup failed", {**details, "error": "cleanup_failed", "errorType": type(cleanup_error).__name__})
+    if write_error is not None:
+        return _check(id, label, "fail", required, f"{label} is not writable", {**details, "error": type(write_error).__name__})
+    return _check(id, label, "pass", required, f"{label} writable", details)
+
+
+check_writable_directory = check_writable_directory_v2
+
+
+def check_disk_v2() -> ReadinessCheck:
+    try:
+        usage = shutil.disk_usage(str(PROJECTS_DIR))
+        free_gb = usage.free / (1024 ** 3)
+        status = "pass" if free_gb >= 5 else "warn" if free_gb >= 1 else "fail"
+        return _check("storage.disk", "storage.disk", status, True, "Disk space available" if status == "pass" else "Disk space is low" if status == "warn" else "Disk space is insufficient", {
+            "path": str(PROJECTS_DIR.resolve()), "freeBytes": usage.free, "freeGb": round(free_gb, 2), "totalBytes": usage.total,
+        })
+    except Exception as exc:
+        return _check("storage.disk", "storage.disk", "warn", True, "Unable to inspect disk space", {"error": type(exc).__name__})
+
+
+check_disk = check_disk_v2
+
+
+def _legacy_check_disk() -> ReadinessCheck:
     try:
         usage = shutil.disk_usage(str(PROJECTS_DIR))
         free_gb = usage.free / (1024 ** 3)
@@ -71,6 +122,9 @@ def check_disk() -> ReadinessCheck:
         })
     except Exception as exc:
         return _check("storage.disk", "磁盘空间", "warn", False, "无法读取磁盘空间", {"error": type(exc).__name__})
+
+
+check_disk = check_disk_v2
 
 
 def shutil_which(name: str) -> str | None:
@@ -93,7 +147,7 @@ def check_ffmpeg() -> ReadinessCheck:
         return _check("runtime.ffmpeg", "FFmpeg", "warn", False, "无法检测FFmpeg", {"path": path, "error": type(exc).__name__})
 
 
-def check_jianying() -> ReadinessCheck:
+def _legacy_check_jianying() -> ReadinessCheck:
     status = inspect_jianying_status(JIANYING_DRAFT_DIR)
     if not status["directoryExists"]:
         return _check("integration.jianying", "剪映草稿目录", "warn", False, "未检测到剪映草稿目录", {
@@ -107,7 +161,26 @@ def check_jianying() -> ReadinessCheck:
     })
 
 
-def check_tts() -> ReadinessCheck:
+def check_jianying_v2() -> ReadinessCheck:
+    status = inspect_jianying_status(JIANYING_DRAFT_DIR)
+    if not status["directoryExists"]:
+        return _check("integration.jianying", "JianYing draft directory", "warn", False, "JianYing draft directory was not detected", {
+            "detected": False, "draftDirectory": None, "directoryExists": False, "writable": False, "draftCount": 0,
+        })
+    write_check = check_writable_directory(JIANYING_DRAFT_DIR, "integration.jianying", "JianYing draft directory", False)
+    writable = write_check.status == "pass"
+    details = {"detected": True, "draftDirectory": status["path"], "directoryExists": True, "writable": writable, "draftCount": status["draftCount"]}
+    if "error" in write_check.details:
+        details["error"] = write_check.details["error"]
+    if "errorType" in write_check.details:
+        details["errorType"] = write_check.details["errorType"]
+    return _check("integration.jianying", "JianYing draft directory", "pass" if writable else "fail", False, "JianYing draft directory writable" if writable else "JianYing draft directory is not writable", details)
+
+
+check_jianying = check_jianying_v2
+
+
+def _legacy_check_tts() -> ReadinessCheck:
     try:
         settings = get_tts_settings_raw()
         engine = str(settings.engine or "edge").lower()
@@ -144,6 +217,26 @@ def check_tts() -> ReadinessCheck:
         })
     except Exception as exc:
         return _check("integration.tts", "TTS配置", "warn", False, "无法读取TTS配置", {"error": type(exc).__name__})
+
+
+_check_tts_base = _legacy_check_tts
+
+
+def check_tts() -> ReadinessCheck:
+    result = _check_tts_base()
+    engine = result.details.get("selectedEngine")
+    if engine == "manbo":
+        settings = get_tts_settings_raw()
+        missing = []
+        if not settings.manboApiKey:
+            missing.append("manboApiKey")
+        if not settings.manboApiUrl:
+            missing.append("manboApiUrl")
+        result.details["missingFields"] = missing
+    if engine == "none":
+        result.message = "已启用纯字幕模式"
+        result.details["mode"] = "subtitles_only"
+    return result
 
 
 def check_frontend(*, production_mode: bool, frontend_dist: str | Path | None = None) -> ReadinessCheck:
@@ -214,11 +307,12 @@ def get_readiness(*, refresh: bool = False, production_mode: bool = False,
                   frontend_dist: str | Path | None = None, app_name: str = "VideoForge",
                   app_version: str = "0.1.0") -> ReadinessResponse:
     global _cache
-    now = time.monotonic()
     with _lock:
+        now = time.monotonic()
         cache_key = (production_mode, str(Path(frontend_dist).resolve()) if frontend_dist else None, app_name, app_version)
         if not refresh and _cache and now - _cache[0] < TTL_SECONDS and _cache[1] == cache_key:
             return _cache[2]
         result = run_checks(production_mode=production_mode, frontend_dist=frontend_dist, app_name=app_name, app_version=app_version)
-        _cache = (now, cache_key, result)
+        completed_at = time.monotonic()
+        _cache = (completed_at, cache_key, result)
         return result

@@ -152,6 +152,36 @@ def test_jianying_probe_writes_and_cleans_only_probe_file(monkeypatch, tmp_path)
     assert not (root / "draft_content.json").exists()
 
 
+def test_jianying_probe_success_overrides_false_os_access(monkeypatch, tmp_path):
+    root = tmp_path / "drafts"
+    root.mkdir()
+    monkeypatch.setattr(readiness, "JIANYING_DRAFT_DIR", root)
+    monkeypatch.setattr(readiness.os, "access", lambda path, mode: False)
+    check = readiness.check_jianying()
+    assert check.status == "pass"
+    assert check.details["writable"] is True
+    assert readiness.build_capabilities([
+        ReadinessCheck(id="storage.projects", label="p", status="pass", required=True, message="ok"),
+        ReadinessCheck(id="storage.library", label="l", status="pass", required=True, message="ok"),
+        ReadinessCheck(id="storage.temp", label="t", status="pass", required=True, message="ok"),
+    ], check)["jianyingDirectExport"] is True
+
+
+def test_jianying_probe_failure_overrides_true_os_access(monkeypatch, tmp_path):
+    root = tmp_path / "drafts"
+    root.mkdir()
+    monkeypatch.setattr(readiness, "JIANYING_DRAFT_DIR", root)
+    monkeypatch.setattr(readiness.os, "access", lambda path, mode: True)
+    monkeypatch.setattr(readiness, "check_writable_directory", lambda *args: ReadinessCheck(
+        id="integration.jianying", label="j", status="fail", required=False,
+        message="failed", details={"path": str(root), "error": "write_failed"},
+    ))
+    check = readiness.check_jianying()
+    assert check.status == "fail"
+    assert check.details["writable"] is False
+    assert check.details["error"] == "write_failed"
+
+
 def test_jianying_status_route_preserves_legacy_shape(monkeypatch, tmp_path):
     from routers import export
     root = tmp_path / "drafts"
@@ -271,6 +301,83 @@ def test_disk_is_always_required(monkeypatch):
     monkeypatch.setattr(readiness.shutil, "disk_usage", lambda path: type("U", (), {"total": 10, "used": 9, "free": 0})())
     check = readiness.check_disk()
     assert check.required is True
+
+
+def test_disk_usage_exception_is_required_and_degraded(monkeypatch):
+    monkeypatch.setattr(readiness.shutil, "disk_usage", lambda path: (_ for _ in ()).throw(OSError("disk unavailable")))
+    check = readiness.check_disk()
+    assert check.status == "warn"
+    assert check.required is True
+    assert readiness.aggregate_status([check]) == "degraded"
+
+
+def test_disk_below_one_gb_is_required_and_blocked(monkeypatch):
+    monkeypatch.setattr(readiness.shutil, "disk_usage", lambda path: type("U", (), {"total": 10, "used": 9, "free": 1024**3 - 1})())
+    check = readiness.check_disk()
+    assert check.status == "fail"
+    assert check.required is True
+    assert readiness.aggregate_status([check]) == "blocked"
+
+
+def test_manbo_missing_url_is_reported(monkeypatch):
+    monkeypatch.setattr(readiness, "get_tts_settings_raw", lambda: readiness.TtsSettings(engine="manbo", manboApiKey="key", manboApiUrl=""))
+    check = readiness.check_tts()
+    assert check.details["missingFields"] == ["manboApiUrl"]
+
+
+def test_manbo_missing_key_and_url_is_reported_in_stable_order(monkeypatch):
+    monkeypatch.setattr(readiness, "get_tts_settings_raw", lambda: readiness.TtsSettings(engine="manbo", manboApiKey="", manboApiUrl=""))
+    check = readiness.check_tts()
+    assert check.details["missingFields"] == ["manboApiKey", "manboApiUrl"]
+
+
+def test_none_mode_has_subtitles_only_message(monkeypatch):
+    monkeypatch.setattr(readiness, "get_tts_settings_raw", lambda: readiness.TtsSettings(engine="none"))
+    check = readiness.check_tts()
+    assert check.status == "pass"
+    assert check.message == "已启用纯字幕模式"
+    assert check.details["mode"] == "subtitles_only"
+    assert check.details["voiceoverAvailable"] is False
+
+
+def test_probe_cleanup_retries_once_then_succeeds(monkeypatch, tmp_path):
+    target = tmp_path / "probe"
+    calls = {"count": 0}
+    original_unlink = Path.unlink
+    def flaky_unlink(path, *args, **kwargs):
+        if path.parent == target and path.name.startswith(".videoforge-readiness-"):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise OSError("busy")
+        return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    monkeypatch.setattr(readiness.time, "sleep", lambda seconds: None)
+    check = readiness.check_writable_directory(target, "storage.temp", "Temp", True)
+    assert check.status == "pass"
+    assert calls["count"] == 2
+
+
+def test_probe_cleanup_failure_is_not_silent_pass(monkeypatch, tmp_path):
+    target = tmp_path / "probe"
+    def always_fail_unlink(path, *args, **kwargs):
+        if path.parent == target and path.name.startswith(".videoforge-readiness-"):
+            raise OSError("locked")
+        return Path.unlink(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", always_fail_unlink)
+    monkeypatch.setattr(readiness.time, "sleep", lambda seconds: None)
+    check = readiness.check_writable_directory(target, "storage.temp", "Temp", True)
+    assert check.status == "fail"
+    assert check.details["error"] == "cleanup_failed"
+    assert check.details["errorType"] == "OSError"
+
+
+def test_cache_timestamp_is_recorded_after_checks(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path)
+    readiness.clear_cache()
+    ticks = iter([100.0, 150.0])
+    monkeypatch.setattr(readiness.time, "monotonic", lambda: next(ticks))
+    readiness.get_readiness(refresh=True)
+    assert readiness._cache[0] == 150.0
 
 
 def test_readiness_health_regression():
