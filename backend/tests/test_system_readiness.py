@@ -92,11 +92,30 @@ def test_tts_edge_does_not_expose_secrets(monkeypatch):
     assert check.details["selectedEngine"] == "edge"
 
 
-def test_tts_fish_missing_reference_warns_without_key(monkeypatch):
-    monkeypatch.setattr(readiness, "get_tts_settings_raw", lambda: readiness.TtsSettings(engine="fish", fishApiKey="secret", fishReferenceId=""))
+def test_tts_fish_audio_missing_reference_warns_without_key(monkeypatch):
+    monkeypatch.setattr(readiness, "get_tts_settings_raw", lambda: readiness.TtsSettings(engine="fish_audio", fishApiKey="secret", fishReferenceId=""))
     check = readiness.check_tts()
     assert check.status == "warn"
     assert check.details["missingFields"] == ["fishReferenceId"]
+    assert "secret" not in json.dumps(check.model_dump())
+
+
+@pytest.mark.parametrize("settings, expected", [
+    (dict(engine="fish_audio", fishApiKey="key", fishReferenceId="ref"), ("pass", True, False)),
+    (dict(engine="fish_audio", fishApiKey="", fishReferenceId="ref"), ("warn", False, False)),
+    (dict(engine="fish_audio", fishApiKey="key", fishReferenceId=""), ("warn", False, False)),
+    (dict(engine="manbo", manboApiKey="key", manboApiUrl="https://example.test/tts"), ("pass", True, False)),
+    (dict(engine="manbo", manboApiKey=""), ("warn", False, False)),
+    (dict(engine="custom", customApiUrl="https://example.test/tts", customApiKey=""), ("pass", True, True)),
+    (dict(engine="custom", customApiUrl="", customApiKey="key"), ("warn", False, True)),
+    (dict(engine="none"), ("pass", False, True)),
+    (dict(engine="fish"), ("warn", False, False)),
+])
+def test_tts_engine_semantics(monkeypatch, settings, expected):
+    monkeypatch.setattr(readiness, "get_tts_settings_raw", lambda: readiness.TtsSettings(**settings))
+    check = readiness.check_tts()
+    assert (check.status, check.details["voiceoverAvailable"], check.details["availableWithoutExternalKey"]) == expected
+    assert "key" not in json.dumps(check.model_dump())
     assert "secret" not in json.dumps(check.model_dump())
 
 
@@ -122,6 +141,29 @@ def test_jianying_detected_counts_only_draft_content_directories(monkeypatch, tm
     assert check.details["draftDirectory"] == str(root.resolve())
 
 
+def test_jianying_probe_writes_and_cleans_only_probe_file(monkeypatch, tmp_path):
+    root = tmp_path / "drafts"
+    root.mkdir()
+    monkeypatch.setattr(readiness, "JIANYING_DRAFT_DIR", root)
+    monkeypatch.setattr(readiness.os, "access", lambda path, mode: True)
+    check = readiness.check_jianying()
+    assert check.status == "pass"
+    assert not list(root.glob(".videoforge-readiness-*"))
+    assert not (root / "draft_content.json").exists()
+
+
+def test_jianying_status_route_preserves_legacy_shape(monkeypatch, tmp_path):
+    from routers import export
+    root = tmp_path / "drafts"
+    (root / "draft-one").mkdir(parents=True)
+    (root / "draft-one" / "draft_content.json").write_text("{}")
+    monkeypatch.setattr(export, "JIANYING_DRAFT_DIR", root)
+    body = TestClient(create_app()).get("/api/jianying-status").json()
+    assert set(body) == {"detected", "path", "drafts"}
+    assert body["detected"] is True
+    assert body["drafts"] == [{"name": "draft-one", "folder": "draft-one"}]
+
+
 def test_frontend_required_depends_on_production(monkeypatch, tmp_path):
     monkeypatch.setattr(readiness, "resolve_frontend_dist", lambda: tmp_path / "missing")
     assert readiness.check_frontend(production_mode=False).status == "warn"
@@ -137,6 +179,30 @@ def test_frontend_complete_build_is_pass(monkeypatch, tmp_path):
     check = readiness.check_frontend(production_mode=True)
     assert check.status == "pass"
     assert check.details["path"] == str(dist)
+
+
+def test_readiness_uses_app_frontend_dist_override(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path)
+    dist = tmp_path / "custom-dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html></html>")
+    (dist / "assets" / "app.js").write_text("ok")
+    readiness.clear_cache()
+    app = create_app(serve_frontend=True, frontend_dist=dist)
+    body = TestClient(app).get("/api/system/readiness?refresh=true").json()
+    frontend = next(item for item in body["checks"] if item["id"] == "runtime.frontend")
+    assert frontend["status"] == "pass"
+    assert Path(frontend["details"]["path"]) == dist.resolve()
+
+
+def test_readiness_cache_isolated_by_frontend_dist(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path)
+    dist_a = tmp_path / "a"; (dist_a / "assets").mkdir(parents=True); (dist_a / "index.html").write_text("a"); (dist_a / "assets" / "a.js").write_text("a")
+    dist_b = tmp_path / "b"; (dist_b / "assets").mkdir(parents=True); (dist_b / "index.html").write_text("b"); (dist_b / "assets" / "b.js").write_text("b")
+    readiness.clear_cache()
+    a = TestClient(create_app(serve_frontend=True, frontend_dist=dist_a)).get("/api/system/readiness").json()
+    b = TestClient(create_app(serve_frontend=True, frontend_dist=dist_b)).get("/api/system/readiness").json()
+    assert next(item for item in a["checks"] if item["id"] == "runtime.frontend")["details"]["path"] != next(item for item in b["checks"] if item["id"] == "runtime.frontend")["details"]["path"]
 
 
 def test_readiness_response_is_cached_and_refreshes(monkeypatch, tmp_path):
@@ -192,7 +258,29 @@ def test_single_check_exception_is_reported_without_api_500(monkeypatch, tmp_pat
     assert ffmpeg["details"]["error"] == "RuntimeError"
 
 
+def test_writable_probe_cleans_after_fsync_failure(monkeypatch, tmp_path):
+    def fail_fsync(fd):
+        raise OSError("fsync failed")
+    monkeypatch.setattr(readiness.os, "fsync", fail_fsync)
+    check = readiness.check_writable_directory(tmp_path / "probe", "storage.projects", "Projects", True)
+    assert check.status == "fail"
+    assert not list((tmp_path / "probe").glob(".videoforge-readiness-*"))
+
+
+def test_disk_is_always_required(monkeypatch):
+    monkeypatch.setattr(readiness.shutil, "disk_usage", lambda path: type("U", (), {"total": 10, "used": 9, "free": 0})())
+    check = readiness.check_disk()
+    assert check.required is True
+
+
 def test_readiness_health_regression():
     client = TestClient(create_app())
-    assert client.get("/api/health").status_code == 200
+    health = client.get("/api/health")
+    readiness.clear_cache()
+    system = client.get("/api/system/readiness?refresh=true")
+    assert health.status_code == 200
+    assert system.status_code == 200
+    assert health.json()["version"] == system.json()["app"]["version"]
+    runtime = next(item for item in system.json()["checks"] if item["id"] == "app.runtime")
+    assert runtime["details"]["version"] == system.json()["app"]["version"]
     assert client.get("/api/projects").status_code == 200

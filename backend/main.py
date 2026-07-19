@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import CORS_ORIGINS
+from frontend_host import resolve_frontend_dist
 
 def create_app(*, serve_frontend: bool | None = None, frontend_dist=None) -> FastAPI:
     app = FastAPI(title="VideoForge", version="0.1.0")
     app.state.production_mode = bool(serve_frontend)
+    app.state.frontend_dist = resolve_frontend_dist(frontend_dist) if serve_frontend else None
     app.add_middleware(
         CORSMiddleware,
         allow_origins=CORS_ORIGINS,
@@ -29,7 +31,7 @@ def create_app(*, serve_frontend: bool | None = None, frontend_dist=None) -> Fas
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": "0.1.0"}
+        return {"status": "ok", "version": app.version}
 
     if serve_frontend:
         from frontend_host import mount_frontend
