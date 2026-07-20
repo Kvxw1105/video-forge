@@ -91,3 +91,14 @@ python -m vforge mcp
 - **后端**: Python 3.11 / FastAPI / pydantic / pyJianYingDraft / FFmpeg / librosa / edge-tts
 - **前端**: React 18 / TypeScript / Vite / Tailwind CSS / Framer Motion / Phosphor Icons
 - **AI Agent**: CLI (argparse) + MCP server (FastMCP) + HTTP client (stdlib)
+
+## Portable Windows Alpha
+
+Build a self-contained onedir bundle with `powershell -ExecutionPolicy Bypass -File scripts\build-portable.ps1`.
+The output is `release\VideoForge-Windows-Portable.zip`. Users only need to unzip it and start
+`VideoForge.exe`; npm and a manual Python command are not required.
+
+FFmpeg is optional at startup but required for MP4 preview rendering. JianYing is optional at startup;
+ZIP draft export remains available when direct JianYing export is unavailable. Runtime data is stored
+under `%LOCALAPPDATA%\VideoForge`, and `scripts\backup-data.ps1` creates a backup without logs or temp files.
+See `docs\PORTABLE-USER-GUIDE.md` for first-run checks, optional dependencies, and restore instructions.

@@ -84,6 +84,9 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     vo_path = voiceover.file if voiceover else ""
     vo_duration = voiceover.duration if voiceover else 0.0
     dur = compiled.total_duration
+    subtitle_filter, subtitle_ass_path = _build_subtitle_filter(
+        subtitles, subtitle_enabled, h, w, output_path.parent,
+    )
 
     # --- Collect unique media paths ---
     media_paths = []
@@ -159,7 +162,7 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     if total_inputs == 0:
         cmd.extend(["-f", "lavfi", "-i", f"color=c=0x{bg_ffmpeg}:s={w}x{h}:d={dur}:r=30"])
         lavfi_idx = total_inputs + n_audio
-        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, 0.0)
+        drawtexts = subtitle_filter
         chain = f"[{lavfi_idx}:v]"
         filters = [x for x in (drawtexts, overlay_drawtexts) if x]
         if filters:
@@ -176,7 +179,7 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
         sc = xf.get("scale", 0.85)
         fit = xf.get("fit", "contain")
         vf = _build_scale_filter(w, h, sc, fit, bg_ffmpeg)
-        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, 0.0)
+        drawtexts = subtitle_filter
         if drawtexts:
             vf += "," + drawtexts
         if overlay_drawtexts:
@@ -202,7 +205,7 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
         concat_in = "".join(f"[v{i}]" for i in range(total_inputs))
         fc_parts.append(f"{concat_in}concat=n={total_inputs}:v=1:a=0[vconcat]")
 
-        drawtexts = _build_drawtexts(subtitles, subtitle_enabled, h, w, 0.0)
+        drawtexts = subtitle_filter
         chain = "[vconcat]"
         if drawtexts:
             chain += drawtexts
@@ -237,7 +240,11 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     logger.info("FFmpeg cmd length: %d args", len(cmd))
     logger.info("FFmpeg cmd snippet: %s", " ".join(cmd[:20]) + " ...")
 
-    result = _run_cmd(cmd, timeout=300)
+    try:
+        result = _run_cmd(cmd, timeout=300)
+    finally:
+        if subtitle_ass_path:
+            subtitle_ass_path.unlink(missing_ok=True)
     if result.returncode != 0:
         stderr_tail = result.stderr[-3000:] if result.stderr else "(empty)"
         logger.error("FFmpeg failed (rc=%d):\n%s", result.returncode, stderr_tail)
@@ -372,18 +379,93 @@ def _prepare_multi_bgm(tracks: list[dict], work_dir: Path) -> str:
 
 
 
+def _build_subtitle_filter(
+    subtitles: list,
+    subtitle_enabled: bool,
+    h: int,
+    w: int,
+    work_dir: Path,
+) -> tuple[str, Path | None]:
+    """Use one ASS input for long scripts so Windows does not hit WinError 206."""
+    if not subtitle_enabled or not subtitles:
+        return "", None
+    text_size = sum(len(str(item.get("text", ""))) for item in subtitles)
+    if len(subtitles) <= 40 and text_size <= 8000:
+        return _build_drawtexts(subtitles, subtitle_enabled, h, w), None
+
+    ass_path = work_dir / "_videoforge_subtitles.ass"
+    styles: dict[tuple, str] = {}
+    style_lines: list[str] = []
+    dialogues: list[str] = []
+    alignments = {
+        "top_left": 7, "top_center": 8, "top_right": 9,
+        "middle_left": 4, "middle_center": 5, "middle_right": 6,
+        "bottom_left": 1, "bottom_center": 2, "bottom_right": 3,
+    }
+
+    def ass_time(value: float) -> str:
+        total_cs = max(0, int(round(float(value or 0) * 100)))
+        hours, remainder = divmod(total_cs, 360000)
+        minutes, remainder = divmod(remainder, 6000)
+        seconds, centiseconds = divmod(remainder, 100)
+        return f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
+
+    def ass_color(value: str, opacity: float) -> str:
+        color = normalize_hex(value or "#ffffff")
+        red, green, blue = (int(color[i:i + 2], 16) for i in (0, 2, 4))
+        alpha = max(0, min(255, int(round((1.0 - float(opacity or 1.0)) * 255))))
+        return f"&H{alpha:02X}{blue:02X}{green:02X}{red:02X}"
+
+    for index, subtitle in enumerate(subtitles):
+        style = subtitle.get("style", {}) or {}
+        key = (
+            int(style.get("fontSize", 48) or 48),
+            style.get("color", "#ffffff"),
+            float(style.get("opacity", 1.0) or 1.0),
+            style.get("position", "bottom_center"),
+        )
+        style_name = styles.get(key)
+        if style_name is None:
+            style_name = f"VF{len(styles)}"
+            styles[key] = style_name
+            size, color, opacity, position = key
+            style_lines.append(
+                f"Style: {style_name},Microsoft YaHei,{max(12, min(120, size))},"
+                f"{ass_color(color, opacity)},&H00000000,&H00000000,&H80000000,"
+                f"0,0,0,0,100,100,0,0,1,2,1,"
+                f"{alignments.get(position, 2)},40,40,40,0"
+            )
+        text = str(subtitle.get("text", "")).replace("{", "\\{" ).replace("}", "\\}").replace("\n", r"\N")
+        dialogues.append(
+            f"Dialogue: 0,{ass_time(subtitle.get('start', 0))},{ass_time(subtitle.get('end', 0))},"
+            f"{style_name},,0,0,0,,{text}"
+        )
+
+    ass_path.write_text(
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n"
+        "[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,"
+        "OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,"
+        "Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n"
+        + "\n".join(style_lines)
+        + "\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
+        + "\n".join(dialogues) + "\n",
+        encoding="utf-8",
+    )
+    escaped = str(ass_path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+    return f"subtitles=filename='{escaped}'", ass_path
+
+
 def _build_drawtexts(subtitles: list, subtitle_enabled: bool, h: int, w: int, voiceover_start_at: float = 0.0) -> str:
     if not subtitle_enabled or not subtitles:
         return ""
     parts = []
-    offset = max(0.0, float(voiceover_start_at or 0.0))
     font_arg = _drawtext_font_arg()
     for sub in subtitles:
         txt = sub.get("text", "").strip()
         if not txt:
             continue
-        s = float(sub.get("start", 0) or 0) + offset
-        e = float(sub.get("end", 0) or 0) + offset
+        s = float(sub.get("start", 0) or 0)
+        e = float(sub.get("end", 0) or 0)
         # Use fontSize directly as pixel size — canvas preview and FFmpeg share the same unit
         style = sub.get("style", {}) or {}
         fs = max(16, int(style.get("fontSize", 48)))

@@ -63,6 +63,14 @@ def _ensure_color_image(work_dir: Path, width: int, height: int, color: str) -> 
     return output
 
 
+def _jianying_source_duration(duration: float) -> float:
+    """Keep real pyJianYingDraft source ranges just inside material duration."""
+    module = getattr(AudioSegment, "__module__", "")
+    if module.startswith("pyJianYingDraft"):
+        return max(0.0, float(duration) - 0.001)
+    return float(duration)
+
+
 @dataclass(frozen=True)
 class DraftWriteResult:
     policy: str
@@ -301,10 +309,11 @@ def _render_jianying_draft(
             bgm_path = _resolve_path(track.file)
             if not bgm_path:
                 continue
+            source_duration = _jianying_source_duration(track.duration)
             a = AudioSegment(
                 str(bgm_path),
                 target_timerange=trange(f"{track.start}s", f"{track.duration}s"),
-                source_timerange=trange(f"{track.source_start}s", f"{track.duration}s"),
+                source_timerange=trange(f"{track.source_start}s", f"{source_duration}s"),
                 volume=max(0.0, min(1.0, track.volume))
             )
             fade_in, fade_out = _audio_fade_seconds(
@@ -324,10 +333,11 @@ def _render_jianying_draft(
             sfx_path = _resolve_path(track.file)
             if not sfx_path:
                 continue
+            source_duration = _jianying_source_duration(track.duration)
             a = AudioSegment(
                 str(sfx_path),
                 target_timerange=trange(f"{track.start}s", f"{track.duration}s"),
-                source_timerange=trange(f"{track.source_start}s", f"{track.duration}s"),
+                source_timerange=trange(f"{track.source_start}s", f"{source_duration}s"),
                 volume=max(0.0, min(1.0, track.volume))
             )
             script.add_material(a.material_instance)
@@ -340,9 +350,11 @@ def _render_jianying_draft(
         dur = voiceover.duration
         if dur > 0:
             script.add_track(TrackType.audio, "voiceover")
+            source_duration = _jianying_source_duration(dur)
             va = AudioSegment(
                 str(voiceover_path),
                 target_timerange=trange(f"{voiceover_start_at}s", f"{dur}s"),
+                source_timerange=trange("0s", f"{source_duration}s"),
                 volume=max(0.0, min(1.0, voiceover_vol)),
             )
             script.add_material(va.material_instance)

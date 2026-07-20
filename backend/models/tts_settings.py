@@ -10,8 +10,8 @@ class TtsSettings(BaseModel):
     fishModel: str = Field(default="s2.1-pro-free")
     fishSpeed: float = Field(default=1.0)
     fishVoicePresets: list = Field(default_factory=lambda: [
-        {"id": "754f3fae6a3b4d8496ab3cfb9a411140", "name": "椋庡悷鈥斺€旂邯褰曠墖瑙ｈ", "style": "鑰佸勾濂冲０ 路 绾綍鐗?路 骞抽潤"},
-        {"id": "b255ca2902514f69bc22243436a94e4f", "name": "鏇兼尝", "style": "骞磋交濂冲０ 路 鏁欏 路 鏄庝寒娲诲姏"},
+        {"id": "754f3fae6a3b4d8496ab3cfb9a411140", "name": "风吟 - 纪录片解说", "style": "成熟女声 · 纪录片 · 平静"},
+        {"id": "b255ca2902514f69bc22243436a94e4f", "name": "曼波", "style": "年轻女声 · 教学 · 明亮活力"},
     ])
     customApiUrl: str = Field(default="")
     customApiKey: str = Field(default="")

@@ -50,9 +50,11 @@ export default function OverlayPanel({
 }: OverlayPanelProps) {
   const [titleText, setTitleText] = useState(title.text || '')
   const [watermarkText, setWatermarkText] = useState(watermark.text || '')
+  const [directoryText, setDirectoryText] = useState(directoryProgress.text || '')
 
   useEffect(() => { setTitleText(title.text || '') }, [title.text])
   useEffect(() => { setWatermarkText(watermark.text || '') }, [watermark.text])
+  useEffect(() => { setDirectoryText(directoryProgress.text || '') }, [directoryProgress.text])
 
   return (
     <section className="panel-section space-y-4">
@@ -259,8 +261,9 @@ export default function OverlayPanel({
         {directoryProgress.enabled && (
           <div className="space-y-3 rounded-lg p-3" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
             <textarea
-              value={directoryProgress.text || ''}
-              onChange={(e) => onDirectoryProgressChange?.({ ...directoryProgress, text: e.target.value })}
+              value={directoryText}
+              onChange={(e) => setDirectoryText(e.target.value)}
+              onBlur={() => onDirectoryProgressChange?.({ ...directoryProgress, text: directoryText })}
               placeholder="起势｜转折｜高潮｜余韵"
               className="input-cinematic min-h-[64px] resize-y text-xs"
             />
