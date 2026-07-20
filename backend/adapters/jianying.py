@@ -350,9 +350,11 @@ def _render_jianying_draft(
         dur = voiceover.duration
         if dur > 0:
             script.add_track(TrackType.audio, "voiceover")
+            source_duration = _jianying_source_duration(dur)
             va = AudioSegment(
                 str(voiceover_path),
                 target_timerange=trange(f"{voiceover_start_at}s", f"{dur}s"),
+                source_timerange=trange("0s", f"{source_duration}s"),
                 volume=max(0.0, min(1.0, voiceover_vol)),
             )
             script.add_material(va.material_instance)
@@ -383,7 +385,6 @@ def _render_jianying_draft(
                 timerange=trange(f"{s}s", f"{max(0.01, e - s)}s"),
                 style=subtitle_style,
             )
-            script.add_material(ts.material_instance)
             transform_x, transform_y = subtitle_to_jianying_transform(position)
             try:
                 ts.clip_settings.transform_y = transform_y
@@ -401,7 +402,6 @@ def _render_jianying_draft(
         )
         title_style = TextStyle(size=title_fs, align=0, auto_wrapping=True)
         ts = TextSegment(title_cfg["text"], timerange=trange("0s", f"{total_duration}s"), style=title_style)
-        script.add_material(ts.material_instance)
         # Apply position
         try:
             tx = float(title_cfg.get("x", 0.5))
@@ -422,7 +422,6 @@ def _render_jianying_draft(
         )
         wm_style = TextStyle(size=wm_fs, align=2, auto_wrapping=True)  # align=2: right
         ws = TextSegment(watermark_cfg["text"], timerange=trange("0s", f"{total_duration}s"), style=wm_style)
-        script.add_material(ws.material_instance)
         # Apply position
         try:
             wx = float(watermark_cfg.get("x", 0.85))
@@ -452,7 +451,6 @@ def _render_jianying_draft(
             style=style,
             clip_settings=clip,
         )
-        script.add_material(ds.material_instance)
         try:
             ds.add_keyframe(KeyframeProperty.position_x, "0s", (start_x - 0.5) * 2)
             ds.add_keyframe(KeyframeProperty.position_x, f"{vo_dur}s", (end_x - 0.5) * 2)
