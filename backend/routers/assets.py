@@ -1,11 +1,25 @@
 import shutil
 import mimetypes
+import re
+import uuid
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from services.project_service import get_project, _project_dir
 
 router = APIRouter(prefix="/api/projects/{project_id}/assets", tags=["assets"])
+
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_FILENAME_LENGTH = 180
+
+
+def _safe_upload_name(raw_name: str | None) -> str:
+    name = Path(str(raw_name or "")).name.strip()
+    if not name or name in {".", ".."}:
+        raise HTTPException(400, "文件名不能为空")
+    if any(ord(char) < 32 for char in name) or re.search(r'[<>:"/\\|?*]', name):
+        raise HTTPException(400, "文件名包含 Windows 不支持的字符")
+    return name[:MAX_FILENAME_LENGTH]
 
 
 def _safe_resolve(proj_dir: Path, user_path: str) -> Path:
@@ -58,10 +72,23 @@ async def upload_asset(project_id: str, file: UploadFile = File(...)):
     proj_dir = _project_dir(project_id)
     assets_dir = proj_dir / "assets"
     assets_dir.mkdir(exist_ok=True)
-    dest = assets_dir / file.filename
-    with open(dest, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-    return {"filename": file.filename, "name": file.filename, "path": str(dest), "type": "image" if dest.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"} else "audio" if dest.suffix.lower() in {".mp3", ".wav", ".m4a", ".aac"} else "video"}
+    filename = _safe_upload_name(file.filename)
+    dest = assets_dir / filename
+    if dest.exists():
+        dest = assets_dir / f"{dest.stem}_{uuid.uuid4().hex[:8]}{dest.suffix}"
+    temp = assets_dir / f".upload-{uuid.uuid4().hex}.tmp"
+    size = 0
+    try:
+        with temp.open("wb") as handle:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "素材超过 2 GB 限制")
+                handle.write(chunk)
+        temp.replace(dest)
+    finally:
+        temp.unlink(missing_ok=True)
+    return {"filename": filename, "name": filename, "path": str(dest), "size": size, "type": "image" if dest.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"} else "audio" if dest.suffix.lower() in {".mp3", ".wav", ".m4a", ".aac"} else "video"}
 
 @router.get("/raw/{filename:path}")
 def serve_asset(project_id: str, filename: str):

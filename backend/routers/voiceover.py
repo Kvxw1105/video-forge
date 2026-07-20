@@ -7,6 +7,7 @@ from engines.voiceover import generate_voiceover, split_sentences
 from routers.settings import get_tts_settings_raw
 
 router = APIRouter(prefix="/api/projects/{project_id}/voiceover", tags=["voiceover"])
+MAX_SCRIPT_CHARS = 50000
 
 
 def _fmt_time(seconds: float) -> str:
@@ -66,6 +67,9 @@ def generate(project_id: str, data: dict):
     text = data.get("text", "")
     if not text:
         raise HTTPException(400, "文案不能为空")
+
+    if len(text) > MAX_SCRIPT_CHARS:
+        raise HTTPException(413, f"Script exceeds the {MAX_SCRIPT_CHARS}-character limit; split it into multiple projects or sections.")
 
     req_engine = data.get("engine", "")
     settings = get_tts_settings_raw()

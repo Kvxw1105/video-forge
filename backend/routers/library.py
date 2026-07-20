@@ -17,6 +17,17 @@ INDEX_FILE = LIBRARY_DIR / "index.json"
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 AUDIO_EXTS = {".mp3", ".wav", ".aac", ".ogg", ".m4a"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_FILENAME_LENGTH = 180
+
+
+def _safe_display_name(raw_name: str | None) -> str:
+    name = Path(str(raw_name or "")).name.strip()
+    if not name or name in {".", ".."}:
+        raise HTTPException(400, "文件名不能为空")
+    if any(ord(char) < 32 for char in name) or re.search(r'[<>:"/\\|?*]', name):
+        raise HTTPException(400, "文件名包含 Windows 不支持的字符")
+    return name[:MAX_FILENAME_LENGTH]
 
 
 def _ensure_dir():
@@ -153,12 +164,24 @@ async def upload_to_library(file: UploadFile = File(...), request: Request = Non
     else:
         display_name = full_path
 
+    display_name = _safe_display_name(display_name)
+
     ext = Path(display_name).suffix.lower()
     safe_name = f"{asset_id}{ext}"
     dest = LIBRARY_DIR / safe_name
 
-    content = await file.read()
-    dest.write_bytes(content)
+    temp = LIBRARY_DIR / f".upload-{uuid.uuid4().hex}.tmp"
+    size = 0
+    try:
+        with temp.open("wb") as handle:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "素材超过 2 GB 限制")
+                handle.write(chunk)
+        temp.replace(dest)
+    finally:
+        temp.unlink(missing_ok=True)
 
     item = {
         "id": asset_id,
@@ -167,7 +190,7 @@ async def upload_to_library(file: UploadFile = File(...), request: Request = Non
         "folder": folder,
         "path": str(dest),
         "type": _classify(display_name),
-        "size": len(content),
+        "size": size,
     }
     items = _load_index()
     items.append(item)

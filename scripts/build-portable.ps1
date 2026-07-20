@@ -37,11 +37,22 @@ $launcherBat | Set-Content -Path (Join-Path $portableRoot 'Start VideoForge.bat'
 $readme = @(
   'VideoForge Windows Portable Alpha'
   ''
-  'Double-click VideoForge.exe or Start VideoForge.bat.'
-  'Runtime data is stored in the data folder.'
-  'Logs: data\logs\launcher.log'
+  'Start: double-click VideoForge.exe or Start VideoForge.bat.'
+  'The app opens http://127.0.0.1:8765 in your default browser.'
+  'Runtime data: %LOCALAPPDATA%\VideoForge (or VIDEOFORGE_DATA_DIR).'
+  'Logs: %LOCALAPPDATA%\VideoForge\logs\launcher.log'
+  ''
+  'Optional dependencies:'
+  '- FFmpeg enables preview rendering; install it separately and add it to PATH.'
+  '- JianYing enables direct draft export; ZIP export remains available without it.'
+  '- TTS can use Edge locally or a configured provider API.'
+  ''
+  'Backup data:'
+  '  powershell -ExecutionPolicy Bypass -File scripts\backup-data.ps1'
+  'The portable ZIP includes the launcher only; user projects and API keys are not bundled.'
 )
 $readme | Set-Content -Path (Join-Path $portableRoot 'README.txt') -Encoding UTF8
+Set-Content -Path (Join-Path $portableRoot 'VERSION.txt') -Value '0.1.0-alpha' -Encoding ASCII
 
 $zip = Join-Path $releaseRoot 'VideoForge-Windows-Portable.zip'
 Remove-Item $zip -Force -ErrorAction SilentlyContinue

@@ -292,7 +292,7 @@ export default function ScriptPanel({
             <span>预计 {draftSubtitles.length} 条字幕</span>
           )}
         </div>
-        <span>建议 50-100 字，最多支持 5000 字</span>
+        <span>建议 50-100 字，单个项目最多支持 50000 字</span>
       </div>
 
       {/* Subtitle draft preview */}
