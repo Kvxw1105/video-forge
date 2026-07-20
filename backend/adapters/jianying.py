@@ -63,6 +63,14 @@ def _ensure_color_image(work_dir: Path, width: int, height: int, color: str) -> 
     return output
 
 
+def _jianying_source_duration(duration: float) -> float:
+    """Keep real pyJianYingDraft source ranges just inside material duration."""
+    module = getattr(AudioSegment, "__module__", "")
+    if module.startswith("pyJianYingDraft"):
+        return max(0.0, float(duration) - 0.001)
+    return float(duration)
+
+
 @dataclass(frozen=True)
 class DraftWriteResult:
     policy: str
@@ -301,10 +309,11 @@ def _render_jianying_draft(
             bgm_path = _resolve_path(track.file)
             if not bgm_path:
                 continue
+            source_duration = _jianying_source_duration(track.duration)
             a = AudioSegment(
                 str(bgm_path),
                 target_timerange=trange(f"{track.start}s", f"{track.duration}s"),
-                source_timerange=trange(f"{track.source_start}s", f"{track.duration}s"),
+                source_timerange=trange(f"{track.source_start}s", f"{source_duration}s"),
                 volume=max(0.0, min(1.0, track.volume))
             )
             fade_in, fade_out = _audio_fade_seconds(
@@ -324,10 +333,11 @@ def _render_jianying_draft(
             sfx_path = _resolve_path(track.file)
             if not sfx_path:
                 continue
+            source_duration = _jianying_source_duration(track.duration)
             a = AudioSegment(
                 str(sfx_path),
                 target_timerange=trange(f"{track.start}s", f"{track.duration}s"),
-                source_timerange=trange(f"{track.source_start}s", f"{track.duration}s"),
+                source_timerange=trange(f"{track.source_start}s", f"{source_duration}s"),
                 volume=max(0.0, min(1.0, track.volume))
             )
             script.add_material(a.material_instance)
@@ -373,6 +383,7 @@ def _render_jianying_draft(
                 timerange=trange(f"{s}s", f"{max(0.01, e - s)}s"),
                 style=subtitle_style,
             )
+            script.add_material(ts.material_instance)
             transform_x, transform_y = subtitle_to_jianying_transform(position)
             try:
                 ts.clip_settings.transform_y = transform_y
@@ -390,6 +401,7 @@ def _render_jianying_draft(
         )
         title_style = TextStyle(size=title_fs, align=0, auto_wrapping=True)
         ts = TextSegment(title_cfg["text"], timerange=trange("0s", f"{total_duration}s"), style=title_style)
+        script.add_material(ts.material_instance)
         # Apply position
         try:
             tx = float(title_cfg.get("x", 0.5))
@@ -410,6 +422,7 @@ def _render_jianying_draft(
         )
         wm_style = TextStyle(size=wm_fs, align=2, auto_wrapping=True)  # align=2: right
         ws = TextSegment(watermark_cfg["text"], timerange=trange("0s", f"{total_duration}s"), style=wm_style)
+        script.add_material(ws.material_instance)
         # Apply position
         try:
             wx = float(watermark_cfg.get("x", 0.85))
@@ -439,6 +452,7 @@ def _render_jianying_draft(
             style=style,
             clip_settings=clip,
         )
+        script.add_material(ds.material_instance)
         try:
             ds.add_keyframe(KeyframeProperty.position_x, "0s", (start_x - 0.5) * 2)
             ds.add_keyframe(KeyframeProperty.position_x, f"{vo_dur}s", (end_x - 0.5) * 2)

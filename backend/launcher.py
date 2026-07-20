@@ -28,7 +28,7 @@ class InstanceLock:
         self._mutex = None
 
     def acquire(self) -> bool:
-        if os.name == "nt":
+        if os.name == "nt" and getattr(sys, "frozen", False):
             import ctypes
             from ctypes import wintypes
 
@@ -49,6 +49,12 @@ class InstanceLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.handle = self.path.open("a+")
         try:
+            if os.name == "nt":
+                self.handle.seek(0)
+                self.handle.truncate()
+                self.handle.write(str(os.getpid()))
+                self.handle.flush()
+                return True
             import fcntl
             fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.handle.seek(0)
@@ -71,6 +77,10 @@ class InstanceLock:
         if self.handle is None:
             return
         try:
+            if os.name == "nt":
+                self.handle.close()
+                self.handle = None
+                return
             import fcntl
             fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
         except OSError:
