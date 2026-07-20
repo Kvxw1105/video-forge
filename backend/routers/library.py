@@ -7,10 +7,11 @@ import uuid
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse
+from config import PROJECTS_DIR
 
 router = APIRouter(prefix="/api/library", tags=["library"])
 
-LIBRARY_DIR = Path(__file__).parent.parent.parent / "projects" / "_library"
+LIBRARY_DIR = PROJECTS_DIR / "_library"
 INDEX_FILE = LIBRARY_DIR / "index.json"
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}

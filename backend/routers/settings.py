@@ -3,12 +3,12 @@ import os
 from pathlib import Path
 from fastapi import APIRouter
 import httpx
-from config import BASE_DIR
+from config import DATA_DIR
 from models.tts_settings import TtsSettings
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
-_SETTINGS_FILE = BASE_DIR / "tts_settings.json"
+_SETTINGS_FILE = DATA_DIR / "tts_settings.json"
 _SECRET_FIELDS = ("manboApiKey", "fishApiKey", "customApiKey")
 
 

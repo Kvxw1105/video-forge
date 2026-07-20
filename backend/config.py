@@ -2,10 +2,19 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PROJECTS_DIR = BASE_DIR / "projects"
+_configured_data_dir = os.environ.get("VIDEOFORGE_DATA_DIR", "")
+DATA_DIR = Path(_configured_data_dir).expanduser().resolve() if _configured_data_dir else BASE_DIR
+PROJECTS_DIR = DATA_DIR / "projects"
 TEMPLATES_DIR = BASE_DIR / "templates"
+LOGS_DIR = DATA_DIR / "logs"
+CONFIG_DIR = DATA_DIR / "config"
+TEMP_DIR = DATA_DIR / "temp"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 PROJECTS_DIR.mkdir(exist_ok=True)
 TEMPLATES_DIR.mkdir(exist_ok=True)
+LOGS_DIR.mkdir(exist_ok=True)
+CONFIG_DIR.mkdir(exist_ok=True)
+TEMP_DIR.mkdir(exist_ok=True)
 
 MANBO_API_KEY = os.getenv("MANBO_API_KEY", "")  # Set via env var or TTS settings UI
 MANBO_API_URL = "https://api.milorapart.top/apis/mbAIscvip"

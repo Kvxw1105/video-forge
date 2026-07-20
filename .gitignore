@@ -33,6 +33,7 @@ preview/
 frames/
 media/
 build/
+release/
 .cache/
 .pytest_cache/
 # Voice sample mp3 files in root (test artifacts)
