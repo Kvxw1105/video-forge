@@ -10,6 +10,7 @@ import {
   Export,
   FilmSlate,
   FolderOpen,
+  Gear,
   Microphone,
   Moon,
   Plus,
@@ -123,6 +124,10 @@ export default function Home() {
           <button className="btn-cinematic home-action-button" onClick={() => navigate('/library')}>
             <FolderOpen size={15} weight="bold" />
             <span>素材库</span>
+          </button>
+          <button className="btn-cinematic home-action-button" onClick={() => navigate('/settings/system')} title="运行环境检查">
+            <Gear size={15} weight="bold" />
+            <span>系统检查</span>
           </button>
           <button className="btn-cinematic home-action-button" onClick={() => setShowTrash(previous => !previous)}>
             <Archive size={15} weight="bold" />
