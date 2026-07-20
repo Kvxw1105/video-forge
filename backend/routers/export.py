@@ -15,6 +15,7 @@ from adapters.jianying_reader import parse_jianying_draft
 from adapters.jianying_sync import apply_draft_params_to_project, select_draft_for_project
 from engines.audio_analyzer import analyze_audio, generate_cue_points
 from routers.render import _require_active_voiceover
+from services.jianying_status import inspect_jianying_status, list_jianying_drafts
 
 router = APIRouter(tags=["export"])
 
@@ -24,12 +25,8 @@ router = APIRouter(tags=["export"])
 @router.get("/api/jianying-status")
 def get_jianying_status():
     """查询剪映草稿目录状态（不依赖项目ID）"""
-    found = JIANYING_DRAFT_DIR is not None
-    return {
-        "detected": found,
-        "path": str(JIANYING_DRAFT_DIR.resolve()) if found else None,
-        "drafts": _list_jianying_drafts() if found else []
-    }
+    status = inspect_jianying_status(JIANYING_DRAFT_DIR)
+    return {key: status[key] for key in ("detected", "path", "drafts")}
 
 
 @router.get("/api/jianying-drafts/{folder}/params")
@@ -206,18 +203,4 @@ def _safe_cue_points(project: dict, cue_mode: str | None):
 
 def _list_jianying_drafts() -> list[dict]:
     """列出剪映中已有的草稿"""
-    if not JIANYING_DRAFT_DIR:
-        return []
-    results = []
-    for d in sorted(JIANYING_DRAFT_DIR.iterdir(), key=lambda x: x.name, reverse=True):
-        if d.is_dir() and not d.name.startswith(".videoforge-") and (d / "draft_content.json").exists():
-            meta = d / "draft_meta_info.json"
-            name = d.name
-            if meta.exists():
-                try:
-                    m = json.loads(meta.read_text(encoding="utf-8"))
-                    name = m.get("draft_name", d.name)
-                except Exception:
-                    pass
-            results.append({"name": name, "folder": d.name})
-    return results
+    return list_jianying_drafts(JIANYING_DRAFT_DIR)
