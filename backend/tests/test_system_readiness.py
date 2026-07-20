@@ -380,6 +380,45 @@ def test_cache_timestamp_is_recorded_after_checks(monkeypatch, tmp_path):
     assert readiness._cache[0] == 150.0
 
 
+def test_readiness_user_labels_and_messages_are_chinese(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path)
+    readiness.clear_cache()
+    body = TestClient(create_app()).get("/api/system/readiness?refresh=true").json()
+    text = json.dumps([(item["label"], item["message"]) for item in body["checks"]], ensure_ascii=False)
+    for forbidden in ("writable", "cleanup failed", "Disk space", "JianYing draft directory"):
+        assert forbidden not in text
+    for item_id, expected_label in (("storage.projects", "项目目录"), ("storage.library", "素材库目录"), ("storage.temp", "临时目录"), ("storage.disk", "磁盘空间"), ("integration.jianying", "剪映草稿目录")):
+        item = next(item for item in body["checks"] if item["id"] == item_id)
+        assert item["label"] == expected_label
+
+
+def test_storage_success_messages_end_with_ke_xie(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path)
+    checks = [readiness.check_writable_directory(path, item_id, label, True) for path, item_id, label in (
+        (tmp_path / "projects", "storage.projects", "项目目录"),
+        (tmp_path / "library", "storage.library", "素材库目录"),
+        (tmp_path / "temp", "storage.temp", "临时目录"),
+    )]
+    assert all(item.status == "pass" and item.message.endswith("可写") for item in checks)
+
+
+def test_disk_and_jianying_labels_are_stable(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path)
+    monkeypatch.setattr(readiness.shutil, "disk_usage", lambda path: type("U", (), {"total": 10 * 1024**3, "used": 1 * 1024**3, "free": 9 * 1024**3})())
+    assert readiness.check_disk().label == "磁盘空间"
+    assert readiness.check_jianying().label == "剪映草稿目录"
+
+
+def test_check_tts_reads_settings_once(monkeypatch):
+    calls = {"count": 0}
+    def load_once():
+        calls["count"] += 1
+        return readiness.TtsSettings(engine="manbo", manboApiKey="key", manboApiUrl="https://example.test")
+    monkeypatch.setattr(readiness, "get_tts_settings_raw", load_once)
+    assert readiness.check_tts().status == "pass"
+    assert calls["count"] == 1
+
+
 def test_readiness_health_regression():
     client = TestClient(create_app())
     health = client.get("/api/health")
