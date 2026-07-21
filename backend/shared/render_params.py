@@ -44,14 +44,16 @@ def subtitle_to_jianying_transform(position: str) -> Tuple[float, float]:
     if not position:
         position = "bottom_center"
     vert, _, horiz = position.partition("_")
-    transform_y_map = {"top": -0.78, "middle": 0.0, "bottom": 0.78}
+    # JianYing's positive Y direction is upward, while the project/FFmpeg
+    # presets use top-to-bottom screen coordinates.
+    transform_y_map = {"top": 0.78, "middle": 0.0, "bottom": -0.78}
     transform_x_map = {"left": -0.78, "center": 0.0, "right": 0.78}
     return transform_x_map.get(horiz, 0.0), transform_y_map.get(vert, 0.4)
 
 
 def overlay_to_jianying_transform(x: float, y: float) -> Tuple[float, float]:
     """Convert normalized overlay position (0..1) to JianYing transform."""
-    return (x - 0.5) * 2, (y - 0.5) * 2
+    return (x - 0.5) * 2, (0.5 - y) * 2
 
 
 def overlay_to_ffmpeg_exprs(x: float, y: float) -> Tuple[str, str]:
@@ -65,7 +67,9 @@ def overlay_to_ffmpeg_exprs(x: float, y: float) -> Tuple[str, str]:
 
 def font_size_to_jianying(font_size: float) -> float:
     """Convert canvas pixel fontSize to JianYing TextStyle.size."""
-    return max(2.0, font_size / 3.0)
+    # JianYing TextStyle.size is normalized differently from the canvas
+    # pixel-based fontSize used by the project model.
+    return max(2.0, font_size / 6.0)
 
 
 def normalize_hex(color: str | None) -> str:
