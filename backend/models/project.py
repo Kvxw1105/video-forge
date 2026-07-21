@@ -246,6 +246,7 @@ class Subtitle(BaseModel):
         "fontSize": 48, "color": "#ffffff",
         "strokeColor": "#000000", "strokeWidth": 2, "position": "bottom_center"
     })
+    metadata: dict = Field(default_factory=dict)
 
 class DirectoryProgress(BaseModel):
     enabled: bool = False
