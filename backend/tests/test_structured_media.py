@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shared.structured_content import compile_structured_media_variant
 from shared.timeline_compiler import compile_project_timeline
+from test_structured_content import _structured_project
 
 
 def _project(tmp_path: Path):
@@ -27,6 +28,7 @@ def _project(tmp_path: Path):
             "variants": [
                 {"id": "publish", "name": "Publish", "blockIds": ["hook", "story", "outro"]},
                 {"id": "master", "name": "Master", "blockIds": ["story"]},
+                {"id": "chapter", "name": "Chapter", "blockIds": ["hook", "story"]},
             ], "activeVariantId": "publish",
             "bindings": [
                 {"blockId": "hook", "audioSlice": {"voiceoverId": "master", "sourceStart": 0, "sourceEnd": 2}, "visualAssetIds": ["img"], "subtitleIds": ["s1"]},
@@ -35,7 +37,7 @@ def _project(tmp_path: Path):
             ],
         }},
         "audio": {"voiceovers": [{"id": "master", "file": str(audio), "duration": 7.0}]},
-        "assets": [{"id": "img", "type": "image", "path": str(image)}],
+        "assets": [{"id": "img", "type": "image", "name": "frame.png", "path": str(image)}],
         "subtitles": [
             {"id": "s1", "text": "one", "start": 0.2, "end": 1.5},
             {"id": "s2", "text": "two", "start": 2.2, "end": 6.5},
@@ -82,3 +84,26 @@ def test_timeline_expands_compiled_voiceover_segments(tmp_path):
 def test_variant_block_selection(variant, expected, tmp_path):
     result = compile_structured_media_variant(_project(tmp_path), variant, duration_resolver=lambda _: 7.0)
     assert [window.block_id for window in result.block_windows] == expected
+
+
+def test_full_eight_block_variants_preserve_source_ranges(tmp_path):
+    project = _structured_project()
+    audio = tmp_path / "master.wav"; audio.write_bytes(b"wav")
+    image = tmp_path / "frame.png"; image.write_bytes(b"png")
+    project["audio"] = {"voiceovers": [{"id": "master", "file": str(audio), "duration": 32}]}
+    project["assets"] = [{"id": "img", "name": "frame.png", "type": "image", "path": str(image)}]
+    ranges = [(0, 4), (4, 7), (7, 10), (10, 18), (18, 25), (25, 27), (27, 30), (30, 32)]
+    ids = ["hook_01", "cta_01", "bridge_in_01", "story_01", "mechanism_01", "judgment_01", "short_outro_01", "bridge_out_01"]
+    project["structuredContent"]["episode"]["bindings"] = [
+        {"blockId": block_id, "audioSlice": {"voiceoverId": "master", "sourceStart": start, "sourceEnd": end}, "visualAssetIds": ["img"]}
+        for block_id, (start, end) in zip(ids, ranges)
+    ]
+    publish = compile_structured_media_variant(project, "publish", duration_resolver=lambda _: 32)
+    master = compile_structured_media_variant(project, "master", duration_resolver=lambda _: 32)
+    chapter = compile_structured_media_variant(project, "chapter", duration_resolver=lambda _: 32)
+    assert [w.block_id for w in publish.block_windows] == ["hook_01", "cta_01", "story_01", "mechanism_01", "judgment_01", "short_outro_01"]
+    assert [w.block_id for w in master.block_windows] == ["story_01", "mechanism_01", "judgment_01"]
+    assert [w.block_id for w in chapter.block_windows] == ["bridge_in_01", "story_01", "mechanism_01", "judgment_01", "bridge_out_01"]
+    assert [c["trimStart"] for c in master.project_view["audio"]["voiceoverSegments"]] == [10.0, 18.0, 25.0]
+    assert master.total_duration == 17.0
+    assert chapter.total_duration == 22.0
