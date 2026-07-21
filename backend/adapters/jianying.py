@@ -412,7 +412,7 @@ def _render_jianying_draft(
                 ts.clip_settings.transform_x = transform_x
             except Exception:
                 pass
-            script.add_segment(ts, "subtitles")
+            _add_jianying_text_segment(script, ts, "subtitles")
 
     # 5. Title text
     title_cfg = overlays.get("title", {})
@@ -432,7 +432,7 @@ def _render_jianying_draft(
             ts.clip_settings.transform_y = jy
         except Exception:
             pass
-        script.add_segment(ts, "title")
+        _add_jianying_text_segment(script, ts, "title")
 
     # 6. Watermark text
     watermark_cfg = overlays.get("watermark", {})
@@ -452,7 +452,7 @@ def _render_jianying_draft(
             ws.clip_settings.transform_y = jy
         except Exception:
             pass
-        script.add_segment(ws, "watermark")
+        _add_jianying_text_segment(script, ws, "watermark")
 
     # 6.5 Directory progress — editable text, with position keyframes when supported.
     # ponytail: no full keyframe editor; just start/end X over the active voiceover range.
@@ -477,13 +477,23 @@ def _render_jianying_draft(
             ds.add_keyframe(KeyframeProperty.position_x, f"{vo_dur}s", (end_x - 0.5) * 2)
         except Exception:
             pass  # fallback: fixed editable text if this pyJianYingDraft version changes
-        script.add_segment(ds, "directory_progress")
+        _add_jianying_text_segment(script, ds, "directory_progress")
 
     # 7. Save draft
     script.save()
 
     # 如果直接导出到剪映草稿目录，修正 draft_meta_info.json 的路径
     return draft_dir, tuple(dict.fromkeys(adapter_warnings))
+
+
+def _add_jianying_text_segment(script, segment, track_name: str) -> None:
+    """Add text and repair pyJianYingDraft's missing speed material registration."""
+    script.add_segment(segment, track_name)
+    materials = getattr(script, "materials", None)
+    speeds = getattr(materials, "speeds", None)
+    speed = getattr(segment, "speed", None)
+    if isinstance(speeds, list) and speed is not None and speed not in speeds:
+        speeds.append(speed)
 
 
 def _lower_jianying_visual_segments(

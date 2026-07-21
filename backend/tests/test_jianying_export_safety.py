@@ -233,6 +233,40 @@ def test_real_renderer_writes_minimal_jianying_draft(tmp_path):
     assert (result.final_path / "draft_meta_info.json").is_file()
 
 
+def test_real_renderer_text_segments_have_no_orphan_material_refs(tmp_path):
+    importlib.reload(jianying)
+    project = _project("Text reference safety")
+    project["subtitles"] = [
+        {"id": f"sub_{index}", "text": f"subtitle {index}", "start": index, "end": index + 0.8}
+        for index in range(5)
+    ]
+    project["overlays"] = {"subtitle_enabled": True}
+
+    compiled = jianying.compile_project_timeline(project)
+    draft_dir, _ = jianying._render_jianying_draft(tmp_path, "text-ref", compiled)
+    content = json.loads((draft_dir / "draft_content.json").read_text(encoding="utf-8"))
+    material_ids = {
+        material["id"]
+        for bucket in content.get("materials", {}).values()
+        if isinstance(bucket, list)
+        for material in bucket
+        if isinstance(material, dict) and material.get("id")
+    }
+    text_segments = [
+        segment
+        for track in content.get("tracks", [])
+        if track.get("type") == "text"
+        for segment in track.get("segments", [])
+    ]
+
+    assert len(text_segments) == 5
+    assert all(
+        material_ref in material_ids
+        for segment in text_segments
+        for material_ref in segment.get("extra_material_refs", [])
+    )
+
+
 def test_publish_rewrites_generated_media_paths_out_of_staging(monkeypatch, tmp_path):
     def render_with_generated_media(base_dir: Path, draft_name: str, _compiled=None):
         draft_dir = base_dir / draft_name
