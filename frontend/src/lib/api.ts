@@ -1,4 +1,5 @@
 const BASE = '/api'
+import type { SystemReadinessResponse } from '../types/systemReadiness'
 export type JobStatus<T = any> = {
   jobId: string
   kind: string
@@ -25,6 +26,10 @@ async function request<T>(url: string, opts?: RequestInit): Promise<T> {
   return res.json()
 }
 export const api = {
+  getSystemReadiness: (options: { refresh?: boolean; signal?: AbortSignal } = {}) => {
+    const query = options.refresh ? '?refresh=true' : ''
+    return request<SystemReadinessResponse>(`/system/readiness${query}`, { signal: options.signal })
+  },
   createProject: (name: string, canvasRatio = '9:16', templateId?: string) => request<any>('/projects', {
     method: 'POST',
     body: JSON.stringify({ name, canvas_ratio: canvasRatio, template_id: templateId }),
