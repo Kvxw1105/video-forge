@@ -80,9 +80,10 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     bg_ffmpeg = bg_color.lstrip('#') if bg_color.startswith('#') else '000000'
 
     voiceover = compiled.voiceover_clips[0] if compiled.voiceover_clips else None
-    voiceover_start_at = voiceover.start if voiceover else 0.0
+    voiceover_start_at = min((clip.start for clip in compiled.voiceover_clips), default=0.0)
     vo_path = voiceover.file if voiceover else ""
-    vo_duration = voiceover.duration if voiceover else 0.0
+    voiceover_range_end = max((clip.end for clip in compiled.voiceover_clips), default=voiceover_start_at)
+    vo_duration = max(0.0, voiceover_range_end - voiceover_start_at)
     dur = compiled.total_duration
     subtitle_filter, subtitle_ass_path = _build_subtitle_filter(
         subtitles, subtitle_enabled, h, w, output_path.parent,
@@ -217,6 +218,8 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
             chain += drawtexts
         if overlay_drawtexts:
             chain += "," + overlay_drawtexts
+        if not drawtexts and not overlay_drawtexts:
+            chain += "null"
         chain += "[vout]"
         fc_parts.append(chain)
         cmd.extend(["-map", "[vout]"])
@@ -661,8 +664,8 @@ def _premix_voiceover_clips(
         labels.append("[sfx]")
     if not labels:
         return None
-    chains.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:dropout_transition=0,atrim=0:{target_dur},apad[out]")
-    cmd.extend(["-t", str(target_dur + 5), "-filter_complex", ";".join(chains), "-map", "[out]", "-ar", "44100", "-ac", "2", str(mixed)])
+    chains.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:dropout_transition=0,apad,atrim=0:{target_dur}[out]")
+    cmd.extend(["-t", str(target_dur), "-filter_complex", ";".join(chains), "-map", "[out]", "-ar", "44100", "-ac", "2", str(mixed)])
     result = _run_cmd(cmd, timeout=120)
     if result.returncode == 0 and mixed.exists() and mixed.stat().st_size > 0:
         return mixed

@@ -61,13 +61,18 @@ def generate_structured_variant_preview(project_id: str, variant_id: str):
     if p.structuredContent is None:
         raise HTTPException(409, "Project does not contain structuredContent")
     try:
-        project_view = resolve_project_paths(_project_dir(project_id), p.model_dump())
-        compiled_variant = compile_structured_media_variant(project_view, variant_id)
-        _require_active_voiceover(project_view)
+        resolved_project = resolve_project_paths(_project_dir(project_id), p.model_dump())
+        compiled_variant = compile_structured_media_variant(
+            resolved_project, variant_id, duration_resolver=probe_media_duration,
+        )
+        derived_view = compiled_variant.project_view
+        _require_active_voiceover(derived_view)
         output_path = _project_dir(project_id) / f"preview_{variant_id}.mp4"
         output_path.unlink(missing_ok=True)
-        render_preview(project_view, output_path)
-        timeline = compile_project_timeline(project_view, duration_resolver=probe_media_duration)
+        render_preview(derived_view, output_path)
+        timeline = compile_project_timeline(
+            derived_view, duration_resolver=probe_media_duration,
+        )
         return {
             "status": "ok", "variantId": variant_id,
             "previewUrl": f"/api/projects/{project_id}/assets/project-file/{output_path.name}",

@@ -208,6 +208,14 @@ def _compile_voiceover(audio: dict, start: float, resolver: DurationResolver | N
                 start=clip_start, end=clip_start + duration, duration=duration,
                 source_start=source_start, volume=_volume(segment.get("volume"), 1.0),
             ))
+        ordered = sorted(enumerate(clips), key=lambda item: (item[1].start, item[0], item[1].id))
+        clips = [clip for _, clip in ordered]
+        for previous, current in zip(clips, clips[1:]):
+            if current.start < previous.end - 1e-6:
+                warnings.append(
+                    f"Voiceover clips overlap: {previous.id} ends at {previous.end:g}, "
+                    f"{current.id} starts at {current.start:g}"
+                )
         return clips
     config = select_active_voiceover(audio)
     path = str(config.get("file", "") or "")
