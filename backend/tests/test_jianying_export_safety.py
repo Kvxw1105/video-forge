@@ -43,6 +43,23 @@ def test_create_new_preserves_existing_draft_and_returns_metadata(monkeypatch, t
     assert result.to_metadata()["finalDraftName"] == result.final_path.name
 
 
+def test_direct_export_stages_outside_watched_draft_root(monkeypatch, tmp_path):
+    observed = []
+
+    def render(base_dir: Path, draft_name: str, _compiled=None):
+        observed.append(base_dir)
+        return _fake_render(base_dir, draft_name, _compiled)
+
+    monkeypatch.setattr(jianying, "_render_jianying_draft", render)
+    result = jianying.generate_jianying_draft(
+        _project(), output_dir=tmp_path, policy="create_new", direct_export=True
+    )
+
+    assert observed[0].parent == tmp_path.parent
+    assert result.final_path.parent == tmp_path
+    assert not list(tmp_path.glob(".videoforge-staging-*"))
+
+
 def test_failed_create_new_removes_owned_staging_directory(monkeypatch, tmp_path):
     def fail_after_staging(base_dir: Path, draft_name: str, _compiled=None) -> Path:
         draft_dir = base_dir / draft_name

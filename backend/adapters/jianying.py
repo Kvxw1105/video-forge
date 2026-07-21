@@ -162,7 +162,11 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     else:
         final_name, revision, reservation_path = source_path.name, None, None
     final_path = base_dir / final_name if policy == "create_new" else source_path
-    staging_root = base_dir / f".videoforge-staging-{uuid4().hex}"
+    # JianYing watches its draft root while exporting. Keep direct-export
+    # staging outside that watched tree so the client cannot encrypt or move
+    # draft_content.json before media paths are rewritten and published.
+    staging_parent = base_dir.parent if direct_export else base_dir
+    staging_root = staging_parent / f".videoforge-staging-{uuid4().hex}"
     try:
         staging_root.mkdir()
         rendered = _render_jianying_draft(
