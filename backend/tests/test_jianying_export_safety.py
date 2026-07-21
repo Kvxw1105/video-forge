@@ -1,4 +1,5 @@
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -211,6 +212,31 @@ def test_real_renderer_writes_minimal_jianying_draft(tmp_path):
 
     assert (result.final_path / "draft_content.json").is_file()
     assert (result.final_path / "draft_meta_info.json").is_file()
+
+
+def test_publish_rewrites_generated_media_paths_out_of_staging(monkeypatch, tmp_path):
+    def render_with_generated_media(base_dir: Path, draft_name: str, _compiled=None):
+        draft_dir = base_dir / draft_name
+        draft_dir.mkdir(parents=True)
+        generated = draft_dir / "_adj_source.png"
+        generated.write_bytes(b"png")
+        (draft_dir / "draft_content.json").write_text(
+            json.dumps({"materials": {"videos": [{"path": str(generated)}]}}),
+            encoding="utf-8",
+        )
+        return draft_dir
+
+    monkeypatch.setattr(jianying, "_render_jianying_draft", render_with_generated_media)
+
+    result = jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+    content = json.loads(
+        (result.final_path / "draft_content.json").read_text(encoding="utf-8")
+    )
+    media_path = Path(content["materials"]["videos"][0]["path"])
+
+    assert media_path == result.final_path / "_adj_source.png"
+    assert media_path.is_file()
+    assert ".videoforge-staging-" not in str(media_path)
 
 
 def test_generate_compiles_once_and_propagates_warnings(monkeypatch, tmp_path):

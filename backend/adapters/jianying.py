@@ -186,6 +186,7 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
                         backup_path, publish_error, rollback_error
                     ) from rollback_error
                 raise
+        _rewrite_draft_media_paths(final_path, staged_draft, final_path)
         _fix_meta_paths(final_path, final_name)
         all_warnings = tuple(dict.fromkeys((*compiled.warnings, *adapter_warnings)))
         return DraftWriteResult(
@@ -525,6 +526,41 @@ def _fix_meta_paths(draft_dir: Path, draft_name: str):
         meta_file.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass  # 不阻塞导出
+
+
+def _rewrite_draft_media_paths(draft_dir: Path, old_root: Path, new_root: Path) -> None:
+    """Rewrite generated media paths after the staging directory is published."""
+    content_file = draft_dir / "draft_content.json"
+    if not content_file.exists():
+        return
+
+    old_root_text = str(old_root.resolve())
+    old_prefixes = {old_root_text, old_root_text.replace("\\", "/")}
+    new_root_text = str(new_root.resolve())
+
+    def rewrite(value):
+        if isinstance(value, str):
+            for prefix in old_prefixes:
+                if value == prefix:
+                    return new_root_text
+                if value.startswith(prefix + "\\") or value.startswith(prefix + "/"):
+                    suffix = value[len(prefix):].lstrip("\\/")
+                    return str(Path(new_root_text) / Path(suffix))
+            return value
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, dict):
+            return {key: rewrite(item) for key, item in value.items()}
+        return value
+
+    try:
+        payload = json.loads(content_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return
+    content_file.write_text(
+        json.dumps(rewrite(payload), ensure_ascii=False, indent=4),
+        encoding="utf-8",
+    )
 
 
 def _fmt_time(seconds: float) -> str:
