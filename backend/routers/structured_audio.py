@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import threading
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from services.project_service import get_project, _project_dir
@@ -8,6 +9,7 @@ from services.fish_timestamp_tts import request_fish_timestamp, FishTimestampErr
 from services.structured_audio_materializer import episode_text, materialize_structured_audio
 
 router = APIRouter(prefix="/api/projects/{project_id}/structured/audio", tags=["structured-audio"])
+_PROJECT_LOCKS: dict[str, threading.Lock] = {}
 
 
 @router.get("/status")
@@ -58,6 +60,9 @@ def generate_fish_aligned(project_id: str, data: dict | None = None):
                     return {"status": "ok", "cached": True, "liveCallPerformed": False, "generationId": cached.get("generationId"), "voiceoverId": cached.get("voiceoverId"), "audioDuration": cached.get("audioDuration", 0), "blockCount": len(cached.get("blocks", [])), "subtitleCount": sum(1 for sub in project.subtitles if (sub.metadata or {}).get("generationId") == cached.get("generationId")), "overallConfidence": cached.get("overallConfidence", 0), "blockRanges": cached.get("blocks", []), "warnings": cached.get("warnings", [])}
             except Exception:
                 pass
+    lock = _PROJECT_LOCKS.setdefault(project_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        raise HTTPException(409, "该项目已有 Fish Audio 生成任务正在运行")
     try:
         parsed = request_fish_timestamp(
             text, settings.fishApiKey, reference_id,
@@ -75,3 +80,5 @@ def generate_fish_aligned(project_id: str, data: dict | None = None):
     except FishTimestampError as exc:
         status = exc.status_code if exc.status_code in {429, 502} else 502 if not exc.status_code else exc.status_code
         raise HTTPException(status, str(exc)) from exc
+    finally:
+        lock.release()
