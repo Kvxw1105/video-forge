@@ -17,7 +17,9 @@ def _project(name: str = "Safety Project") -> dict:
 def _fake_render(base_dir: Path, draft_name: str, _compiled=None) -> Path:
     draft_dir = base_dir / draft_name
     draft_dir.mkdir(parents=True)
-    (draft_dir / "draft_content.json").write_bytes(b"new draft")
+    (draft_dir / "draft_content.json").write_text(
+        json.dumps({"marker": "new draft"}), encoding="utf-8"
+    )
     return draft_dir
 
 
@@ -137,7 +139,7 @@ def test_replace_explicit_backs_up_and_replaces_only_named_draft(monkeypatch, tm
     assert result.policy == "replace_explicit"
     assert result.source_draft == "Existing Draft"
     assert result.final_path == source
-    assert (source / "draft_content.json").read_bytes() == b"new draft"
+    assert json.loads((source / "draft_content.json").read_text(encoding="utf-8"))["marker"] == "new draft"
     assert result.backup_path is not None
     assert (result.backup_path / "draft_content.json").read_bytes() == b"original draft"
     assert result.backup_path.parent == tmp_path / ".videoforge-backups"
@@ -237,6 +239,155 @@ def test_publish_rewrites_generated_media_paths_out_of_staging(monkeypatch, tmp_
     assert media_path == result.final_path / "_adj_source.png"
     assert media_path.is_file()
     assert ".videoforge-staging-" not in str(media_path)
+
+
+def _render_with_media_path(base_dir: Path, draft_name: str, _compiled=None):
+    draft_dir = base_dir / draft_name
+    draft_dir.mkdir(parents=True)
+    generated = draft_dir / "_adj_source.png"
+    generated.write_bytes(b"png")
+    (draft_dir / "draft_content.json").write_text(
+        json.dumps({"materials": {"videos": [{"path": str(generated)}]}}),
+        encoding="utf-8",
+    )
+    return draft_dir
+
+
+def test_media_paths_are_rewritten_before_create_new_publish(monkeypatch, tmp_path):
+    monkeypatch.setattr(jianying, "_render_jianying_draft", _render_with_media_path)
+    real_rename = jianying._rename_directory
+    observed = []
+
+    def inspect_rename(source: Path, target: Path):
+        if source.parent.name.startswith(".videoforge-staging-"):
+            content = json.loads((source / "draft_content.json").read_text(encoding="utf-8"))
+            observed.append(content["materials"]["videos"][0]["path"])
+            assert observed[-1] == str(target / "_adj_source.png")
+        return real_rename(source, target)
+
+    monkeypatch.setattr(jianying, "_rename_directory", inspect_rename)
+    result = jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+
+    assert observed == [str(result.final_path / "_adj_source.png")]
+
+
+def test_create_new_rewrite_missing_content_rejects_publish(monkeypatch, tmp_path):
+    def render_without_content(base_dir: Path, draft_name: str, _compiled=None):
+        draft_dir = base_dir / draft_name
+        draft_dir.mkdir(parents=True)
+        raise jianying.DraftMediaPathRewriteError(
+            "failed to rewrite generated JianYing media paths: draft_content.json is missing"
+        )
+
+    monkeypatch.setattr(jianying, "_render_jianying_draft", render_without_content)
+
+    with pytest.raises(jianying.DraftMediaPathRewriteError, match="draft_content.json is missing"):
+        jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+
+    assert not list(tmp_path.glob("Safety Project_*"))
+    assert not list(tmp_path.glob(".videoforge-staging-*"))
+    assert not list((tmp_path / ".videoforge-reservations").glob("*") )
+
+
+def test_create_new_parse_failure_rejects_publish(monkeypatch, tmp_path):
+    def render_invalid_content(base_dir: Path, draft_name: str, _compiled=None):
+        draft_dir = base_dir / draft_name
+        draft_dir.mkdir(parents=True)
+        (draft_dir / "draft_content.json").write_text("{invalid", encoding="utf-8")
+        return draft_dir
+
+    monkeypatch.setattr(jianying, "_render_jianying_draft", render_invalid_content)
+
+    with pytest.raises(jianying.DraftMediaPathRewriteError, match="failed to rewrite"):
+        jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+
+    assert not list(tmp_path.glob("Safety Project_*"))
+    assert not list(tmp_path.glob(".videoforge-staging-*"))
+
+
+def test_replace_explicit_rewrite_failure_preserves_original_without_backup(monkeypatch, tmp_path):
+    source = tmp_path / "Existing Draft"
+    source.mkdir()
+    original = json.dumps({"marker": "original"})
+    (source / "draft_content.json").write_text(original, encoding="utf-8")
+
+    def render_invalid_content(base_dir: Path, draft_name: str, _compiled=None):
+        draft_dir = base_dir / draft_name
+        draft_dir.mkdir(parents=True)
+        (draft_dir / "draft_content.json").write_text("not json", encoding="utf-8")
+        return draft_dir
+
+    monkeypatch.setattr(jianying, "_render_jianying_draft", render_invalid_content)
+
+    with pytest.raises(jianying.DraftMediaPathRewriteError):
+        jianying.generate_jianying_draft(
+            _project(), output_dir=tmp_path, policy="replace_explicit",
+            source_draft="Existing Draft", direct_export=True,
+        )
+
+    assert (source / "draft_content.json").read_text(encoding="utf-8") == original
+    assert not (tmp_path / ".videoforge-backups").exists()
+    assert not list(tmp_path.glob(".videoforge-staging-*"))
+
+
+def test_rewrite_write_failure_is_atomic_and_cleans_temp(monkeypatch, tmp_path):
+    monkeypatch.setattr(jianying, "_render_jianying_draft", _render_with_media_path)
+    real_replace = jianying.os.replace
+
+    def fail_rewrite_replace(source: Path, target: Path):
+        if ".videoforge-rewrite-" in Path(source).name:
+            raise OSError("simulated rewrite write failure")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(jianying.os, "replace", fail_rewrite_replace)
+
+    with pytest.raises(jianying.DraftMediaPathRewriteError, match="failed to rewrite"):
+        jianying.generate_jianying_draft(_project(), output_dir=tmp_path)
+
+    assert not list(tmp_path.glob("Safety Project_*"))
+    assert not list(tmp_path.glob(".videoforge-staging-*"))
+    assert not list(tmp_path.rglob("*.videoforge-rewrite-*.tmp"))
+
+
+def test_rewrite_only_changes_paths_with_real_staging_prefix(tmp_path):
+    staged = tmp_path / ".videoforge-staging-abc"
+    staged.mkdir()
+    final = tmp_path / "Final Draft"
+    sibling = str(tmp_path / ".videoforge-staging-abc-other" / "media.png")
+    payload = {
+        "paths": [str(staged / "media.png"), sibling],
+        "nested": {"path": str(staged / "nested" / "file.png")},
+    }
+    content_file = staged / "draft_content.json"
+    content_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    jianying._rewrite_draft_media_paths(staged, staged, final)
+    rewritten = json.loads(content_file.read_text(encoding="utf-8"))
+
+    assert rewritten["paths"][0] == str(final / "media.png")
+    assert rewritten["paths"][1] == sibling
+    assert rewritten["nested"]["path"] == str(final / "nested" / "file.png")
+
+
+def test_replace_explicit_publishes_rewritten_media_and_keeps_backup(monkeypatch, tmp_path):
+    source = tmp_path / "Existing Draft"
+    source.mkdir()
+    (source / "draft_content.json").write_text(
+        json.dumps({"marker": "original"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(jianying, "_render_jianying_draft", _render_with_media_path)
+
+    result = jianying.generate_jianying_draft(
+        _project(), output_dir=tmp_path, policy="replace_explicit",
+        source_draft="Existing Draft", direct_export=True,
+    )
+    content = json.loads((source / "draft_content.json").read_text(encoding="utf-8"))
+    media_path = Path(content["materials"]["videos"][0]["path"])
+
+    assert media_path == source / "_adj_source.png"
+    assert media_path.is_file()
+    assert result.backup_path is not None
+    assert json.loads((result.backup_path / "draft_content.json").read_text(encoding="utf-8"))["marker"] == "original"
 
 
 def test_generate_compiles_once_and_propagates_warnings(monkeypatch, tmp_path):
