@@ -7,6 +7,8 @@ from engines.renderer import render_preview
 from engines.audio_analyzer import analyze_audio, generate_cue_points
 from shared.voiceover import select_active_voiceover
 from shared.media_probe import probe_media_duration
+from shared.structured_content import compile_structured_media_variant
+from shared.timeline_compiler import compile_project_timeline
 
 router = APIRouter(tags=["render"])
 
@@ -51,6 +53,41 @@ def generate_preview(project_id: str, cue_mode: str | None = None):
     }
 
 
+@router.post("/api/projects/{project_id}/structured/variants/{variant_id}/preview")
+def generate_structured_variant_preview(project_id: str, variant_id: str):
+    p = get_project(project_id)
+    if not p:
+        raise HTTPException(404, "项目不存在")
+    if p.structuredContent is None:
+        raise HTTPException(409, "Project does not contain structuredContent")
+    try:
+        project_view = resolve_project_paths(_project_dir(project_id), p.model_dump())
+        compiled_variant = compile_structured_media_variant(project_view, variant_id)
+        _require_active_voiceover(project_view)
+        output_path = _project_dir(project_id) / f"preview_{variant_id}.mp4"
+        output_path.unlink(missing_ok=True)
+        render_preview(project_view, output_path)
+        timeline = compile_project_timeline(project_view, duration_resolver=probe_media_duration)
+        return {
+            "status": "ok", "variantId": variant_id,
+            "previewUrl": f"/api/projects/{project_id}/assets/project-file/{output_path.name}",
+            "duration": timeline.total_duration,
+            "blockCount": len(compiled_variant.block_windows),
+            "voiceoverClipCount": len(timeline.voiceover_clips),
+            "visualClipCount": len(timeline.visual_clips),
+            "subtitleCount": len(timeline.subtitles),
+            "warnings": list(dict.fromkeys((*compiled_variant.warnings, *timeline.warnings))),
+        }
+    except KeyError as e:
+        raise HTTPException(404, f"Variant not found: {variant_id}") from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Structured variant preview failed: {e}") from e
+
+
 @router.post("/api/projects/{project_id}/preview/start")
 def start_generate_preview(project_id: str, cue_mode: str | None = None):
     def work(update):
@@ -65,6 +102,9 @@ def start_generate_preview(project_id: str, cue_mode: str | None = None):
 
 def _require_active_voiceover(project: dict):
     audio = project.get("audio", {}) if isinstance(project, dict) else {}
+    structured_segments = audio.get("voiceoverSegments") or []
+    if structured_segments and any(str(item.get("file") or "") for item in structured_segments):
+        return
     active = select_active_voiceover(audio)
     file_path = active.get("file", "") if isinstance(active, dict) else ""
     if not file_path:

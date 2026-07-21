@@ -38,6 +38,52 @@ class StructuredVariant(BaseModel):
         return value
 
 
+class StructuredAudioSlice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    voiceoverId: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    sourceStart: float = Field(ge=0)
+    sourceEnd: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _validate_range(self):
+        if self.sourceEnd <= self.sourceStart:
+            raise ValueError("audioSlice sourceEnd must be greater than sourceStart")
+        return self
+
+
+class BlockAssetBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    blockId: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    audioSlice: StructuredAudioSlice | None = None
+    visualAssetIds: list[str] = Field(default_factory=list)
+    subtitleIds: list[str] = Field(default_factory=list)
+    duration: float | None = Field(default=None, gt=0)
+    metadata: dict = Field(default_factory=dict)
+
+    @field_validator("visualAssetIds", "subtitleIds")
+    @classmethod
+    def _unique_refs(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("binding references must be unique")
+        if any(not isinstance(item, str) or not item for item in value):
+            raise ValueError("binding references must contain non-empty strings")
+        return value
+
+    @model_validator(mode="after")
+    def _require_duration(self):
+        if self.audioSlice is None and self.duration is None:
+            raise ValueError("binding requires audioSlice or positive duration")
+        if self.audioSlice is not None and self.duration is not None:
+            actual = self.audioSlice.sourceEnd - self.audioSlice.sourceStart
+            if abs(actual - self.duration) > 0.05:
+                # The compiler emits the user-facing warning; the model only
+                # rejects impossible/non-positive values.
+                object.__setattr__(self, "duration", self.duration)
+        return self
+
+
 class StructuredEpisode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -47,6 +93,7 @@ class StructuredEpisode(BaseModel):
     symbol: str = ""
     blocks: list[StructuredBlock] = Field(default_factory=list)
     variants: list[StructuredVariant] = Field(default_factory=list)
+    bindings: list[BlockAssetBinding] = Field(default_factory=list)
     activeVariantId: str | None = None
     metadata: dict = Field(default_factory=dict)
 
@@ -67,6 +114,11 @@ class StructuredEpisode(BaseModel):
             raise ValueError("activeVariantId is required when variants are present")
         if self.activeVariantId is not None and self.activeVariantId not in set(variant_ids):
             raise ValueError("activeVariantId must reference an existing variant")
+        binding_ids = [binding.blockId for binding in self.bindings]
+        if len(binding_ids) != len(set(binding_ids)):
+            raise ValueError("structured episode binding block ids must be unique")
+        if any(binding_id not in set(block_ids) for binding_id in binding_ids):
+            raise ValueError("binding blockId must reference an existing block")
         return self
 
 

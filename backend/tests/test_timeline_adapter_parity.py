@@ -222,7 +222,7 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
     assert command[command.index("-t", command.index("-filter_complex")) + 1] == "5.5"
     assert "between(t,0.5,1.5)" in filter_complex
     assert text_ranges["once"] == (0.5, 1.0)
-    assert text_ranges["progress"] == (0.5, 2.0)
+    assert text_ranges["progress"] == (0.5, 2.5)
     assert renderer_probe_calls == [str(voice), str(bgm), str(sfx)]
     assert jianying_probe_calls == [str(voice), str(bgm), str(sfx)]
     assert renderer_bgm_tracks[0]["startAt"] == 1

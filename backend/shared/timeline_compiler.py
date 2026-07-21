@@ -185,6 +185,30 @@ def _volume(value, default: float) -> float:
 
 
 def _compile_voiceover(audio: dict, start: float, resolver: DurationResolver | None, warnings: list[str]) -> list[CompiledAudioClip]:
+    structured_segments = audio.get("voiceoverSegments") or []
+    if structured_segments:
+        clips: list[CompiledAudioClip] = []
+        for index, segment in enumerate(structured_segments):
+            path = str(segment.get("file", "") or "")
+            if not path or not Path(path).exists():
+                warnings.append(f"Missing voiceover segment asset: {path}")
+                continue
+            full = _duration({"duration": segment.get("duration", 0)}, path, resolver, warnings, "voiceover")
+            source_start = max(0.0, float(segment.get("trimStart", 0) or 0))
+            source_end = float(segment.get("trimEnd", 0) or 0)
+            if source_end <= source_start:
+                source_end = full
+            duration = max(0.0, min(source_end - source_start, max(0.0, full - source_start)))
+            if duration <= 0:
+                warnings.append(f"Invalid voiceover segment duration: {path}")
+                continue
+            clip_start = max(0.0, float(segment.get("startAt", 0) or 0))
+            clips.append(CompiledAudioClip(
+                id=str(segment.get("id", f"voiceover_{index}")), file=path,
+                start=clip_start, end=clip_start + duration, duration=duration,
+                source_start=source_start, volume=_volume(segment.get("volume"), 1.0),
+            ))
+        return clips
     config = select_active_voiceover(audio)
     path = str(config.get("file", "") or "")
     if not path:

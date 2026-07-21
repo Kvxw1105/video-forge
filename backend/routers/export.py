@@ -15,6 +15,8 @@ from adapters.jianying_reader import parse_jianying_draft
 from adapters.jianying_sync import apply_draft_params_to_project, select_draft_for_project
 from engines.audio_analyzer import analyze_audio, generate_cue_points
 from routers.render import _require_active_voiceover
+from shared.structured_content import compile_structured_media_variant
+from shared.timeline_compiler import compile_project_timeline
 from services.jianying_status import inspect_jianying_status, list_jianying_drafts
 
 router = APIRouter(tags=["export"])
@@ -165,6 +167,51 @@ def export_jianying_direct(project_id: str, cue_mode: str | None = None, policy:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
         raise HTTPException(500, f"直接导出到剪映失败: {str(e)}")
+
+
+@router.post("/api/projects/{project_id}/structured/variants/{variant_id}/export/jianying-direct")
+def export_structured_variant_direct(project_id: str, variant_id: str, policy: str = "create_new"):
+    """Export a compiled structured media variant as a new JianYing draft."""
+    if policy != "create_new":
+        raise HTTPException(400, "structured variant direct export only supports policy=create_new")
+    if not JIANYING_DRAFT_DIR:
+        raise HTTPException(400, "未检测到剪映草稿目录")
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    if project.structuredContent is None:
+        raise HTTPException(409, "Project does not contain structuredContent")
+    try:
+        project_view = resolve_project_paths(_project_dir(project_id), project.model_dump())
+        compiled_variant = compile_structured_media_variant(project_view, variant_id)
+        _require_active_voiceover(compiled_variant.project_view)
+        result = generate_jianying_draft(
+            compiled_variant.project_view,
+            output_dir=JIANYING_DRAFT_DIR,
+            policy="create_new",
+            direct_export=True,
+        )
+        timeline = compile_project_timeline(compiled_variant.project_view)
+        return {
+            "status": "ok",
+            "variantId": variant_id,
+            "episodeId": compiled_variant.episode_id,
+            "blockCount": len(compiled_variant.block_windows),
+            "duration": timeline.total_duration,
+            "voiceoverClipCount": len(timeline.voiceover_clips),
+            "visualClipCount": len(timeline.visual_clips),
+            "subtitleCount": len(timeline.subtitles),
+            "warnings": list(dict.fromkeys((*compiled_variant.warnings, *timeline.warnings, *result.warnings))),
+            **result.to_metadata(),
+        }
+    except KeyError as error:
+        raise HTTPException(404, f"Variant not found: {variant_id}") from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(500, f"Structured JianYing export failed: {error}") from error
 
 
 @router.post("/api/projects/{project_id}/export/jianying-direct/start")

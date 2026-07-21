@@ -365,18 +365,17 @@ def _render_jianying_draft(
             script.tracks["sfx"].add_segment(a)
 
     # 3. Voiceover track — 用当前激活配音的实际音频时长
-    voiceover_path = _resolve_path(voiceover.file) if voiceover else None
-    voiceover_vol = voiceover.volume if voiceover else 1.0
-    if voiceover_path:
-        dur = voiceover.duration
-        if dur > 0:
-            script.add_track(TrackType.audio, "voiceover")
-            source_duration = _jianying_source_duration(dur)
+    if compiled.voiceover_clips:
+        script.add_track(TrackType.audio, "voiceover")
+        for clip in compiled.voiceover_clips:
+            voiceover_path = _resolve_path(clip.file)
+            if not voiceover_path or clip.duration <= 0:
+                continue
             va = AudioSegment(
                 str(voiceover_path),
-                target_timerange=trange(f"{voiceover_start_at}s", f"{dur}s"),
-                source_timerange=trange("0s", f"{source_duration}s"),
-                volume=max(0.0, min(1.0, voiceover_vol)),
+                target_timerange=trange(f"{clip.start}s", f"{clip.duration}s"),
+                source_timerange=trange(f"{clip.source_start}s", f"{clip.duration}s"),
+                volume=max(0.0, min(1.0, clip.volume)),
             )
             script.add_material(va.material_instance)
             script.tracks["voiceover"].add_segment(va)
@@ -457,7 +456,7 @@ def _render_jianying_draft(
     # 6.5 Directory progress — editable text, with position keyframes when supported.
     # ponytail: no full keyframe editor; just start/end X over the active voiceover range.
     dp_cfg = overlays.get("directoryProgress", {})
-    vo_dur = voiceover.duration if voiceover else 0
+    vo_dur = max((clip.end for clip in compiled.voiceover_clips), default=0.0)
     if dp_cfg.get("enabled") and dp_cfg.get("text") and vo_dur > 0:
         script.add_track(TrackType.text, "directory_progress")
         fs = font_size_to_jianying(max(8.0, min(80.0, float(dp_cfg.get("fontSize", 22) or 22))))
