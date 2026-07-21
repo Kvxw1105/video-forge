@@ -158,4 +158,8 @@ export const api = {
     request<{ status: string; bpm: number; duration: number; cue_points: any[]; analysis: any }>(
       `/projects/${projectId}/cue-points?mode=${mode}&image_count=${imageCount}`, { method: 'POST' }
     ),
+  getStructuredAudioStatus: (projectId: string) => request<any>(`/projects/${projectId}/structured/audio/status`),
+  generateFishAlignedAudio: (projectId: string, data: any) => request<any>(`/projects/${projectId}/structured/audio/fish-aligned`, { method: 'POST', body: JSON.stringify(data) }),
+  previewStructuredVariant: (projectId: string, variantId: string) => request<any>(`/projects/${projectId}/structured/variants/${variantId}/preview`, { method: 'POST' }),
+  exportStructuredVariantToJianYing: (projectId: string, variantId: string) => request<any>(`/projects/${projectId}/structured/variants/${variantId}/export/jianying-direct`, { method: 'POST', body: JSON.stringify({ policy: 'create_new' }) }),
 }
