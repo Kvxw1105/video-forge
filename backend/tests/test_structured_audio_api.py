@@ -46,7 +46,8 @@ def test_mock_fish_materializes_audio_ranges_subtitles_and_preserves_existing(mo
     monkeypatch.setattr(structured_audio, "get_tts_settings_raw", lambda: SimpleNamespace(fishApiKey="configured", fishReferenceId="ref", fishModel="s2-pro"))
     monkeypatch.setattr(structured_audio, "request_fish_timestamp", lambda *args, **kwargs: parsed)
     monkeypatch.setattr(structured_audio, "_project_dir", lambda _: tmp_path)
-    monkeypatch.setattr(materializer, "update_project", lambda project_id, data: data)
+    saved = []
+    monkeypatch.setattr(materializer, "update_project", lambda project_id, data: saved.append(data) or data)
     result = structured_audio.generate_fish_aligned("p", {"generateSubtitles": True})
     assert result["status"] == "ok"
     assert result["blockCount"] == 2
@@ -54,6 +55,7 @@ def test_mock_fish_materializes_audio_ranges_subtitles_and_preserves_existing(mo
     assert Path(result["audioPath"]).read_bytes() == parsed.audio_bytes
     assert Path(result["manifestPath"]).exists()
     assert project.model_dump() == original
+    assert not Path(saved[0]["audio"]["voiceover"]["file"]).is_absolute()
 
 
 def test_status_and_cache_avoid_second_transport_call(monkeypatch, tmp_path):

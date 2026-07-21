@@ -41,7 +41,8 @@ def materialize_structured_audio(project_id: str, project: dict, parsed, *, proj
     voiceover_id = f"structured_master_{generation_id[:12]}"
     new_project = deepcopy(project)
     audio = new_project.setdefault("audio", {})
-    voice = {"id": voiceover_id, "api": "fish_audio_timestamp", "engine": "fish_audio", "file": str(audio_path), "duration": duration, "isActive": True, "createdAt": datetime.now().isoformat()}
+    # Persist a project-relative reference so portable copies never capture a machine path.
+    voice = {"id": voiceover_id, "api": "fish_audio_timestamp", "engine": "fish_audio", "file": audio_path.name, "duration": duration, "isActive": True, "createdAt": datetime.now().isoformat()}
     for item in audio.get("voiceovers") or []: item["isActive"] = False
     audio.setdefault("voiceovers", []).append(voice); audio["voiceover"] = voice
     new_project["subtitles"] = list(subtitle_index.values())
