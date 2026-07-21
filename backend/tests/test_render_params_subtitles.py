@@ -7,9 +7,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 def test_jianying_subtitle_position_uses_edge_like_coordinates():
     from shared.render_params import subtitle_to_jianying_transform
 
-    assert subtitle_to_jianying_transform("bottom_center") == (0.0, 0.78)
-    assert subtitle_to_jianying_transform("top_left") == (-0.78, -0.78)
+    assert subtitle_to_jianying_transform("bottom_center") == (0.0, -0.78)
+    assert subtitle_to_jianying_transform("top_left") == (-0.78, 0.78)
     assert subtitle_to_jianying_transform("middle_right") == (0.78, 0.0)
+
+
+def test_jianying_font_size_uses_readable_scale():
+    from shared.render_params import font_size_to_jianying
+
+    assert font_size_to_jianying(48) == 8.0
+    assert font_size_to_jianying(24) == 4.0
 
 
 def test_drawtext_uses_detected_chinese_font(monkeypatch):

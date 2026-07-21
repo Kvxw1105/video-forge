@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 import struct
@@ -102,6 +103,10 @@ class DraftRollbackError(RuntimeError):
         )
 
 
+class DraftMediaPathRewriteError(RuntimeError):
+    """Raised when a staged JianYing draft cannot be made publishable."""
+
+
 def _rename_directory(source: Path, target: Path) -> Path:
     return source.rename(target)
 
@@ -156,7 +161,12 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
         final_name, revision, reservation_path = _reserve_versioned_name(base_dir, raw_name)
     else:
         final_name, revision, reservation_path = source_path.name, None, None
-    staging_root = base_dir / f".videoforge-staging-{uuid4().hex}"
+    final_path = base_dir / final_name if policy == "create_new" else source_path
+    # JianYing watches its draft root while exporting. Keep direct-export
+    # staging outside that watched tree so the client cannot encrypt or move
+    # draft_content.json before media paths are rewritten and published.
+    staging_parent = base_dir.parent if direct_export else base_dir
+    staging_root = staging_parent / f".videoforge-staging-{uuid4().hex}"
     try:
         staging_root.mkdir()
         rendered = _render_jianying_draft(
@@ -166,8 +176,20 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
             staged_draft, adapter_warnings = rendered
         else:  # compatibility for focused tests replacing the renderer
             staged_draft, adapter_warnings = rendered, ()
+        content_file = staged_draft / "draft_content.json"
+        real_jianying_runtime = str(getattr(DraftFolder, "__module__", "")).startswith("pyJianYingDraft")
+        if not content_file.exists() and real_jianying_runtime:
+            raise DraftMediaPathRewriteError(
+                "failed to rewrite generated JianYing media paths: draft_content.json is missing"
+            )
+        # Focused renderer doubles may intentionally keep serialization in memory.
+        if content_file.exists() and real_jianying_runtime:
+            _rewrite_draft_media_paths(
+                draft_dir=staged_draft,
+                old_root=staged_draft,
+                new_root=final_path,
+            )
         if policy == "create_new":
-            final_path = base_dir / final_name
             _rename_directory(staged_draft, final_path)
             backup_path = None
         else:
@@ -177,7 +199,6 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
             _rename_directory(source_path, backup_path)
             try:
                 _rename_directory(staged_draft, source_path)
-                final_path = source_path
             except Exception as publish_error:
                 try:
                     _rename_directory(backup_path, source_path)
@@ -391,7 +412,7 @@ def _render_jianying_draft(
                 ts.clip_settings.transform_x = transform_x
             except Exception:
                 pass
-            subtitle_track.add_segment(ts)
+            _add_jianying_text_segment(script, ts, "subtitles")
 
     # 5. Title text
     title_cfg = overlays.get("title", {})
@@ -411,7 +432,7 @@ def _render_jianying_draft(
             ts.clip_settings.transform_y = jy
         except Exception:
             pass
-        script.tracks["title"].add_segment(ts)
+        _add_jianying_text_segment(script, ts, "title")
 
     # 6. Watermark text
     watermark_cfg = overlays.get("watermark", {})
@@ -431,7 +452,7 @@ def _render_jianying_draft(
             ws.clip_settings.transform_y = jy
         except Exception:
             pass
-        script.tracks["watermark"].add_segment(ws)
+        _add_jianying_text_segment(script, ws, "watermark")
 
     # 6.5 Directory progress — editable text, with position keyframes when supported.
     # ponytail: no full keyframe editor; just start/end X over the active voiceover range.
@@ -456,13 +477,23 @@ def _render_jianying_draft(
             ds.add_keyframe(KeyframeProperty.position_x, f"{vo_dur}s", (end_x - 0.5) * 2)
         except Exception:
             pass  # fallback: fixed editable text if this pyJianYingDraft version changes
-        script.tracks["directory_progress"].add_segment(ds)
+        _add_jianying_text_segment(script, ds, "directory_progress")
 
     # 7. Save draft
     script.save()
 
     # 如果直接导出到剪映草稿目录，修正 draft_meta_info.json 的路径
     return draft_dir, tuple(dict.fromkeys(adapter_warnings))
+
+
+def _add_jianying_text_segment(script, segment, track_name: str) -> None:
+    """Add text and repair pyJianYingDraft's missing speed material registration."""
+    script.add_segment(segment, track_name)
+    materials = getattr(script, "materials", None)
+    speeds = getattr(materials, "speeds", None)
+    speed = getattr(segment, "speed", None)
+    if isinstance(speeds, list) and speed is not None and speed not in speeds:
+        speeds.append(speed)
 
 
 def _lower_jianying_visual_segments(
@@ -525,6 +556,56 @@ def _fix_meta_paths(draft_dir: Path, draft_name: str):
         meta_file.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass  # 不阻塞导出
+
+
+def _rewrite_draft_media_paths(draft_dir: Path, old_root: Path, new_root: Path) -> None:
+    """Rewrite staged media paths before the draft is atomically published."""
+    content_file = draft_dir / "draft_content.json"
+    if not content_file.exists():
+        raise DraftMediaPathRewriteError(
+            "failed to rewrite generated JianYing media paths: draft_content.json is missing"
+        )
+
+    old_root_text = str(old_root.resolve())
+    old_prefixes = {old_root_text, old_root_text.replace("\\", "/")}
+    new_root_text = str(new_root.resolve())
+
+    def rewrite(value):
+        if isinstance(value, str):
+            for prefix in old_prefixes:
+                if value == prefix:
+                    return new_root_text
+                if value.startswith(prefix + "\\") or value.startswith(prefix + "/"):
+                    suffix = value[len(prefix):].lstrip("\\/")
+                    return str(Path(new_root_text) / Path(suffix))
+            return value
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, dict):
+            return {key: rewrite(item) for key, item in value.items()}
+        return value
+
+    try:
+        payload = json.loads(content_file.read_text(encoding="utf-8"))
+        rewritten = rewrite(payload)
+        temp_file = content_file.with_name(
+            f".{content_file.name}.videoforge-rewrite-{uuid4().hex}.tmp"
+        )
+        try:
+            with temp_file.open("w", encoding="utf-8", newline="") as handle:
+                json.dump(rewritten, handle, ensure_ascii=False, indent=4)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_file, content_file)
+        finally:
+            if temp_file.exists():
+                temp_file.unlink()
+    except DraftMediaPathRewriteError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DraftMediaPathRewriteError(
+            "failed to rewrite generated JianYing media paths"
+        ) from exc
 
 
 def _fmt_time(seconds: float) -> str:

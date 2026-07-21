@@ -42,12 +42,20 @@ def test_jianying_subtitles_are_exported_as_positioned_text_segments(monkeypatch
         def __init__(self):
             self.tracks = {}
             self.materials = types.SimpleNamespace(audio_fades=[])
+            self.added_materials = []
+            self.added_text_materials = []
 
         def add_track(self, track_type, name):
             self.tracks[name] = FakeTrack()
 
         def add_material(self, material):
+            self.added_materials.append(material)
             return material
+
+        def add_segment(self, segment, track_name=None):
+            self.tracks[track_name].add_segment(segment)
+            self.added_text_materials.append(segment.path)
+            return self
 
         def save(self):
             return None
@@ -72,7 +80,10 @@ def test_jianying_subtitles_are_exported_as_positioned_text_segments(monkeypatch
     fake_pyjianying.TrackType = FakeTrackType
     fake_pyjianying.trange = lambda start, dur: (start, dur)
     fake_pyjianying.ClipSettings = FakeClipSettings
-    fake_keyframe.KeyframeProperty = object
+    fake_keyframe.KeyframeProperty = types.SimpleNamespace(
+        position_x="position_x", position_y="position_y", scale_x="scale_x",
+        scale_y="scale_y", rotation="rotation", alpha="alpha",
+    )
     fake_text_segment.TextStyle = FakeTextStyle
 
     monkeypatch.setitem(sys.modules, "pyJianYingDraft", fake_pyjianying)
@@ -118,7 +129,11 @@ def test_jianying_subtitles_are_exported_as_positioned_text_segments(monkeypatch
 
     subtitle_segments = scripts[0].tracks["subtitles"].segments
     assert [segment.path for segment in subtitle_segments] == ["底部字幕", "顶部字幕"]
-    assert subtitle_segments[0].clip_settings.transform_y == 0.78
+    assert subtitle_segments[0].clip_settings.transform_y == -0.78
     assert subtitle_segments[1].clip_settings.transform_x == -0.78
-    assert subtitle_segments[0].kwargs["style"].size == 12.0
-    assert subtitle_segments[1].kwargs["style"].size == 8.0
+    assert subtitle_segments[1].clip_settings.transform_y == 0.78
+    assert subtitle_segments[0].kwargs["style"].size == 6.0
+    assert subtitle_segments[1].kwargs["style"].size == 4.0
+    materials = scripts[0].added_materials
+    assert [Path(material["path"]).name for material in materials[:1]] == ["asset.png"]
+    assert scripts[0].added_text_materials == ["底部字幕", "顶部字幕"]
