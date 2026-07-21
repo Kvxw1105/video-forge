@@ -80,9 +80,10 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     bg_ffmpeg = bg_color.lstrip('#') if bg_color.startswith('#') else '000000'
 
     voiceover = compiled.voiceover_clips[0] if compiled.voiceover_clips else None
-    voiceover_start_at = voiceover.start if voiceover else 0.0
+    voiceover_start_at = min((clip.start for clip in compiled.voiceover_clips), default=0.0)
     vo_path = voiceover.file if voiceover else ""
-    vo_duration = voiceover.duration if voiceover else 0.0
+    voiceover_range_end = max((clip.end for clip in compiled.voiceover_clips), default=voiceover_start_at)
+    vo_duration = max(0.0, voiceover_range_end - voiceover_start_at)
     dur = compiled.total_duration
     subtitle_filter, subtitle_ass_path = _build_subtitle_filter(
         subtitles, subtitle_enabled, h, w, output_path.parent,
@@ -122,7 +123,13 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
 
     # Pre-mix voiceover + BGM + SFX into single WAV
     # Use bgm_already_baked_vol (1.0) since _prepare_bgm already applied volume to the file
-    mixed_audio = _premix_audio(vo_path, vo_vol, bgm_prepared_path, bgm_already_baked_vol, dur, output_path.parent, voiceover_start_at=voiceover_start_at, sfx_path=sfx_prepared_path)
+    if len(compiled.voiceover_clips) > 1 or (voiceover and voiceover.source_start > 0):
+        mixed_audio = _premix_voiceover_clips(
+            list(compiled.voiceover_clips), bgm_prepared_path, bgm_already_baked_vol,
+            dur, output_path.parent, sfx_path=sfx_prepared_path,
+        )
+    else:
+        mixed_audio = _premix_audio(vo_path, vo_vol, bgm_prepared_path, bgm_already_baked_vol, dur, output_path.parent, voiceover_start_at=voiceover_start_at, sfx_path=sfx_prepared_path)
     has_mixed_audio = mixed_audio and mixed_audio.exists() and mixed_audio.stat().st_size > 0
 
     n_media = len(media_paths)
@@ -211,6 +218,8 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
             chain += drawtexts
         if overlay_drawtexts:
             chain += "," + overlay_drawtexts
+        if not drawtexts and not overlay_drawtexts:
+            chain += "null"
         chain += "[vout]"
         fc_parts.append(chain)
         cmd.extend(["-map", "[vout]"])
@@ -623,6 +632,44 @@ def _premix_audio(vo_path: str, vo_vol: float, bgm_path: str, bgm_vol: float, ta
         return mixed
 
     logger.error("Audio premix failed: %s", r.stderr[-500:] if r.stderr else "(empty)")
+    return None
+
+
+def _premix_voiceover_clips(
+    clips: list, bgm_path: str | None, bgm_vol: float, target_dur: float,
+    work_dir: Path, sfx_path: str = "",
+) -> Path | None:
+    """Mix structured source slices at their compiled target positions."""
+    mixed = work_dir / "_audio_mixed.wav"
+    cmd = ["ffmpeg", "-y"]
+    chains: list[str] = []
+    labels: list[str] = []
+    idx = 0
+    for clip in clips:
+        if not clip.file or not Path(clip.file).exists():
+            continue
+        cmd.extend(["-ss", str(clip.source_start), "-t", str(clip.duration), "-i", clip.file])
+        delay = int(clip.start * 1000)
+        chains.append(f"[{idx}:a]volume={clip.volume},adelay={delay}|{delay}[vo{idx}]")
+        labels.append(f"[vo{idx}]")
+        idx += 1
+    if bgm_path and Path(bgm_path).exists():
+        cmd.extend(["-i", bgm_path])
+        chains.append(f"[{idx}:a]volume={bgm_vol}[bgm]")
+        labels.append("[bgm]")
+        idx += 1
+    if sfx_path and Path(sfx_path).exists():
+        cmd.extend(["-i", sfx_path])
+        chains.append(f"[{idx}:a]volume=1.0[sfx]")
+        labels.append("[sfx]")
+    if not labels:
+        return None
+    chains.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:dropout_transition=0,apad,atrim=0:{target_dur}[out]")
+    cmd.extend(["-t", str(target_dur), "-filter_complex", ";".join(chains), "-map", "[out]", "-ar", "44100", "-ac", "2", str(mixed)])
+    result = _run_cmd(cmd, timeout=120)
+    if result.returncode == 0 and mixed.exists() and mixed.stat().st_size > 0:
+        return mixed
+    logger.error("Structured voiceover premix failed: %s", result.stderr[-500:] if result.stderr else "")
     return None
 
 
