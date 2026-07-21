@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import ValidationError
 from services.project_service import (
     ProjectLoadError,
     create_project,
@@ -9,6 +10,7 @@ from services.project_service import (
     restore_project,
     update_project,
 )
+from shared.structured_content import compile_structured_variant
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -59,12 +61,41 @@ def get_one(project_id: str):
     return p.model_dump()
 
 
+@router.get("/{project_id}/structured/variants/{variant_id}/compile")
+def compile_variant(project_id: str, variant_id: str):
+    try:
+        p = get_project(project_id)
+    except ProjectLoadError as e:
+        raise HTTPException(500, str(e)) from e
+    if not p:
+        raise HTTPException(404, "Project not found")
+    if p.structuredContent is None:
+        raise HTTPException(409, "Project does not contain structuredContent")
+    try:
+        compiled = compile_structured_variant(p, variant_id)
+    except KeyError as e:
+        raise HTTPException(404, f"Variant not found: {variant_id}") from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return {
+        "episodeId": compiled.episode_id,
+        "variantId": compiled.variant_id,
+        "variantName": compiled.variant_name,
+        "blockIds": list(compiled.block_ids),
+        "blockCount": len(compiled.blocks),
+        "script": compiled.script,
+        "warnings": list(compiled.warnings),
+    }
+
+
 @router.put("/{project_id}")
 def update(project_id: str, data: dict):
     try:
         p = update_project(project_id, data)
     except ProjectLoadError as e:
         raise HTTPException(500, str(e)) from e
+    except (ValidationError, ValueError) as e:
+        raise HTTPException(422, str(e)) from e
     if not p:
         raise HTTPException(404, "项目不存在")
     return p.model_dump()

@@ -1,6 +1,80 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional, Literal, Union
 from datetime import datetime
+
+
+STRUCTURED_BLOCK_TYPES = Literal[
+    "HOOK", "CTA_TAG", "PROBLEM", "STORY", "MECHANISM", "JUDGMENT",
+    "METHOD", "SHORT_OUTRO", "BRIDGE_IN", "BRIDGE_OUT", "COMMENT_CTA",
+]
+
+
+class StructuredBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    type: STRUCTURED_BLOCK_TYPES
+    text: str = ""
+    enabled: bool = True
+    revision: int = Field(default=1, ge=1)
+    metadata: dict = Field(default_factory=dict)
+
+
+class StructuredVariant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = ""
+    blockIds: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+    @field_validator("blockIds")
+    @classmethod
+    def _unique_block_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("variant blockIds must be unique")
+        if any(not isinstance(item, str) or not item for item in value):
+            raise ValueError("variant blockIds must contain non-empty strings")
+        return value
+
+
+class StructuredEpisode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episodeId: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str = ""
+    topic: str = ""
+    symbol: str = ""
+    blocks: list[StructuredBlock] = Field(default_factory=list)
+    variants: list[StructuredVariant] = Field(default_factory=list)
+    activeVariantId: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_references(self):
+        block_ids = [block.id for block in self.blocks]
+        if len(block_ids) != len(set(block_ids)):
+            raise ValueError("structured episode block ids must be unique")
+        variant_ids = [variant.id for variant in self.variants]
+        if len(variant_ids) != len(set(variant_ids)):
+            raise ValueError("structured episode variant ids must be unique")
+        known_blocks = set(block_ids)
+        for variant in self.variants:
+            missing = [item for item in variant.blockIds if item not in known_blocks]
+            if missing:
+                raise ValueError(f"variant {variant.id} references missing blocks: {', '.join(missing)}")
+        if variant_ids and self.activeVariantId is None:
+            raise ValueError("activeVariantId is required when variants are present")
+        if self.activeVariantId is not None and self.activeVariantId not in set(variant_ids):
+            raise ValueError("activeVariantId must reference an existing variant")
+        return self
+
+
+class StructuredContent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1] = 1
+    episode: StructuredEpisode
 
 class Canvas(BaseModel):
     ratio: Literal["9:16", "16:9", "1:1", "4:5", "4:3"] = "9:16"
@@ -172,6 +246,7 @@ class Project(BaseModel):
     perImageDuration: float = 1.0
     shuffleMode: bool = True
     timeline: Timeline = Field(default_factory=Timeline)
+    structuredContent: StructuredContent | None = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
