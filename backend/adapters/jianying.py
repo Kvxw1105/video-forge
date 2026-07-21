@@ -408,8 +408,7 @@ def _render_jianying_draft(
                 ts.clip_settings.transform_x = transform_x
             except Exception:
                 pass
-            script.add_material(ts.material_instance)
-            subtitle_track.add_segment(ts)
+            script.add_segment(ts, "subtitles")
 
     # 5. Title text
     title_cfg = overlays.get("title", {})
@@ -429,8 +428,7 @@ def _render_jianying_draft(
             ts.clip_settings.transform_y = jy
         except Exception:
             pass
-        script.add_material(ts.material_instance)
-        script.tracks["title"].add_segment(ts)
+        script.add_segment(ts, "title")
 
     # 6. Watermark text
     watermark_cfg = overlays.get("watermark", {})
@@ -450,8 +448,7 @@ def _render_jianying_draft(
             ws.clip_settings.transform_y = jy
         except Exception:
             pass
-        script.add_material(ws.material_instance)
-        script.tracks["watermark"].add_segment(ws)
+        script.add_segment(ws, "watermark")
 
     # 6.5 Directory progress — editable text, with position keyframes when supported.
     # ponytail: no full keyframe editor; just start/end X over the active voiceover range.
@@ -476,8 +473,7 @@ def _render_jianying_draft(
             ds.add_keyframe(KeyframeProperty.position_x, f"{vo_dur}s", (end_x - 0.5) * 2)
         except Exception:
             pass  # fallback: fixed editable text if this pyJianYingDraft version changes
-        script.add_material(ds.material_instance)
-        script.tracks["directory_progress"].add_segment(ds)
+        script.add_segment(ds, "directory_progress")
 
     # 7. Save draft
     script.save()

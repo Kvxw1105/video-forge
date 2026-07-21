@@ -43,6 +43,7 @@ def test_jianying_subtitles_are_exported_as_positioned_text_segments(monkeypatch
             self.tracks = {}
             self.materials = types.SimpleNamespace(audio_fades=[])
             self.added_materials = []
+            self.added_text_materials = []
 
         def add_track(self, track_type, name):
             self.tracks[name] = FakeTrack()
@@ -50,6 +51,11 @@ def test_jianying_subtitles_are_exported_as_positioned_text_segments(monkeypatch
         def add_material(self, material):
             self.added_materials.append(material)
             return material
+
+        def add_segment(self, segment, track_name=None):
+            self.tracks[track_name].add_segment(segment)
+            self.added_text_materials.append(segment.path)
+            return self
 
         def save(self):
             return None
@@ -129,4 +135,4 @@ def test_jianying_subtitles_are_exported_as_positioned_text_segments(monkeypatch
     assert subtitle_segments[1].kwargs["style"].size == 8.0
     materials = scripts[0].added_materials
     assert [Path(material["path"]).name for material in materials[:1]] == ["asset.png"]
-    assert [material["path"] for material in materials[-2:]] == ["底部字幕", "顶部字幕"]
+    assert scripts[0].added_text_materials == ["底部字幕", "顶部字幕"]

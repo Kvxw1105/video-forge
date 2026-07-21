@@ -177,6 +177,10 @@ def test_ffmpeg_and_jianying_consume_identical_compiled_timing(monkeypatch, tmp_
         def add_material(self, material):
             return None
 
+        def add_segment(self, segment, track_name=None):
+            self.tracks[track_name].add_segment(segment)
+            return self
+
         def save(self):
             (self.draft_dir / "draft_content.json").write_bytes(b"draft")
 
