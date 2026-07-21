@@ -110,6 +110,13 @@ def test_missing_active_variant_is_rejected():
         Project.model_validate(payload)
 
 
+def test_active_variant_is_required_when_variants_exist():
+    payload = _structured_project()
+    payload["structuredContent"]["episode"]["activeVariantId"] = None
+    with pytest.raises(ValueError):
+        Project.model_validate(payload)
+
+
 def test_unsafe_ids_are_rejected():
     payload = _structured_project()
     payload["structuredContent"]["episode"]["blocks"][0]["id"] = "../escape"

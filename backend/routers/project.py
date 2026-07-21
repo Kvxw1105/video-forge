@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import ValidationError
 from services.project_service import (
     ProjectLoadError,
     create_project,
@@ -93,6 +94,8 @@ def update(project_id: str, data: dict):
         p = update_project(project_id, data)
     except ProjectLoadError as e:
         raise HTTPException(500, str(e)) from e
+    except (ValidationError, ValueError) as e:
+        raise HTTPException(422, str(e)) from e
     if not p:
         raise HTTPException(404, "项目不存在")
     return p.model_dump()

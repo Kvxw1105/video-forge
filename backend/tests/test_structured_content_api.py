@@ -71,3 +71,11 @@ def test_compile_api_missing_variant_is_404(monkeypatch, tmp_path):
     client.put(f"/api/projects/{project_id}", json={"structuredContent": _project_payload()["structuredContent"]})
     response = client.get(f"/api/projects/{project_id}/structured/variants/missing/compile")
     assert response.status_code == 404
+
+
+def test_invalid_structured_update_returns_422(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    created = client.post("/api/projects", json={"name": "legacy"}).json()
+    invalid = {"structuredContent": {"schemaVersion": 2, "episode": {}}}
+    response = client.put(f"/api/projects/{created['id']}", json=invalid)
+    assert response.status_code == 422

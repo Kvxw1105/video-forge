@@ -63,6 +63,8 @@ class StructuredEpisode(BaseModel):
             missing = [item for item in variant.blockIds if item not in known_blocks]
             if missing:
                 raise ValueError(f"variant {variant.id} references missing blocks: {', '.join(missing)}")
+        if variant_ids and self.activeVariantId is None:
+            raise ValueError("activeVariantId is required when variants are present")
         if self.activeVariantId is not None and self.activeVariantId not in set(variant_ids):
             raise ValueError("activeVariantId must reference an existing variant")
         return self
