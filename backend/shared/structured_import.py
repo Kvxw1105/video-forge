@@ -26,6 +26,7 @@ ALIASES = {
     "章节钩": "BRIDGE_OUT", "章节收尾": "BRIDGE_OUT", "下章钩子": "BRIDGE_OUT",
     "评论引导": "COMMENT_CTA", "互动引导": "COMMENT_CTA",
 }
+ALIASES.update({"\u827a\u7279\u5f15\u5bfc": "CTA_TAG", "\u7834\u6cd5": "METHOD", "\u7ae0\u8282\u5c3e\u94a9": "BRIDGE_OUT"})
 
 
 @dataclass(frozen=True)
@@ -92,9 +93,14 @@ def parse_structured_markdown(source_text: str) -> ParsedStructuredDocument:
     if not title:
         title = ""
     first_section_line = headings[0][0] if headings else None
-    if first_section_line and any(line.strip() for line in lines[: first_section_line - 1]) and not title_line:
-        warnings.append("unassigned_preamble")
     sections: list[ParsedSection] = []
+    preamble_end = (first_section_line - 1) if first_section_line else len(lines)
+    preamble_lines = lines[(title_line or 0):preamble_end]
+    while preamble_lines and not preamble_lines[0].strip(): preamble_lines.pop(0)
+    while preamble_lines and not preamble_lines[-1].strip(): preamble_lines.pop()
+    if preamble_lines:
+        warnings.append("unassigned_preamble")
+        sections.append(ParsedSection("PREAMBLE", None, "\n".join(preamble_lines), (title_line or 0) + 1, preamble_end, ("unassigned_preamble",)))
     for position, (start, heading, _level) in enumerate(headings):
         end = headings[position + 1][0] - 1 if position + 1 < len(headings) else len(lines)
         body_lines = lines[start:end]

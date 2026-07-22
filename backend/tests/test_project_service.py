@@ -67,6 +67,49 @@ def test_create_project_ids_do_not_collide(monkeypatch, tmp_path):
     assert (tmp_path / second.id / "project.json").exists()
 
 
+def _atomic_payload(project_id="proj_atomic"):
+    return {"id": project_id, "name": "atomic"}
+
+
+def test_atomic_structured_project_validation_failure_creates_nothing(monkeypatch, tmp_path):
+    monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
+    with pytest.raises(Exception):
+        project_service.create_project_from_payload({"id": "bad", "name": "bad", "canvas": {"ratio": "not-a-ratio"}})
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_atomic_structured_project_write_failure_cleans_staging(monkeypatch, tmp_path):
+    monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
+    original_open = Path.open
+
+    def fail_temp_open(path, *args, **kwargs):
+        if path.name == "project.json.tmp":
+            raise OSError("disk full")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_temp_open)
+    with pytest.raises(OSError, match="disk full"):
+        project_service.create_project_from_payload(_atomic_payload())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_atomic_structured_project_publish_failure_cleans_staging(monkeypatch, tmp_path):
+    monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
+    original_replace = project_service.os.replace
+    calls = []
+
+    def fail_directory_publish(source, target):
+        calls.append((source, target))
+        if len(calls) == 2:
+            raise OSError("directory rename failed")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(project_service.os, "replace", fail_directory_publish)
+    with pytest.raises(OSError, match="directory rename failed"):
+        project_service.create_project_from_payload(_atomic_payload())
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_update_project_keeps_valid_previous_version_as_backup(monkeypatch, tmp_path):
     monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
     project = project_service.create_project("before")

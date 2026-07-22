@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from main import create_app
 from services import project_service
-from shared.structured_import import parse_structured_markdown
+from shared.structured_import import detect_block_type, parse_structured_markdown
 from shared.structured_presets import build_blocks, build_default_structured_variants
 
 
@@ -28,6 +28,23 @@ def test_parser_unknown_and_empty_sections_are_explicit():
     assert result.sections[0].detected_type is None
     assert "unknown_section" in result.sections[0].warnings
     assert "empty_section" in result.sections[1].warnings
+
+
+@pytest.mark.parametrize("source", [
+    "preface without headings",
+    "# Title\n\nintro before the first section\n\n## STORY\nbody",
+    "intro before title\n\n# Title\n\nintro after title",
+])
+def test_parser_retains_unassigned_preamble(source):
+    result = parse_structured_markdown(source)
+    assert result.sections[0].source_heading == "PREAMBLE"
+    assert result.sections[0].detected_type is None
+    assert "unassigned_preamble" in result.sections[0].warnings
+
+
+@pytest.mark.parametrize(("heading", "expected"), [("\u827a\u7279\u5f15\u5bfc", "CTA_TAG"), ("\u7834\u6cd5", "METHOD"), ("\u7ae0\u8282\u5c3e\u94a9", "BRIDGE_OUT")])
+def test_new_chinese_aliases_are_detected(heading, expected):
+    assert detect_block_type(heading) == expected
 
 
 def test_parser_rejects_empty_and_oversized_input():
@@ -81,3 +98,16 @@ def test_structured_draft_update_rejects_existing_audio_slice(monkeypatch, tmp_p
     response = client.patch(f"/api/projects/{created.json()['id']}/structured/draft", json={"title": "blocked"})
     assert response.status_code == 409
     assert response.json()["detail"] == "structured_alignment_exists"
+
+
+@pytest.mark.parametrize("episode", [
+    {"episodeId": "ep", "blocks": [], "variants": [], "activeVariantId": None},
+    {"episodeId": "ep", "blocks": [{"id": "story", "type": "STORY", "text": "text"}], "variants": [], "activeVariantId": None},
+    {"episodeId": "ep", "blocks": [{"id": "story", "type": "STORY", "text": "text"}], "variants": [{"id": "publish", "name": "Publish", "blockIds": []}], "activeVariantId": "publish"},
+    {"episodeId": "ep", "blocks": [{"id": "story", "type": "STORY", "text": ""}], "variants": [{"id": "publish", "name": "Publish", "blockIds": ["story"]}], "activeVariantId": "publish"},
+])
+def test_structured_create_rejects_incomplete_authoring_payload(monkeypatch, tmp_path, episode):
+    client = _client(monkeypatch, tmp_path)
+    response = client.post("/api/projects/structured", json={"name": "invalid", "episode": episode})
+    assert response.status_code == 422
+    assert list(tmp_path.iterdir()) == []

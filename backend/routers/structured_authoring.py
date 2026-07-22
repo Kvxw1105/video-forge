@@ -3,10 +3,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
-from models.project import Project, StructuredContent
-from services.project_service import create_project, get_project, update_project
+from models.project import StructuredContent
+from services.project_service import create_project_from_payload, get_project, update_project
 from shared.structured_import import MAX_SOURCE_CHARS, parse_structured_markdown
 from shared.structured_presets import build_blocks, build_default_structured_variants
+from shared.structured_content import compile_structured_variant
+from services.structured_audio_materializer import has_structured_alignment
 
 router = APIRouter(prefix="/api", tags=["structured-authoring"])
 
@@ -23,24 +25,21 @@ def _episode_from_payload(data: dict) -> dict:
     episode = data.get("episode") or {}
     blocks = episode.get("blocks") or []
     variants = episode.get("variants") or []
-    if not blocks and not variants:
-        raise HTTPException(422, "episode must contain confirmed blocks and variants")
+    if not blocks or not variants:
+        raise HTTPException(422, "episode requires blocks and variants")
     try:
         content = StructuredContent(schemaVersion=1, episode={**episode, "blocks": blocks, "variants": variants, "bindings": episode.get("bindings") or []})
     except ValidationError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return content.model_dump(mode="python")
+    episode_data = content.model_dump(mode="python")
+    active = next((item for item in episode_data["episode"]["variants"] if item["id"] == episode_data["episode"].get("activeVariantId")), None)
+    if not active or not active["blockIds"]:
+        raise HTTPException(422, "activeVariantId must reference a non-empty variant")
+    known = {item["id"]: item for item in episode_data["episode"]["blocks"]}
+    if not any(known[item].get("enabled", True) and str(known[item].get("text") or "").strip() for item in active["blockIds"]):
+        raise HTTPException(422, "active variant requires an enabled block with text")
+    return episode_data
 
-
-def _has_alignment(project: Project) -> bool:
-    episode = ((project.structuredContent.model_dump() if project.structuredContent else {}).get("episode") or {})
-    if episode.get("alignment"):
-        return True
-    if any((binding.get("audioSlice") if isinstance(binding, dict) else binding.audioSlice) is not None for binding in episode.get("bindings") or []):
-        return True
-    if any((subtitle.metadata or {}).get("generatedBy") == "fish_timestamp_alignment" for subtitle in project.subtitles):
-        return True
-    return any((voice.engine == "fish_audio" or voice.api == "fish_audio_timestamp") and voice.file for voice in project.audio.voiceovers)
 
 
 @router.post("/structured/import/parse")
@@ -65,12 +64,16 @@ def create_structured(data: dict):
     ratio = str((data.get("canvas") or {}).get("ratio") or "9:16")
     if ratio not in {"9:16", "16:9", "1:1", "4:5", "4:3"}:
         raise HTTPException(422, "unsupported canvas ratio")
-    project = create_project(name, ratio, template_id=None)
+    from datetime import datetime
+    from uuid import uuid4
+    pid = f"proj_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
     active_id = episode["episode"].get("activeVariantId")
-    variant = next((v for v in episode["episode"].get("variants", []) if v["id"] == active_id), None)
-    script = "\n\n".join(next((b["text"] for b in episode["episode"]["blocks"] if b["id"] == bid and b.get("enabled", True)), "") for bid in (variant or {}).get("blockIds", []))
-    updated = update_project(project.id, {"templateId": "structured_episode", "structuredContent": episode, "script": script, "composition": None, "assets": [], "segments": [], "subtitles": [], "audio": {"voiceover": {}, "voiceovers": [], "bgm": {"tracks": []}, "sfx": []}})
-    return updated.model_dump()
+    script = compile_structured_variant({"structuredContent": episode}, active_id).script
+    dimensions = {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080), "4:5": (1080, 1350), "4:3": (1440, 1080)}[ratio]
+    now = datetime.now().isoformat()
+    payload = {"id": pid, "name": name, "templateId": "structured_episode", "canvas": {"ratio": ratio, "width": dimensions[0], "height": dimensions[1]}, "structuredContent": episode, "script": script, "composition": None, "assets": [], "segments": [], "subtitles": [], "audio": {"voiceover": {}, "voiceovers": [], "bgm": {"tracks": []}, "sfx": []}, "created_at": now, "updated_at": now, "exportSettings": {"outputDir": ""}}
+    project = create_project_from_payload(payload)
+    return project.model_dump()
 
 
 @router.get("/projects/{project_id}/structured/draft")
@@ -90,7 +93,7 @@ def update_draft(project_id: str, data: dict):
         raise HTTPException(404, "Project not found")
     if not project.structuredContent:
         raise HTTPException(409, "Project does not contain structuredContent")
-    if _has_alignment(project):
+    if has_structured_alignment(project.model_dump(), project.structuredContent.episode.episodeId):
         raise HTTPException(409, "structured_alignment_exists")
     expected = data.get("expectedUpdatedAt")
     if expected is not None and expected != project.updated_at:
@@ -104,7 +107,6 @@ def update_draft(project_id: str, data: dict):
         validated = StructuredContent(schemaVersion=1, episode=candidate)
     except ValidationError as exc:
         raise HTTPException(422, str(exc)) from exc
-    active = next((v for v in validated.episode.variants if v.id == validated.episode.activeVariantId), None)
-    script = "\n\n".join(next((b.text for b in validated.episode.blocks if b.id == bid and b.enabled), "") for bid in (active.blockIds if active else []))
+    script = compile_structured_variant({"structuredContent": validated.model_dump()}, validated.episode.activeVariantId).script
     updated = update_project(project_id, {"structuredContent": validated.model_dump(), "script": script})
     return {"projectId": updated.id, "updatedAt": updated.updated_at, "structuredContent": updated.structuredContent.model_dump()}

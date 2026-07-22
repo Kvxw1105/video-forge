@@ -5,6 +5,7 @@ from services.project_service import get_project, list_projects, _project_dir, r
 from shared.structured_composition import compile_structured_composition
 from engines.renderer import render_preview
 from adapters.jianying import generate_jianying_draft
+from services.structured_audio_materializer import has_structured_alignment
 
 router = APIRouter(tags=["composition"])
 
@@ -35,7 +36,7 @@ def structured_catalog():
         if not project or project.structuredContent is None:
             continue
         episode = project.structuredContent.episode
-        has_alignment = any((subtitle.metadata or {}).get("generatedBy") == "fish_timestamp_alignment" for subtitle in project.subtitles)
+        has_alignment = has_structured_alignment(project.model_dump(), episode.episodeId)
         results.append({"projectId": project.id, "name": project.name, "episodeId": episode.episodeId, "episodeTitle": episode.title, "variants": [{"id": variant.id, "name": variant.name, "blockCount": len(variant.blockIds)} for variant in episode.variants], "hasAlignment": has_alignment, "hasBindings": bool(episode.bindings), "hasAudio": bool(project.audio.voiceovers or project.audio.voiceover.file), "updatedAt": project.updated_at, "warnings": []})
     return results
 
