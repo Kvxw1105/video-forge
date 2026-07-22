@@ -201,6 +201,33 @@ def get_template_batch_manifest(batch_id: str) -> dict:
 
 
 @mcp.tool()
+def get_visual_planning_context(pid: str) -> dict:
+    """Read subtitle-timed narration units. Agent chooses semantics; backend owns time."""
+    return _to_json(client.get_visual_planning_context(pid))
+
+@mcp.tool()
+def propose_visual_scene_plan(pid: str, settings: dict) -> dict:
+    """Return deterministic scene candidates; it never writes a project."""
+    return _to_json(client.propose_visual_scene_plan(pid, settings))
+
+@mcp.tool()
+def set_visual_scene_plan(pid: str, plan: dict, expected_updated_at: str | None = None) -> dict:
+    """Persist explicit Agent scene groups after strict no-cross-Block validation."""
+    return _to_json(client.set_visual_scene_plan(pid, plan, expected_updated_at))
+
+@mcp.tool()
+def get_visual_scene_plan(pid: str) -> dict: return _to_json(client.get_visual_scene_plan(pid))
+@mcp.tool()
+def validate_visual_scene_plan(pid: str) -> dict: return _to_json(client.validate_visual_scene_plan(pid))
+@mcp.tool()
+def export_visual_generation_pack(pid: str) -> dict: return _to_json(client.export_visual_generation_pack(pid))
+@mcp.tool()
+def import_visual_scene_folder(pid: str, folder: str) -> dict: return _to_json(client.import_visual_scene_folder(pid, folder))
+@mcp.tool()
+def compile_visual_scene_variant(pid: str, variant_id: str) -> dict: return _to_json(client.compile_visual_scene_variant(pid, variant_id))
+
+
+@mcp.tool()
 def list_structured_projects() -> dict:
     """List only projects with Structured Content."""
     return _to_json(client.list_structured_projects())

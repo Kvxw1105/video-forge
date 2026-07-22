@@ -8,6 +8,7 @@ export default function StructuredPanel({ projectId, structuredContent, onToast 
   const [referenceId, setReferenceId] = useState('')
   const [generating, setGenerating] = useState(false)
   const [busyVariant, setBusyVariant] = useState('')
+  const [visualScenes, setVisualScenes] = useState<any[]>([])
   const episode = structuredContent?.episode
   const variants = episode?.variants || []
   useEffect(() => { api.getStructuredAudioStatus(projectId).then(setStatus).catch(() => setStatus(null)) }, [projectId])
@@ -30,6 +31,11 @@ export default function StructuredPanel({ projectId, structuredContent, onToast 
     try { const result = await api.exportStructuredVariantToJianYing(projectId, variantId); onToast('ok', `已生成剪映草稿：${result.draftName || result.draft_name}`) }
     catch (error: any) { onToast('error', error.message || '剪映导出失败') } finally { setBusyVariant('') }
   }
+  const proposeVisuals = async () => {
+    try { const proposal = await api.proposeVisualPlan(projectId); const plan = { planId: `plan_${Date.now()}`, sourceHash: proposal.sourceHash, scenes: proposal.scenes, settings: proposal.settings }; await api.saveVisualPlan(projectId, plan); setVisualScenes(proposal.scenes); onToast('ok', `已建立 ${proposal.scenes.length} 个视觉分镜`) }
+    catch (error: any) { onToast('error', error.message || '视觉分镜规划失败') }
+  }
+  const exportPack = async () => { try { const result = await api.exportVisualPack(projectId); onToast('ok', `已导出生成包：${result.path}`) } catch (error: any) { onToast('error', error.message || '生成包导出失败') } }
   return <div className="space-y-4">
     <div className="card-cinematic p-4 space-y-3">
       <div className="flex items-center justify-between"><h3 className="label-cinematic">链式内容</h3><span className="status-pill" data-tone={status?.hasAlignment ? 'ok' : 'warn'}>{status?.hasAlignment ? '已对齐' : '未配音'}</span></div>
@@ -40,5 +46,10 @@ export default function StructuredPanel({ projectId, structuredContent, onToast 
       {!status?.fishConfigured && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>请先在设置中配置现有 Fish Audio 凭据。</p>}
     </div>
     <div className="space-y-2">{variants.map((variant: any) => <div key={variant.id} className="card-cinematic p-3 space-y-2"><div className="flex justify-between"><strong className="text-xs">{variant.name || variant.id}</strong><span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{variant.blockIds?.length || 0} Blocks</span></div><div className="flex gap-2"><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={() => preview(variant.id)} disabled={!!busyVariant}>{busyVariant === variant.id ? '处理中…' : '预览'}</button><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={() => exportVariant(variant.id)} disabled={!!busyVariant}>导出剪映</button></div></div>)}</div>
+    <div className="card-cinematic p-4 space-y-2">
+      <div className="flex justify-between items-center"><h3 className="label-cinematic">Visual scenes</h3><span className="text-[10px]">{visualScenes.length} Scenes</span></div>
+      <div className="flex gap-2"><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={proposeVisuals}>Propose</button><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={exportPack} disabled={visualScenes.length === 0}>Export pack</button></div>
+      {visualScenes.map((scene: any) => <div key={scene.id} className="text-[11px]">{scene.id} / {scene.blockId} / {scene.subtitleIds?.length || 0} subtitles</div>)}
+    </div>
   </div>
 }

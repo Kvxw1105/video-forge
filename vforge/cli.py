@@ -142,6 +142,13 @@ def _batch_start_or_resume(args, resume: bool = False):
 
 def cmd_batch_start(args): return _batch_start_or_resume(args)
 def cmd_batch_resume(args): return _batch_start_or_resume(args, resume=True)
+def cmd_visual_context(args): _print(client.get_visual_planning_context(args.pid,args.base))
+def cmd_visual_propose(args): _print(client.propose_visual_scene_plan(args.pid,{"mode":args.mode,"targetDuration":args.target_duration,"unitsPerScene":args.units_per_scene},args.base))
+def cmd_visual_set(args): _print(client.set_visual_scene_plan(args.pid,_spec(args.plan),base=args.base))
+def cmd_visual_validate(args): _print(client.validate_visual_scene_plan(args.pid,args.base))
+def cmd_visual_pack(args): _print(client.export_visual_generation_pack(args.pid,args.base))
+def cmd_visual_import(args): _print(client.import_visual_scene_folder(args.pid,args.folder,args.base))
+def cmd_visual_compile(args): _print(client.compile_visual_scene_variant(args.pid,args.variant_id,args.base))
 
 
 def cmd_tts_get(args):
@@ -217,6 +224,8 @@ COMMAND_MAP = {
     "batch-start": cmd_batch_start, "batch-list": cmd_batch_list,
     "batch-status": cmd_batch_status, "batch-resume": cmd_batch_resume,
     "batch-manifest": cmd_batch_manifest,
+    "visual-context": cmd_visual_context, "visual-propose": cmd_visual_propose, "visual-set": cmd_visual_set,
+    "visual-validate": cmd_visual_validate, "visual-pack": cmd_visual_pack, "visual-import": cmd_visual_import, "visual-compile": cmd_visual_compile,
     "tts_get": cmd_tts_get, "tts_set": cmd_tts_set,
 }
 
@@ -286,6 +295,13 @@ def build_parser() -> argparse.ArgumentParser:
     add("batch-status", "读取批次状态", batch_id={"type": str, "required": True})
     sp = add("batch-resume", "恢复失败批次", batch_id={"type": str, "required": True}); sp.add_argument("--wait", action="store_true")
     add("batch-manifest", "读取批次 Manifest", batch_id={"type": str, "required": True}, output={"type": str, "default": ""})
+    add("visual-context", "读取视觉分镜规划上下文", pid={"type": str, "required": True})
+    add("visual-propose", "生成候选视觉分镜", pid={"type": str, "required": True}, mode={"type": str, "default": "target_duration", "choices":["fixed_units","target_duration","hybrid"]}, target_duration={"type": float, "default": 7.0}, units_per_scene={"type": int, "default": 3})
+    add("visual-set", "保存明确视觉分镜", pid={"type": str, "required": True}, plan={"type": str, "required": True})
+    add("visual-validate", "验证视觉分镜", pid={"type": str, "required": True})
+    add("visual-pack", "导出视觉生成包", pid={"type": str, "required": True})
+    add("visual-import", "从文件夹导入 Scene 素材", pid={"type": str, "required": True}, folder={"type": str, "required": True})
+    add("visual-compile", "编译视觉分镜 Variant", pid={"type": str, "required": True}, variant_id={"type": str, "required": True})
     add("tts_get", "获取 TTS 设置")
     add("tts_set", "更新 TTS 设置（--data 是 JSON）",
         data={"type": str, "required": True})
