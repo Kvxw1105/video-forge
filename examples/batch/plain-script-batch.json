@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "name": "Three single-image videos",
+  "idempotencyKey": "example-plain-001",
+  "templateId": "tpl_single_voiceover",
+  "defaults": {
+    "ratio": "9:16",
+    "inputMode": "plain_script",
+    "voiceover": {"enabled": false, "engine": "none", "speed": 0, "generateSubtitles": true},
+    "outputs": {"preview": false, "jianyingDirect": false, "jianyingZip": false},
+    "continueOnError": true,
+    "maxRetries": 0
+  },
+  "items": [{"itemId": "example_001", "name": "Example one", "script": "First script.", "variables": {"title": "Example one"}, "assets": {"images": [], "videos": [], "bgm": null}}]
+}
