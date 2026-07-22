@@ -4,6 +4,7 @@ import Home from './pages/Home'
 import Editor from './pages/Editor'
 import Library from './pages/Library'
 import Composition from './pages/Composition'
+import StructuredNew from './pages/StructuredNew'
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
           <Route path="/editor/:id" element={<Editor />} />
           <Route path="/library" element={<Library />} />
           <Route path="/composition/:id" element={<Composition />} />
+          <Route path="/structured/new" element={<StructuredNew />} />
         </Routes>
       </BrowserRouter>
     </ErrorBoundary>
