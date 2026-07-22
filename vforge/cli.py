@@ -8,6 +8,7 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 from . import client
 
 
@@ -31,7 +32,7 @@ def cmd_list(args):
 
 
 def cmd_create(args):
-    _print(client.create_project(args.name, args.ratio, args.base))
+    _print(client.create_project(args.name, args.ratio, args.base, args.template_id))
 
 
 def cmd_get(args):
@@ -112,6 +113,37 @@ def cmd_template_delete(args):
     _print(client.delete_template(args.tid, args.base))
 
 
+def _spec(value: str) -> dict:
+    if value.startswith("@"):
+        with open(value[1:], encoding="utf-8") as handle:
+            return json.load(handle)
+    return json.loads(value)
+
+
+def cmd_template_get(args): _print(client.get_template(args.template_id, args.base))
+def cmd_batch_plan(args): _print(client.plan_template_batch(_spec(args.spec), args.base))
+def cmd_batch_list(args): _print(client.list_template_batches(args.base))
+def cmd_batch_status(args): _print(client.get_template_batch(args.batch_id, args.base))
+def cmd_batch_manifest(args):
+    result = client.get_template_batch_manifest(args.batch_id, args.base)
+    if args.output:
+        Path(args.output).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    _print(result)
+
+
+def _batch_start_or_resume(args, resume: bool = False):
+    result = client.resume_template_batch(args.batch_id, args.base) if resume else client.start_template_batch(_spec(args.spec), args.base)
+    if getattr(args, "wait", False):
+        result = client.wait_template_batch(result["batchId"], base=args.base)
+        _print(result)
+        return 0 if result.get("status") == "succeeded" else 2 if result.get("status") == "partial" else 1
+    _print(result); return 0
+
+
+def cmd_batch_start(args): return _batch_start_or_resume(args)
+def cmd_batch_resume(args): return _batch_start_or_resume(args, resume=True)
+
+
 def cmd_tts_get(args):
     _print(client.get_tts_settings(args.base))
 
@@ -181,6 +213,10 @@ COMMAND_MAP = {
     "export_direct": cmd_export_direct, "jianying_status": cmd_jianying_status,
     "templates_list": cmd_templates_list, "template_save": cmd_template_save,
     "template_delete": cmd_template_delete,
+    "template-get": cmd_template_get, "batch-plan": cmd_batch_plan,
+    "batch-start": cmd_batch_start, "batch-list": cmd_batch_list,
+    "batch-status": cmd_batch_status, "batch-resume": cmd_batch_resume,
+    "batch-manifest": cmd_batch_manifest,
     "tts_get": cmd_tts_get, "tts_set": cmd_tts_set,
 }
 
@@ -210,7 +246,8 @@ def build_parser() -> argparse.ArgumentParser:
     add("list", "列出所有项目")
     add("create", "创建项目",
         name={"type": str, "required": True},
-        ratio={"type": str, "default": "9:16", "choices": ["9:16", "16:9", "1:1", "4:5", "4:3"]})
+        ratio={"type": str, "default": "9:16", "choices": ["9:16", "16:9", "1:1", "4:5", "4:3"]},
+        template_id={"type": str, "default": None})
     add("get", "获取项目详情", pid={"type": str, "required": True})
     add("update", "更新项目（--data 是 JSON 字符串或 @file.json）",
         pid={"type": str, "required": True},
@@ -242,6 +279,13 @@ def build_parser() -> argparse.ArgumentParser:
         data={"type": str, "required": True})
     add("template_delete", "删除模板",
         tid={"type": str, "required": True})
+    add("template-get", "获取单个模板", template_id={"type": str, "required": True})
+    add("batch-plan", "验证批次 Spec，不创建项目", spec={"type": str, "required": True})
+    sp = add("batch-start", "启动模板批量产片", spec={"type": str, "required": True}); sp.add_argument("--wait", action="store_true")
+    add("batch-list", "列出模板批次")
+    add("batch-status", "读取批次状态", batch_id={"type": str, "required": True})
+    sp = add("batch-resume", "恢复失败批次", batch_id={"type": str, "required": True}); sp.add_argument("--wait", action="store_true")
+    add("batch-manifest", "读取批次 Manifest", batch_id={"type": str, "required": True}, output={"type": str, "default": ""})
     add("tts_get", "获取 TTS 设置")
     add("tts_set", "更新 TTS 设置（--data 是 JSON）",
         data={"type": str, "required": True})
@@ -273,7 +317,9 @@ def main(argv=None):
         mcp_server.run(transport="streamable-http", port=getattr(args, "port", 8765))
         return
     try:
-        args.func(args)
+        result = args.func(args)
+        if isinstance(result, int):
+            return result
     except client.VForgeError as e:
         print(f"[!] {e}", file=sys.stderr)
         sys.exit(1)

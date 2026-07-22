@@ -3,6 +3,7 @@ Used by both CLI and MCP server. No external deps — stdlib only.
 """
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -90,9 +91,12 @@ def get_project(pid: str, base: str = DEFAULT_BASE) -> dict:
     return _request("GET", f"/api/projects/{pid}", base=base)
 
 
-def create_project(name: str, ratio: str = "9:16", base: str = DEFAULT_BASE) -> dict:
+def create_project(name: str, ratio: str = "9:16", base: str = DEFAULT_BASE, template_id: str | None = None) -> dict:
+    payload = {"name": name, "canvas_ratio": ratio}
+    if template_id is not None:
+        payload["template_id"] = template_id
     return _request("POST", "/api/projects", base=base,
-                    json_body={"name": name, "canvas_ratio": ratio})
+                    json_body=payload)
 
 
 def update_project(pid: str, data: dict, base: str = DEFAULT_BASE) -> dict:
@@ -152,12 +156,52 @@ def list_templates(base: str = DEFAULT_BASE) -> list:
     return _request("GET", "/api/templates", base=base)
 
 
+def get_template(template_id: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", f"/api/templates/{template_id}", base=base)
+
+
 def save_template(data: dict, base: str = DEFAULT_BASE) -> dict:
     return _request("POST", "/api/templates", base=base, json_body=data)
 
 
 def delete_template(tid: str, base: str = DEFAULT_BASE) -> dict:
     return _request("DELETE", f"/api/templates/{tid}", base=base)
+
+
+# Template batch production. The backend owns planning, persistence, and execution.
+def plan_template_batch(spec: dict, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", "/api/batches/template-production/plan", base=base, json_body=spec)
+
+
+def start_template_batch(spec: dict, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", "/api/batches/template-production", base=base, json_body=spec)
+
+
+def list_template_batches(base: str = DEFAULT_BASE) -> list:
+    return _request("GET", "/api/batches/template-production", base=base)
+
+
+def get_template_batch(batch_id: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", f"/api/batches/template-production/{batch_id}", base=base)
+
+
+def resume_template_batch(batch_id: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", f"/api/batches/template-production/{batch_id}/resume", base=base, json_body={})
+
+
+def get_template_batch_manifest(batch_id: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", f"/api/batches/template-production/{batch_id}/manifest", base=base)
+
+
+def wait_template_batch(batch_id: str, timeout_seconds: float = 3600, poll_interval: float = 1, base: str = DEFAULT_BASE) -> dict:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        result = get_template_batch(batch_id, base=base)
+        if result.get("status") in {"succeeded", "partial", "failed"}:
+            return result
+        if time.monotonic() >= deadline:
+            raise VForgeError(408, "template batch wait timed out")
+        time.sleep(max(0.1, poll_interval))
 
 
 # ── Settings ─────────────────────────────────────────────
