@@ -18,6 +18,12 @@ from shared.structured_alignment import FishAlignmentSegment
 import services.structured_audio_materializer as materializer
 
 
+@pytest.fixture(autouse=True)
+def _probe_generated_test_wav(monkeypatch):
+    """Fish transaction tests exercise filesystem semantics, not ffprobe."""
+    monkeypatch.setattr(materializer, "probe_media_duration", lambda _: 1.0)
+
+
 def make_project(tmp_path):
     return Project.model_validate({"id": "p", "name": "P", "structuredContent": {"schemaVersion": 1, "episode": {"episodeId": "ep", "blocks": [{"id": "a", "type": "STORY", "text": "你好世界"}, {"id": "b", "type": "METHOD", "text": "这是第二段"}], "variants": [], "activeVariantId": None, "bindings": []}}, "audio": {}})
 
