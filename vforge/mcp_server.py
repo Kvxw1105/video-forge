@@ -177,6 +177,30 @@ def compile_structured_variant_summary(pid: str, variant_id: str) -> dict:
 
 
 @mcp.tool()
+def parse_structured_markdown(text: str) -> dict:
+    """Parse explicit Markdown/marker headings without writing a project or calling Fish."""
+    return _to_json(client.parse_structured_markdown(text))
+
+
+@mcp.tool()
+def create_structured_project(name: str, episode: dict, ratio: str = "9:16") -> dict:
+    """Create a Structured Project from user-confirmed Blocks and Variants."""
+    return _to_json(client.create_structured_project(name, episode, ratio))
+
+
+@mcp.tool()
+def get_structured_episode_draft(pid: str) -> dict:
+    """Read a Structured Episode draft through the backend API."""
+    return _to_json(client.get_structured_episode_draft(pid))
+
+
+@mcp.tool()
+def update_structured_episode_draft(pid: str, data: dict, expected_updated_at: str | None = None) -> dict:
+    """Update only an unaligned Structured Episode draft with optimistic concurrency protection."""
+    return _to_json(client.update_structured_episode_draft(pid, data, expected_updated_at))
+
+
+@mcp.tool()
 def create_composition_project(name: str, ratio: str = "9:16") -> dict:
     """Create an empty Composition Project."""
     return _to_json(client.create_composition_project(name, ratio))
