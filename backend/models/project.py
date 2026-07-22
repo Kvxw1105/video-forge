@@ -84,6 +84,24 @@ class BlockAssetBinding(BaseModel):
         return self
 
 
+class StructuredAlignmentRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1] = 1
+    generationId: str = Field(min_length=1, max_length=64)
+    provider: Literal["fish_audio"] = "fish_audio"
+    endpoint: Literal["tts_stream_with_timestamp"] = "tts_stream_with_timestamp"
+    voiceoverId: str = Field(min_length=1, max_length=64)
+    manifestPath: str = Field(min_length=1)
+    audioPath: str = Field(min_length=1)
+    inputHash: str = Field(min_length=64, max_length=64)
+    blockIds: list[str] = Field(default_factory=list)
+    overallConfidence: float = Field(ge=0, le=1)
+    model: str = ""
+    referenceId: str = ""
+    generatedAt: str
+
+
 class StructuredEpisode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -94,6 +112,7 @@ class StructuredEpisode(BaseModel):
     blocks: list[StructuredBlock] = Field(default_factory=list)
     variants: list[StructuredVariant] = Field(default_factory=list)
     bindings: list[BlockAssetBinding] = Field(default_factory=list)
+    alignment: StructuredAlignmentRecord | None = None
     activeVariantId: str | None = None
     metadata: dict = Field(default_factory=dict)
 
