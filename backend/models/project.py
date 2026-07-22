@@ -102,6 +102,49 @@ class StructuredAlignmentRecord(BaseModel):
     generatedAt: str
 
 
+class VisualPlanSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["fixed_units", "target_duration", "agent_explicit", "hybrid"] = "hybrid"
+    unitsPerScene: int = Field(default=3, ge=1, le=20)
+    targetDuration: float = Field(default=7.0, gt=0, le=60)
+    minDuration: float = Field(default=3.0, gt=0, le=60)
+    maxDuration: float = Field(default=12.0, gt=0, le=120)
+
+
+class VisualScene(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    blockId: str = Field(min_length=1, max_length=64)
+    subtitleIds: list[str] = Field(min_length=1)
+    summary: str = ""
+    prompt: str = ""
+    negativePrompt: str = ""
+    requestedMediaType: Literal["image", "video", "either"] = "image"
+    visualAssetIds: list[str] = Field(default_factory=list)
+    primaryAssetId: str | None = None
+    durationPolicy: Literal["fit_scene", "trim", "freeze_last_frame", "loop"] = "fit_scene"
+    locked: bool = False
+    metadata: dict = Field(default_factory=dict)
+
+    @field_validator("subtitleIds", "visualAssetIds")
+    @classmethod
+    def _unique_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)) or any(not item for item in value):
+            raise ValueError("scene references must be unique non-empty IDs")
+        return value
+
+
+class StructuredVisualPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schemaVersion: Literal[1] = 1
+    planId: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    sourceHash: str = Field(min_length=64, max_length=64)
+    alignmentGenerationId: str | None = None
+    scenes: list[VisualScene] = Field(default_factory=list)
+    settings: VisualPlanSettings = Field(default_factory=VisualPlanSettings)
+    metadata: dict = Field(default_factory=dict)
+
+
 class StructuredEpisode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -113,6 +156,7 @@ class StructuredEpisode(BaseModel):
     variants: list[StructuredVariant] = Field(default_factory=list)
     bindings: list[BlockAssetBinding] = Field(default_factory=list)
     alignment: StructuredAlignmentRecord | None = None
+    visualPlan: StructuredVisualPlan | None = None
     activeVariantId: str | None = None
     metadata: dict = Field(default_factory=dict)
 

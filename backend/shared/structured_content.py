@@ -7,6 +7,7 @@ from typing import Any
 
 from models.project import Project
 from shared.media_probe import probe_media_duration
+from shared.visual_scene import scene_timing, validate_plan, visual_source_hash
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,10 @@ def compile_structured_media_variant(
     generated_subtitles: list[dict] = []
     voice_segments: list[dict] = []
     cursor = 0.0
+    visual_plan = episode.get("visualPlan") or {}
+    plan_scenes = visual_plan.get("scenes") or [] if visual_plan.get("sourceHash") == visual_source_hash(raw) else []
+    if visual_plan and not plan_scenes:
+        warnings.append("visual plan is stale; using legacy visual bindings")
 
     for block in text_variant.blocks:
         binding = bindings.get(block.id)
@@ -169,7 +174,28 @@ def compile_structured_media_variant(
             if duration <= 0:
                 raise ValueError(f"block {block.id} requires a positive duration")
 
-        visual_ids = list(binding.get("visualAssetIds") or [])
+        block_scenes = [scene for scene in plan_scenes if scene.get("blockId") == block.id]
+        legacy_handled = bool(block_scenes)
+        if block_scenes:
+            for scene in block_scenes:
+                timing = scene_timing(raw, scene, cursor)
+                selected_ids = list(scene.get("visualAssetIds") or [])
+                if scene.get("primaryAssetId") and scene["primaryAssetId"] in selected_ids:
+                    selected_ids.remove(scene["primaryAssetId"]); selected_ids.insert(0, scene["primaryAssetId"])
+                selected = [assets[item] for item in selected_ids if item in assets and Path(str(assets[item].get("path") or "")).exists()]
+                if not selected:
+                    generated_segments.append({"id": f"{variant_id}__{scene['id']}__visual_000", "assetPath":"", "type":"black", "start":timing["targetStart"], "end":timing["targetEnd"], "transform":{"x":0.5,"y":0.5,"scale":1.0,"rotation":0,"fit":"stretch"}, "bgColor":"#000000"}); warnings.append(f"scene {scene['id']} has no usable visual asset; using black fallback"); continue
+                weights = (scene.get("metadata") or {}).get("weights") or [1] * len(selected)
+                if len(weights) != len(selected) or any(float(weight) <= 0 for weight in weights):
+                    weights = [1] * len(selected); warnings.append(f"scene {scene['id']} has invalid weights; using equal split")
+                total_weight = sum(float(weight) for weight in weights); scene_cursor = timing["targetStart"]
+                for index, (asset, weight) in enumerate(zip(selected, weights)):
+                    end = timing["targetEnd"] if index == len(selected)-1 else scene_cursor + timing["duration"] * float(weight) / total_weight
+                    generated_segments.append({"id":f"{variant_id}__{scene['id']}__visual_{index:03d}", "assetPath":str(asset.get("path")), "type":asset.get("type") if asset.get("type") in {"image","video"} else "image", "start":scene_cursor,"end":end,"transform":deepcopy((asset.get("metadata") or {}).get("transform") or {"x":0.5,"y":0.5,"scale":0.85,"rotation":0,"fit":"contain"}), "metadata":{"sceneId":scene["id"],"durationPolicy":scene.get("durationPolicy","fit_scene")}}); scene_cursor=end
+            visual_assets = None
+        else:
+            visual_assets = []
+        visual_ids = list(binding.get("visualAssetIds") or []) if visual_assets is not None else []
         visual_assets = []
         for asset_id in visual_ids:
             asset = assets.get(asset_id)
@@ -181,7 +207,9 @@ def compile_structured_media_variant(
                 warnings.append(f"visual asset file not found: {asset_id}")
                 continue
             visual_assets.append(asset)
-        if not visual_assets:
+        if legacy_handled:
+            pass
+        elif not visual_assets:
             generated_segments.append({
                 "id": f"{variant_id}__{block.id}__visual_000",
                 "assetPath": "", "type": "black", "start": cursor, "end": cursor + duration,
@@ -228,7 +256,7 @@ def compile_structured_media_variant(
         windows.append(CompiledBlockWindow(
             block_id=block.id, block_type=block.type, start=cursor, end=cursor + duration,
             duration=duration, audio_source_start=source_start, audio_source_end=source_end,
-            visual_count=max(1, len(visual_assets)), subtitle_count=block_subtitle_count,
+            visual_count=max(1, len(block_scenes) if block_scenes else len(visual_assets)), subtitle_count=block_subtitle_count,
         ))
         cursor += duration
 
