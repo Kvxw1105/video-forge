@@ -162,4 +162,8 @@ export const api = {
   generateFishAlignedAudio: (projectId: string, data: any) => request<any>(`/projects/${projectId}/structured/audio/fish-aligned`, { method: 'POST', body: JSON.stringify(data) }),
   previewStructuredVariant: (projectId: string, variantId: string) => request<any>(`/projects/${projectId}/structured/variants/${variantId}/preview`, { method: 'POST' }),
   exportStructuredVariantToJianYing: (projectId: string, variantId: string) => request<any>(`/projects/${projectId}/structured/variants/${variantId}/export/jianying-direct`, { method: 'POST', body: JSON.stringify({ policy: 'create_new' }) }),
+  getStructuredCatalog: () => request<any[]>('/projects/structured/catalog'),
+  compileComposition: (projectId: string) => request<any>(`/projects/${projectId}/composition/compile`, { method: 'POST' }),
+  previewComposition: (projectId: string) => request<any>(`/projects/${projectId}/composition/preview`, { method: 'POST' }),
+  exportCompositionToJianYing: (projectId: string) => request<any>(`/projects/${projectId}/composition/export/jianying-direct`, { method: 'POST', body: JSON.stringify({ policy: 'create_new' }) }),
 }

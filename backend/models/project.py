@@ -128,6 +128,36 @@ class StructuredContent(BaseModel):
     schemaVersion: Literal[1] = 1
     episode: StructuredEpisode
 
+
+class StructuredCompositionItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    sourceProjectId: str = Field(min_length=1, max_length=128)
+    variantId: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    enabled: bool = True
+    chapterTitle: str = ""
+    chapterCardDuration: float = Field(default=0.0, ge=0)
+    gapAfter: float = Field(default=0.0, ge=0)
+    metadata: dict = Field(default_factory=dict)
+
+
+class StructuredComposition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1] = 1
+    compositionId: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str = ""
+    items: list[StructuredCompositionItem] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _unique_item_ids(self):
+        ids = [item.id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("composition item ids must be unique")
+        return self
+
 class Canvas(BaseModel):
     ratio: Literal["9:16", "16:9", "1:1", "4:5", "4:3"] = "9:16"
     width: int = 1080
@@ -300,6 +330,7 @@ class Project(BaseModel):
     shuffleMode: bool = True
     timeline: Timeline = Field(default_factory=Timeline)
     structuredContent: StructuredContent | None = None
+    composition: StructuredComposition | None = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
