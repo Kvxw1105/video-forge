@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import os
 import uuid
 import shutil
@@ -104,6 +105,35 @@ def create_project(name: str, canvas_ratio: str = "9:16", template_id: str | Non
     project.exportSettings.outputDir = str(_project_dir(pid))
     _save_project(project)
     return project
+
+
+def create_project_from_payload(payload: dict) -> Project:
+    """Validate and atomically publish a complete new project directory."""
+    payload = deepcopy(payload)
+    project_id = str(payload.get("id") or "")
+    if not project_id:
+        raise ValueError("project id is required")
+    # A newly visible project always receives the same stable output root as a
+    # conventionally-created project. Staging remains entirely invisible.
+    payload.setdefault("exportSettings", {})["outputDir"] = str(_project_dir(project_id))
+    project = Project(**payload)
+    destination = _project_dir(project.id)
+    if destination.exists():
+        raise FileExistsError(project.id)
+    staging = PROJECTS_DIR / f".{project.id}.staging-{uuid.uuid4().hex}"
+    try:
+        staging.mkdir(parents=True)
+        (staging / "assets").mkdir()
+        target = staging / "project.json"
+        temp = staging / "project.json.tmp"
+        with temp.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(project.model_dump_json(indent=2)); handle.flush(); os.fsync(handle.fileno())
+        os.replace(temp, target)
+        os.replace(staging, destination)
+        return project
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 def _repair_json_text(text: str) -> str:

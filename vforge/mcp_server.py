@@ -152,6 +152,114 @@ def update_tts_settings(data: dict) -> dict:
     return _to_json(client.update_tts_settings(data))
 
 
+@mcp.tool()
+def list_structured_projects() -> dict:
+    """List only projects with Structured Content."""
+    return _to_json(client.list_structured_projects())
+
+
+@mcp.tool()
+def get_structured_project_status(pid: str) -> dict:
+    """Return structured episode, composition, alignment, and updatedAt status."""
+    return _to_json(client.get_structured_project_status(pid))
+
+
+@mcp.tool()
+def list_structured_variants(pid: str) -> dict:
+    """List variants available in a Structured Episode."""
+    return _to_json(client.list_structured_variants(pid))
+
+
+@mcp.tool()
+def compile_structured_variant_summary(pid: str, variant_id: str) -> dict:
+    """Compile a read-only summary of one Structured Variant."""
+    return _to_json(client.compile_structured_variant_summary(pid, variant_id))
+
+
+@mcp.tool()
+def parse_structured_markdown(text: str) -> dict:
+    """Parse explicit Markdown/marker headings without writing a project or calling Fish."""
+    return _to_json(client.parse_structured_markdown(text))
+
+
+@mcp.tool()
+def create_structured_project(name: str, episode: dict, ratio: str = "9:16") -> dict:
+    """Create a Structured Project from user-confirmed Blocks and Variants."""
+    return _to_json(client.create_structured_project(name, episode, ratio))
+
+
+@mcp.tool()
+def get_structured_episode_draft(pid: str) -> dict:
+    """Read a Structured Episode draft through the backend API."""
+    return _to_json(client.get_structured_episode_draft(pid))
+
+
+@mcp.tool()
+def update_structured_episode_draft(pid: str, data: dict, expected_updated_at: str | None = None) -> dict:
+    """Update only an unaligned Structured Episode draft with optimistic concurrency protection."""
+    return _to_json(client.update_structured_episode_draft(pid, data, expected_updated_at))
+
+
+@mcp.tool()
+def create_composition_project(name: str, ratio: str = "9:16") -> dict:
+    """Create an empty Composition Project."""
+    return _to_json(client.create_composition_project(name, ratio))
+
+
+@mcp.tool()
+def get_composition(pid: str) -> dict:
+    """Read one Composition Project."""
+    return _to_json(client.get_composition(pid))
+
+
+@mcp.tool()
+def set_composition_items(pid: str, items: list[dict], expected_updated_at: str | None = None) -> dict:
+    """Replace Composition items after an optimistic updatedAt check."""
+    return _to_json(client.set_composition_items(pid, items, expected_updated_at))
+
+
+@mcp.tool()
+def move_composition_item(pid: str, item_id: str, direction: str, expected_updated_at: str | None = None) -> dict:
+    """Move one Composition item up or down."""
+    return _to_json(client.move_composition_item(pid, item_id, direction, expected_updated_at))
+
+
+@mcp.tool()
+def set_composition_item_enabled(pid: str, item_id: str, enabled: bool, expected_updated_at: str | None = None) -> dict:
+    """Enable or disable one Composition item."""
+    return _to_json(client.set_composition_item_enabled(pid, item_id, enabled, expected_updated_at))
+
+
+@mcp.tool()
+def set_structured_block_enabled(pid: str, block_id: str, enabled: bool, expected_updated_at: str | None = None) -> dict:
+    """Toggle only Block.enabled; never changes text, bindings, or audio."""
+    return _to_json(client.set_structured_block_enabled(pid, block_id, enabled, expected_updated_at))
+
+
+@mcp.tool()
+def set_variant_block_order(pid: str, variant_id: str, block_ids: list[str], expected_updated_at: str | None = None) -> dict:
+    """Set an existing Variant block order; IDs must exist and be unique."""
+    return _to_json(client.set_variant_block_order(pid, variant_id, block_ids, expected_updated_at))
+
+
+@mcp.tool()
+def compile_composition(pid: str) -> dict:
+    """Compile a Composition read-only summary."""
+    return _to_json(client.compile_composition(pid))
+
+
+@mcp.tool()
+def preview_composition(pid: str) -> dict:
+    """Generate a long-form Composition preview through the backend API."""
+    return _to_json(client.preview_composition(pid))
+
+
+@mcp.tool()
+def export_composition_to_jianying(pid: str) -> dict:
+    """Export a Composition to a new JianYing draft; replacement is not supported."""
+    return _to_json(client.export_composition_to_jianying(pid))
+
+
 def run(transport: str = "stdio", port: int = 8765):
     """Run the MCP server.
     transport: 'stdio' (default, for Claude Code/Codex stdio) or

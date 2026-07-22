@@ -84,6 +84,24 @@ class BlockAssetBinding(BaseModel):
         return self
 
 
+class StructuredAlignmentRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1] = 1
+    generationId: str = Field(min_length=1, max_length=64)
+    provider: Literal["fish_audio"] = "fish_audio"
+    endpoint: Literal["tts_stream_with_timestamp"] = "tts_stream_with_timestamp"
+    voiceoverId: str = Field(min_length=1, max_length=64)
+    manifestPath: str = Field(min_length=1)
+    audioPath: str = Field(min_length=1)
+    inputHash: str = Field(min_length=64, max_length=64)
+    blockIds: list[str] = Field(default_factory=list)
+    overallConfidence: float = Field(ge=0, le=1)
+    model: str = ""
+    referenceId: str = ""
+    generatedAt: str
+
+
 class StructuredEpisode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -94,6 +112,7 @@ class StructuredEpisode(BaseModel):
     blocks: list[StructuredBlock] = Field(default_factory=list)
     variants: list[StructuredVariant] = Field(default_factory=list)
     bindings: list[BlockAssetBinding] = Field(default_factory=list)
+    alignment: StructuredAlignmentRecord | None = None
     activeVariantId: str | None = None
     metadata: dict = Field(default_factory=dict)
 
@@ -127,6 +146,36 @@ class StructuredContent(BaseModel):
 
     schemaVersion: Literal[1] = 1
     episode: StructuredEpisode
+
+
+class StructuredCompositionItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    sourceProjectId: str = Field(min_length=1, max_length=128)
+    variantId: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    enabled: bool = True
+    chapterTitle: str = ""
+    chapterCardDuration: float = Field(default=0.0, ge=0)
+    gapAfter: float = Field(default=0.0, ge=0)
+    metadata: dict = Field(default_factory=dict)
+
+
+class StructuredComposition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1] = 1
+    compositionId: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str = ""
+    items: list[StructuredCompositionItem] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _unique_item_ids(self):
+        ids = [item.id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("composition item ids must be unique")
+        return self
 
 class Canvas(BaseModel):
     ratio: Literal["9:16", "16:9", "1:1", "4:5", "4:3"] = "9:16"
@@ -246,6 +295,7 @@ class Subtitle(BaseModel):
         "fontSize": 48, "color": "#ffffff",
         "strokeColor": "#000000", "strokeWidth": 2, "position": "bottom_center"
     })
+    metadata: dict = Field(default_factory=dict)
 
 class DirectoryProgress(BaseModel):
     enabled: bool = False
@@ -299,6 +349,7 @@ class Project(BaseModel):
     shuffleMode: bool = True
     timeline: Timeline = Field(default_factory=Timeline)
     structuredContent: StructuredContent | None = None
+    composition: StructuredComposition | None = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 

@@ -6,7 +6,8 @@ aiofiles==24.1.0
 pyjianyingdraft==0.2.7
 httpx==0.28.1
 edge-tts==7.2.3
-numpy==2.5.1
+numpy==2.3.5
+numba==0.63.1
 librosa==0.11.0
 mcp==1.28.0
 sse-starlette==2.2.1
