@@ -196,6 +196,25 @@ def compile_structured_variant_summary(pid: str, variant_id: str, base: str = DE
     return _request("GET", f"/api/projects/{pid}/structured/variants/{variant_id}/compile", base=base)
 
 
+def parse_structured_markdown(text: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", "/api/structured/import/parse", base=base, json_body={"text": text, "format": "auto"})
+
+
+def create_structured_project(name: str, episode: dict, ratio: str = "9:16", base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", "/api/projects/structured", base=base, json_body={"name": name, "episode": episode, "canvas": {"ratio": ratio}})
+
+
+def get_structured_episode_draft(pid: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", f"/api/projects/{pid}/structured/draft", base=base)
+
+
+def update_structured_episode_draft(pid: str, data: dict, expected_updated_at: str | None = None, base: str = DEFAULT_BASE) -> dict:
+    payload = dict(data)
+    if expected_updated_at is not None:
+        payload["expectedUpdatedAt"] = expected_updated_at
+    return _request("PATCH", f"/api/projects/{pid}/structured/draft", base=base, json_body=payload)
+
+
 def _guarded_update(pid: str, data: dict, expected_updated_at: str | None, base: str = DEFAULT_BASE):
     current = get_project(pid, base=base)
     actual = current.get("updated_at")
