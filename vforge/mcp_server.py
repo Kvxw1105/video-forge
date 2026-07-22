@@ -45,13 +45,13 @@ def list_projects() -> dict:
 
 
 @mcp.tool()
-def create_project(name: str, ratio: str = "9:16") -> dict:
+def create_project(name: str, ratio: str = "9:16", template_id: str | None = None) -> dict:
     """创建新项目。
     name: 项目名
     ratio: 画布比例，可选 "9:16"(抖音/小红书), "16:9"(B站), "1:1"(封面), "4:5"
     返回完整 project 对象，含 id。
     """
-    return _to_json(client.create_project(name, ratio))
+    return _to_json(client.create_project(name, ratio, template_id=template_id))
 
 
 @mcp.tool()
@@ -150,6 +150,54 @@ def get_tts_settings() -> dict:
 def update_tts_settings(data: dict) -> dict:
     """更新 TTS 引擎配置。"""
     return _to_json(client.update_tts_settings(data))
+
+
+@mcp.tool()
+def get_template(template_id: str) -> dict:
+    """Read one reusable VideoForge template without changing any project."""
+    return _to_json(client.get_template(template_id))
+
+
+@mcp.tool()
+def create_project_from_template(name: str, template_id: str, ratio: str = "9:16") -> dict:
+    """Create one normal project from a template through the backend API."""
+    return _to_json(client.create_project(name, ratio, template_id=template_id))
+
+
+@mcp.tool()
+def plan_template_batch(spec: dict) -> dict:
+    """Validate a batch only. It creates no projects and never calls a provider."""
+    return _to_json(client.plan_template_batch(spec))
+
+
+@mcp.tool()
+def start_template_batch(spec: dict) -> dict:
+    """Start durable batch production. TTS is used only when explicitly selected in spec; unknown Sections are never guessed."""
+    return _to_json(client.start_template_batch(spec))
+
+
+@mcp.tool()
+def list_template_batches() -> dict:
+    """List persisted template production batches."""
+    return _to_json(client.list_template_batches())
+
+
+@mcp.tool()
+def get_template_batch(batch_id: str) -> dict:
+    """Read live aggregate state for one template batch without blocking."""
+    return _to_json(client.get_template_batch(batch_id))
+
+
+@mcp.tool()
+def resume_template_batch(batch_id: str) -> dict:
+    """Resume failed/interrupted items only; succeeded items are never re-executed."""
+    return _to_json(client.resume_template_batch(batch_id))
+
+
+@mcp.tool()
+def get_template_batch_manifest(batch_id: str) -> dict:
+    """Read the durable batch manifest through the backend API."""
+    return _to_json(client.get_template_batch_manifest(batch_id))
 
 
 @mcp.tool()

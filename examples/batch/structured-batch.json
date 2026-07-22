@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "Structured example",
+  "idempotencyKey": "example-structured-001",
+  "templateId": "tpl_single_voiceover",
+  "defaults": {
+    "inputMode": "structured_markdown",
+    "voiceover": {"enabled": false, "engine": "none"},
+    "outputs": {"preview": false, "jianyingDirect": false, "jianyingZip": false}
+  },
+  "items": [{"itemId": "structured_001", "name": "Structured example", "structuredMarkdown": "## HOOK\nOpening line.\n\n## STORY\nStory body.", "assets": {"images": [], "videos": [], "bgm": null}}]
+}
