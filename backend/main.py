@@ -15,7 +15,7 @@ def create_app(*, serve_frontend: bool | None = None, frontend_dist=None) -> Fas
         allow_headers=["*"],
     )
 
-    from routers import project, voiceover, export, assets, settings, render, template, subtitle, library, audio_analysis, jobs, system_readiness, structured_audio, composition, structured_authoring, template_batch
+    from routers import project, voiceover, export, assets, settings, render, template, subtitle, library, audio_analysis, jobs, system_readiness, structured_audio, composition, structured_authoring, template_batch, visual_scene
     app.include_router(project.router)
     app.include_router(voiceover.router)
     app.include_router(export.router)
@@ -32,6 +32,7 @@ def create_app(*, serve_frontend: bool | None = None, frontend_dist=None) -> Fas
     app.include_router(composition.router)
     app.include_router(structured_authoring.router)
     app.include_router(template_batch.router)
+    app.include_router(visual_scene.router)
 
     @app.get("/api/health")
     def health():

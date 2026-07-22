@@ -204,6 +204,19 @@ def wait_template_batch(batch_id: str, timeout_seconds: float = 3600, poll_inter
         time.sleep(max(0.1, poll_interval))
 
 
+def get_visual_planning_context(pid: str, base: str = DEFAULT_BASE) -> dict: return _request("GET", f"/api/projects/{pid}/visual-plan/context", base=base)
+def propose_visual_scene_plan(pid: str, data: dict, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/projects/{pid}/visual-plan/propose", base=base, json_body=data)
+def get_visual_scene_plan(pid: str, base: str = DEFAULT_BASE) -> dict: return _request("GET", f"/api/projects/{pid}/visual-plan", base=base)
+def set_visual_scene_plan(pid: str, plan: dict, expected_updated_at: str | None = None, base: str = DEFAULT_BASE) -> dict:
+    payload={"plan":plan};
+    if expected_updated_at is not None: payload["expectedUpdatedAt"]=expected_updated_at
+    return _request("PUT", f"/api/projects/{pid}/visual-plan", base=base,json_body=payload)
+def validate_visual_scene_plan(pid: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/projects/{pid}/visual-plan/validate", base=base,json_body={})
+def export_visual_generation_pack(pid: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/projects/{pid}/visual-plan/generation-pack", base=base,json_body={})
+def import_visual_scene_folder(pid: str, folder: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/projects/{pid}/visual-plan/import-folder", base=base,json_body={"folder":folder})
+def compile_visual_scene_variant(pid: str, variant_id: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/projects/{pid}/visual-plan/compile/{variant_id}", base=base,json_body={})
+
+
 # ── Settings ─────────────────────────────────────────────
 
 def get_tts_settings(base: str = DEFAULT_BASE) -> dict:

@@ -299,6 +299,11 @@ def _render_jianying_draft(
             )
 
             duration = max(0.0, float(seg_end) - float(seg_start))
+            asset_path, duration = _prepare_short_visual_video(
+                asset_path, seg, duration, draft_dir, adapter_warnings,
+            )
+            if duration <= 0:
+                continue
             v = VideoSegment(
                 str(asset_path),
                 target_timerange=trange(f"{seg_start}s", f"{duration}s"),
@@ -614,6 +619,45 @@ def _fmt_time(seconds: float) -> str:
     s = int(seconds % 60)
     ms = int((seconds - int(seconds)) * 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _prepare_short_visual_video(
+    asset_path: Path,
+    segment: dict,
+    target_duration: float,
+    draft_dir: Path,
+    warnings: list[str],
+) -> tuple[Path, float]:
+    """Lower a semantic short-video policy without changing the canonical clip."""
+    if segment.get("type") != "video" or target_duration <= 0:
+        return asset_path, target_duration
+    actual = probe_media_duration(asset_path)
+    if actual <= 0 or actual + 0.01 >= target_duration:
+        return asset_path, target_duration
+    policy = str((segment.get("metadata") or {}).get("durationPolicy") or "fit_scene")
+    if policy == "trim":
+        warnings.append(
+            f"video {asset_path.name} is shorter than scene; trim uses {actual:.3f}s"
+        )
+        return asset_path, actual
+    mode = "freeze" if policy == "freeze_last_frame" else "loop"
+    output = draft_dir / f"_vf_{mode}_{asset_path.stem}_{uuid4().hex[:8]}.mp4"
+    if mode == "loop":
+        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(asset_path), "-t", str(target_duration)]
+    else:
+        pad = max(0.0, target_duration - actual)
+        cmd = ["ffmpeg", "-y", "-i", str(asset_path), "-vf", f"tpad=stop_mode=clone:stop_duration={pad}", "-t", str(target_duration)]
+    cmd.extend(["-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(output)])
+    try:
+        result = run_process(cmd, capture_output=True, timeout=60, encoding="utf-8", errors="replace")
+    except Exception as exc:
+        warnings.append(f"failed to prepare short video {asset_path.name}: {exc}")
+        return asset_path, actual
+    if result.returncode != 0 or not output.is_file() or probe_media_duration(output) + 0.01 < target_duration:
+        warnings.append(f"failed to prepare short video {asset_path.name}; using available duration")
+        output.unlink(missing_ok=True)
+        return asset_path, actual
+    return output, target_duration
 
 
 def _preprocess_media_with_adjustments(segments: list[dict], adjustments: dict, work_dir: Path) -> dict[str, str]:
