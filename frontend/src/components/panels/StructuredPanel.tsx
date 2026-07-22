@@ -12,6 +12,7 @@ export default function StructuredPanel({ projectId, structuredContent, onToast 
   const episode = structuredContent?.episode
   const variants = episode?.variants || []
   useEffect(() => { api.getStructuredAudioStatus(projectId).then(setStatus).catch(() => setStatus(null)) }, [projectId])
+  useEffect(() => { api.getVisualPlan(projectId).then(value => setVisualScenes(value?.scenes || value?.visualPlan?.scenes || [])).catch(() => setVisualScenes([])) }, [projectId])
   if (!episode) return null
   const generate = async () => {
     setGenerating(true)
@@ -36,6 +37,7 @@ export default function StructuredPanel({ projectId, structuredContent, onToast 
     catch (error: any) { onToast('error', error.message || '视觉分镜规划失败') }
   }
   const exportPack = async () => { try { const result = await api.exportVisualPack(projectId); onToast('ok', `已导出生成包：${result.path}`) } catch (error: any) { onToast('error', error.message || '生成包导出失败') } }
+  const validateVisuals = async () => { try { const result = await api.validateVisualPlan(projectId); onToast(result.valid ? 'ok' : 'error', result.valid ? '视觉分镜验证通过' : (result.errors || []).join('; ')) } catch (error: any) { onToast('error', error.message || '视觉分镜验证失败') } }
   return <div className="space-y-4">
     <div className="card-cinematic p-4 space-y-3">
       <div className="flex items-center justify-between"><h3 className="label-cinematic">链式内容</h3><span className="status-pill" data-tone={status?.hasAlignment ? 'ok' : 'warn'}>{status?.hasAlignment ? '已对齐' : '未配音'}</span></div>
@@ -48,8 +50,8 @@ export default function StructuredPanel({ projectId, structuredContent, onToast 
     <div className="space-y-2">{variants.map((variant: any) => <div key={variant.id} className="card-cinematic p-3 space-y-2"><div className="flex justify-between"><strong className="text-xs">{variant.name || variant.id}</strong><span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{variant.blockIds?.length || 0} Blocks</span></div><div className="flex gap-2"><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={() => preview(variant.id)} disabled={!!busyVariant}>{busyVariant === variant.id ? '处理中…' : '预览'}</button><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={() => exportVariant(variant.id)} disabled={!!busyVariant}>导出剪映</button></div></div>)}</div>
     <div className="card-cinematic p-4 space-y-2">
       <div className="flex justify-between items-center"><h3 className="label-cinematic">Visual scenes</h3><span className="text-[10px]">{visualScenes.length} Scenes</span></div>
-      <div className="flex gap-2"><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={proposeVisuals}>Propose</button><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={exportPack} disabled={visualScenes.length === 0}>Export pack</button></div>
-      {visualScenes.map((scene: any) => <div key={scene.id} className="text-[11px]">{scene.id} / {scene.blockId} / {scene.subtitleIds?.length || 0} subtitles</div>)}
+      <div className="flex gap-2"><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={proposeVisuals}>Propose</button><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={validateVisuals} disabled={visualScenes.length === 0}>Validate</button><button className="btn-cinematic flex-1 text-[11px] py-2" onClick={exportPack} disabled={visualScenes.length === 0}>Export pack</button></div>
+      {visualScenes.map((scene: any) => <div key={scene.id} className="text-[11px] space-y-1"><div>{scene.id} / {scene.blockId} / {scene.subtitleIds?.length || 0} subtitles</div><div style={{ color: 'var(--text-muted)' }}>{scene.summary || scene.prompt || 'No prompt'} · {scene.requestedMediaType || 'image'} · {(scene.visualAssetIds || []).length ? `${scene.visualAssetIds.length} asset(s)` : 'missing asset'}</div></div>)}
     </div>
   </div>
 }

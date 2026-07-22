@@ -75,10 +75,14 @@ def generation_pack(project_id: str):
     errors=validate_plan(project.model_dump(),plan.model_dump())
     if errors: raise HTTPException(422,{"code":"invalid_visual_plan","errors":errors})
     directory=_project_dir(project_id)/"visual-generation"/plan.planId; directory.mkdir(parents=True,exist_ok=True)
-    context=planning_context(project.model_dump()); block_starts={item["blockId"]:0 for item in context["blocks"]}
+    raw = project.model_dump()
+    subtitles = {item.get("id"): item for item in raw.get("subtitles") or []}
     rows=[]
     for index,scene in enumerate(plan.scenes,1):
-        rows.append({"sceneId":scene.id,"blockId":scene.blockId,"subtitleIds":scene.subtitleIds,"summary":scene.summary,"prompt":scene.prompt,"negativePrompt":scene.negativePrompt,"mediaType":scene.requestedMediaType,"aspectRatio":project.canvas.ratio,"expectedFilename":f"scene_{index:03d}.png"})
+        ids = list(scene.subtitleIds)
+        start = float(subtitles[ids[0]].get("start", 0)) if ids else 0.0
+        end = float(subtitles[ids[-1]].get("end", start)) if ids else start
+        rows.append({"sceneId":scene.id,"blockId":scene.blockId,"subtitleIds":ids,"start":start,"end":end,"duration":end-start,"text":"".join(str(subtitles[item].get("text") or "") for item in ids if item in subtitles),"summary":scene.summary,"prompt":scene.prompt,"negativePrompt":scene.negativePrompt,"mediaType":scene.requestedMediaType,"aspectRatio":project.canvas.ratio,"expectedFilename":f"scene_{index:03d}.png"})
     (directory/"visual-plan.json").write_text(plan.model_dump_json(indent=2),encoding="utf-8"); (directory/"prompts.json").write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding="utf-8")
     with (directory/"prompts.csv").open("w",encoding="utf-8",newline="") as handle:
         writer=csv.DictWriter(handle,fieldnames=rows[0].keys() if rows else ["sceneId"]); writer.writeheader(); writer.writerows(rows)

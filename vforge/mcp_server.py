@@ -220,6 +220,31 @@ def get_visual_scene_plan(pid: str) -> dict: return _to_json(client.get_visual_s
 @mcp.tool()
 def validate_visual_scene_plan(pid: str) -> dict: return _to_json(client.validate_visual_scene_plan(pid))
 @mcp.tool()
+def set_visual_scene_prompt(pid: str, scene_id: str, prompt: str, negative_prompt: str = "") -> dict:
+    """Update one Scene prompt through the validated HTTP visual-plan contract."""
+    plan = client.get_visual_scene_plan(pid)
+    if not plan or not plan.get("scenes"):
+        raise ValueError("Visual plan not found")
+    for scene in plan["scenes"]:
+        if scene.get("id") == scene_id:
+            scene["prompt"] = prompt
+            scene["negativePrompt"] = negative_prompt
+            return _to_json(client.set_visual_scene_plan(pid, plan))
+    raise ValueError(f"Visual scene not found: {scene_id}")
+
+@mcp.tool()
+def attach_visual_scene_asset(pid: str, scene_id: str, asset_id: str) -> dict:
+    """Attach an existing project asset; backend validates the saved Scene Plan."""
+    plan = client.get_visual_scene_plan(pid)
+    if not plan or not plan.get("scenes"):
+        raise ValueError("Visual plan not found")
+    for scene in plan["scenes"]:
+        if scene.get("id") == scene_id:
+            scene["visualAssetIds"] = [asset_id]
+            scene["primaryAssetId"] = asset_id
+            return _to_json(client.set_visual_scene_plan(pid, plan))
+    raise ValueError(f"Visual scene not found: {scene_id}")
+@mcp.tool()
 def export_visual_generation_pack(pid: str) -> dict: return _to_json(client.export_visual_generation_pack(pid))
 @mcp.tool()
 def import_visual_scene_folder(pid: str, folder: str) -> dict: return _to_json(client.import_visual_scene_folder(pid, folder))
