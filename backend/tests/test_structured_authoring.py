@@ -42,9 +42,11 @@ def test_parser_retains_unassigned_preamble(source):
     assert "unassigned_preamble" in result.sections[0].warnings
 
 
-@pytest.mark.parametrize(("heading", "expected"), [("\u827a\u7279\u5f15\u5bfc", "CTA_TAG"), ("\u7834\u6cd5", "METHOD"), ("\u7ae0\u8282\u5c3e\u94a9", "BRIDGE_OUT")])
-def test_new_chinese_aliases_are_detected(heading, expected):
-    assert detect_block_type(heading) == expected
+def test_new_chinese_aliases_are_detected():
+    assert detect_block_type("艾特引导") == "CTA_TAG"
+    assert detect_block_type("艺特引导") == "CTA_TAG"
+    assert detect_block_type("破法") == "METHOD"
+    assert detect_block_type("章节尾钩") == "BRIDGE_OUT"
 
 
 def test_parser_rejects_empty_and_oversized_input():
@@ -65,6 +67,16 @@ def test_presets_keep_order_and_choose_fallback_active_variant():
 def _client(monkeypatch, tmp_path):
     monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
     return TestClient(create_app())
+
+
+def test_import_api_recognizes_canonical_ait_alias(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    response = client.post(
+        "/api/structured/import/parse",
+        json={"text": "## 艾特引导\n把这条内容艾特给真正需要的人。"},
+    )
+    assert response.status_code == 200
+    assert response.json()["sections"][0]["detectedType"] == "CTA_TAG"
 
 
 def _episode():

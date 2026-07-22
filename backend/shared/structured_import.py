@@ -26,7 +26,12 @@ ALIASES = {
     "章节钩": "BRIDGE_OUT", "章节收尾": "BRIDGE_OUT", "下章钩子": "BRIDGE_OUT",
     "评论引导": "COMMENT_CTA", "互动引导": "COMMENT_CTA",
 }
-ALIASES.update({"\u827a\u7279\u5f15\u5bfc": "CTA_TAG", "\u7834\u6cd5": "METHOD", "\u7ae0\u8282\u5c3e\u94a9": "BRIDGE_OUT"})
+ALIASES.update({
+    "艾特引导": "CTA_TAG",
+    "艺特引导": "CTA_TAG",  # Compatibility for a common typo.
+    "破法": "METHOD",
+    "章节尾钩": "BRIDGE_OUT",
+})
 
 
 @dataclass(frozen=True)

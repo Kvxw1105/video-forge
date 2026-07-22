@@ -5,6 +5,7 @@
 - Transactional Structured Fish materialization, relative generation paths, hash cache, conflict detection, and legacy active voiceover preservation.
 - Structured Project creation validation and atomic publish.
 - Markdown preamble preservation, aliases, Variant compilation, API/MCP regression coverage, backend tests, compileall, frontend build, and CI workflow.
+- Canonical Chinese alias: `艾特引导` maps to `CTA_TAG`; `艺特引导` remains compatibility-only for the common typo.
 
 ## Mock validated
 
