@@ -111,6 +111,7 @@ export const api = {
     ),
   /** 模板 API */
   listTemplates: () => request<any[]>('/templates'),
+  listTemplateProductionBatches: () => request<any[]>('/batches/template-production'),
   saveTemplate: (data: any) => request<any>('/templates', { method: 'POST', body: JSON.stringify(data) }),
   deleteTemplate: (id: string) => request<any>(`/templates/${id}`, { method: 'DELETE' }),
   /** SRT 导入 */

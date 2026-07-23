@@ -46,6 +46,7 @@ export default function Home() {
   const { theme, toggle } = useTheme()
   const [projects, setProjects] = useState<any[]>([])
   const [templates, setTemplates] = useState<any[]>([])
+  const [batches, setBatches] = useState<any[]>([])
   const [name, setName] = useState('')
   const [selectedTemplate, setSelectedTemplate] = useState('tpl_single_voiceover')
   const [creating, setCreating] = useState(false)
@@ -56,8 +57,13 @@ export default function Home() {
   useEffect(() => {
     api.listProjects().then(setProjects).catch(console.error)
     api.listTemplates().then(setTemplates).catch(console.error)
+    api.listTemplateProductionBatches().then(setBatches).catch(console.error)
     api.listDeletedProjects().then(setDeletedProjects).catch(console.error)
   }, [])
+
+  const pairingTasks = batches.flatMap(batch => (batch.items || [])
+    .filter((item: any) => ['awaiting_visual_assets', 'ready_to_resume'].includes(item.status))
+    .map((item: any) => ({ batch, item })))
 
   const handleDelete = async (event: React.MouseEvent, projectId: string) => {
     event.stopPropagation()
@@ -269,6 +275,44 @@ export default function Home() {
             </div>
           )}
         </motion.section>
+
+        {pairingTasks.length > 0 && (
+          <motion.section
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.55, delay: 0.2, ease: 'easeOut' }}
+            className="glass-surface pairing-tasks-panel"
+          >
+            <SectionHeading eyebrow="03 / MATERIALS" title="等待配对素材" meta={`${pairingTasks.length} 项待处理`} />
+            <div className="pairing-task-list">
+              {pairingTasks.map(({ batch, item }) => {
+                const coverage = item.visualCoverage || {}
+                const total = coverage.totalScenes || item.expectedScenes?.length || 0
+                const bound = coverage.boundScenes || 0
+                const missing = coverage.missingScenes?.length ?? Math.max(total - bound, 0)
+                const project = projects.find(value => value.id === item.projectId)
+                const itemName = project?.name || batch.name || item.itemId
+                return (
+                  <div className="pairing-task-row" key={`${batch.batchId}:${item.itemId}`}>
+                    <span className="project-icon"><FilmSlate size={15} /></span>
+                    <div className="pairing-task-copy">
+                      <strong title={itemName}>{itemName}</strong>
+                      <small>{bound} / {total} 个场景已绑定 · 缺少 {missing} 个素材</small>
+                    </div>
+                    <span className={`pairing-task-status is-${item.status}`}>{item.status === 'ready_to_resume' ? '可继续生成' : '等待素材'}</span>
+                    <button
+                      className="btn-gold pairing-task-action"
+                      onClick={() => navigate(`/factory/batches/${encodeURIComponent(batch.batchId)}/items/${encodeURIComponent(item.itemId)}/visuals`)}
+                    >
+                      {item.status === 'ready_to_resume' ? '查看配对' : '配对素材'}
+                      <ArrowRight size={14} weight="bold" />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </motion.section>
+        )}
       </main>
 
       <footer className="home-footer">
