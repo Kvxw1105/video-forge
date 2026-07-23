@@ -176,4 +176,14 @@ export const api = {
   compileComposition: (projectId: string) => request<any>(`/projects/${projectId}/composition/compile`, { method: 'POST' }),
   previewComposition: (projectId: string) => request<any>(`/projects/${projectId}/composition/preview`, { method: 'POST' }),
   exportCompositionToJianYing: (projectId: string) => request<any>(`/projects/${projectId}/composition/export/jianying-direct`, { method: 'POST', body: JSON.stringify({ policy: 'create_new' }) }),
+  getFactoryItemVisuals: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals`),
+  validateFactoryItemVisuals: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/validate`, { method: 'POST', body: JSON.stringify({}) }),
+  resumeFactoryItem: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/resume`, { method: 'POST', body: JSON.stringify({}) }),
+  uploadFactorySceneVisual: async (batchId: string, itemId: string, sceneId: string, file: File, replace = false) => {
+    const form = new FormData(); form.append('sceneId', sceneId); form.append('replace', String(replace)); form.append('file', file)
+    const response = await fetch(`${BASE}/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/upload`, { method: 'POST', body: form })
+    if (!response.ok) { const body = await response.json().catch(() => ({})); const error: any = new Error(body?.detail?.message || body?.detail || '上传失败'); error.body = body; throw error }
+    return response.json()
+  },
+  unbindFactorySceneVisual: (batchId: string, itemId: string, sceneId: string, deleteProjectAsset = false) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/unbind`, { method: 'POST', body: JSON.stringify({ sceneId, deleteProjectAsset }) }),
 }
