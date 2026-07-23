@@ -112,6 +112,8 @@ export const api = {
   /** 模板 API */
   listTemplates: () => request<any[]>('/templates'),
   listTemplateProductionBatches: () => request<any[]>('/batches/template-production'),
+  getTemplateProductionBatch: (batchId: string) => request<any>(`/batches/template-production/${encodeURIComponent(batchId)}`),
+  startTemplateProductionBatch: (spec: any) => request<any>('/batches/template-production', { method: 'POST', body: JSON.stringify(spec) }),
   saveTemplate: (data: any) => request<any>('/templates', { method: 'POST', body: JSON.stringify(data) }),
   deleteTemplate: (id: string) => request<any>(`/templates/${id}`, { method: 'DELETE' }),
   /** SRT 导入 */

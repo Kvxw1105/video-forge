@@ -135,6 +135,10 @@ export default function Home() {
             <ClipboardText size={15} weight="bold" />
             <span>创建结构化内容</span>
           </button>
+          <button className="btn-cinematic home-action-button" onClick={() => navigate('/factory/new')}>
+            <FilmSlate size={15} weight="bold" />
+            <span>快速配图产片</span>
+          </button>
           <button className="btn-cinematic home-action-button" onClick={() => setShowTrash(previous => !previous)}>
             <Archive size={15} weight="bold" />
             <span>回收站{deletedProjects.length > 0 ? ` ${deletedProjects.length}` : ''}</span>
