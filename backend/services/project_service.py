@@ -54,6 +54,16 @@ def resolve_project_paths(proj_dir: Path, proj_dict: dict) -> dict:
             abs_p = proj_dir / ap
             if abs_p.exists():
                 seg["assetPath"] = str(abs_p)
+    # Structured visual plans resolve assets directly when lowering a Variant.
+    # Keep asset records usable in the same derived view as legacy segments.
+    for asset in proj_dict.get("assets", []):
+        if not isinstance(asset, dict):
+            continue
+        asset_path = asset.get("path", "")
+        if asset_path and not Path(asset_path).is_absolute():
+            abs_p = proj_dir / asset_path
+            if abs_p.exists():
+                asset["path"] = str(abs_p)
     tracks = bgm.get("tracks") or []
     for track in tracks:
         fp = track.get("file", "")

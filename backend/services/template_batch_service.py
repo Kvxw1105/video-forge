@@ -285,15 +285,51 @@ def _process_item(batch_id: str, spec: TemplateBatchSpec, item, index: int, resu
     result.update({"status": "succeeded", "phase": "done", "finishedAt": _now()}); _event(batch_id, item.itemId, "done", "ok")
 
 
-def _run_item_outputs(batch_id: str, item_id: str, project_id: str, outputs: BatchOutputs, result: dict) -> None:
+def _run_item_outputs(
+    batch_id: str,
+    item_id: str,
+    project_id: str,
+    outputs: BatchOutputs,
+    result: dict,
+    *,
+    structured_variant_id: str | None = None,
+    input_hash: str | None = None,
+) -> None:
+    """Create only the outputs that are not already retained on ``result``.
+
+    Factory resume supplies a structured variant and an input hash.  The generic
+    batch path deliberately keeps its existing behavior.
+    """
     if outputs.preview and not result.get("previewUrl"):
         result["phase"]="rendering_preview"; _event(batch_id,item_id,"rendering_preview","started")
-        from routers.render import generate_preview
-        preview=generate_preview(project_id); result["previewUrl"]=preview.get("previewUrl"); result["duration"]=preview.get("duration"); result.setdefault("outputs",{})["preview"]={"status":"succeeded","url":result["previewUrl"],"path":str(preview.get("previewPath") or ""),"completedAt":_now()}
+        if structured_variant_id:
+            from routers.render import generate_structured_variant_preview
+            preview = generate_structured_variant_preview(project_id, structured_variant_id)
+            preview_path = _project_dir(project_id) / f"preview_{structured_variant_id}.mp4"
+        else:
+            from routers.render import generate_preview
+            preview = generate_preview(project_id)
+            preview_path = preview.get("previewPath") or _project_dir(project_id) / "preview.mp4"
+        result["previewUrl"] = preview.get("previewUrl")
+        result["duration"] = preview.get("duration")
+        result.setdefault("outputs", {})["preview"] = {
+            "status": "succeeded", "url": result["previewUrl"],
+            "path": str(preview_path), "inputHash": input_hash,
+            "completedAt": _now(),
+        }
     if outputs.jianyingDirect and not result.get("jianyingDraftPath"):
         result["phase"]="exporting_jianying"; _event(batch_id,item_id,"exporting_jianying","started")
-        from routers.export import export_jianying_direct
-        exported=export_jianying_direct(project_id,policy="create_new"); result["jianyingDraftPath"]=exported.get("finalPath") or exported.get("path"); result.setdefault("outputs",{})["jianying"]={"status":"succeeded","draftPath":result["jianyingDraftPath"],"completedAt":_now()}
+        if structured_variant_id:
+            from routers.export import export_structured_variant_direct
+            exported = export_structured_variant_direct(project_id, structured_variant_id, policy="create_new")
+        else:
+            from routers.export import export_jianying_direct
+            exported = export_jianying_direct(project_id, policy="create_new")
+        result["jianyingDraftPath"] = exported.get("finalPath") or exported.get("path")
+        result.setdefault("outputs", {})["jianying"] = {
+            "status": "succeeded", "draftPath": result["jianyingDraftPath"],
+            "inputHash": input_hash, "completedAt": _now(),
+        }
 
 
 def _aggregate_batch_status(items: list[dict]) -> str:

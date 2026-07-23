@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -97,15 +98,35 @@ def import_folder(project_id: str, data: dict):
     folder=Path(str(data.get("folder") or "")); manifest=data.get("manifest") or {}
     if not folder.is_dir() and not manifest: raise HTTPException(422,"folder or manifest is required")
     by_scene={scene.id:scene.model_dump() for scene in plan.scenes}; assets=list(project.assets); target=_project_dir(project_id)/"assets"; target.mkdir(exist_ok=True); imported=[]
+    replace = bool(data.get("replace", False))
+    selections = []
     for index,scene in enumerate(plan.scenes,1):
         candidates=[Path(manifest[scene.id])] if scene.id in manifest else list(folder.glob(f"{scene.id}*"))+list(folder.glob(f"scene_{index:03d}*"))
         chosen=next((path for path in candidates if path.is_file() and path.suffix.lower() in _MEDIA),None)
         if not chosen: continue
-        destination=target/f"{scene.id}{chosen.suffix.lower()}"; shutil.copy2(chosen,destination); asset_id=f"visual_{scene.id}"; assets=[asset for asset in assets if (asset.id if hasattr(asset,"id") else asset.get("id"))!=asset_id]; assets.append({"id":asset_id,"type":"video" if chosen.suffix.lower() in {'.mp4','.mov','.webm'} else "image","name":destination.name,"path":(Path('assets')/destination.name).as_posix(),"metadata":{}})
+        destination=target/f"{scene.id}{chosen.suffix.lower()}"
+        selections.append((scene, chosen, destination))
+    # Do the conflict pass before copying anything: a failed import cannot alter
+    # a prior scene binding or overwrite a generated asset by accident.
+    for scene, chosen, destination in selections:
+        if destination.exists() and not replace and _file_digest(destination) != _file_digest(chosen):
+            raise HTTPException(409, {"code":"asset_conflict", "message":f"Generated asset conflicts with existing scene asset: {scene.id}"})
+    for scene, chosen, destination in selections:
+        if not destination.exists() or replace:
+            shutil.copy2(chosen,destination)
+        asset_id=f"visual_{scene.id}"; assets=[asset for asset in assets if (asset.id if hasattr(asset,"id") else asset.get("id"))!=asset_id]; assets.append({"id":asset_id,"type":"video" if chosen.suffix.lower() in {'.mp4','.mov','.webm'} else "image","name":destination.name,"path":(Path('assets')/destination.name).as_posix(),"metadata":{}})
         by_scene[scene.id]["visualAssetIds"]=[asset_id]; by_scene[scene.id]["primaryAssetId"]=asset_id; imported.append(scene.id)
     new_plan={**plan.model_dump(),"scenes":[by_scene[scene.id] for scene in plan.scenes]}
     updated=update_project(project_id,{"assets":assets,"structuredContent":{**project.structuredContent.model_dump(),"episode":{**project.structuredContent.episode.model_dump(),"visualPlan":new_plan}}})
     return {"imported":imported,"updatedAt":updated.updated_at}
+
+
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @router.post("/compile/{variant_id}")
