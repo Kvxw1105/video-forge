@@ -71,8 +71,10 @@ def validate_visuals(batch_id: str, item_id: str) -> dict:
     bound=[scene for scene in scenes if scene.visualAssetIds]
     result={"complete":len(bound)==len(scenes),"totalScenes":len(scenes),"boundScenes":len(bound),"missingScenes":[scene.id for scene in scenes if not scene.visualAssetIds],"invalidScenes":[],"warnings":[]}
     result["validatedAt"] = batches._now()
-    row.update({"status":"ready_to_resume" if result["complete"] else "awaiting_visual_assets","phase":"validating_visual_coverage" if result["complete"] else "awaiting_visual_assets","visualCoverage":result})
-    batch["status"]="ready_to_resume" if result["complete"] else "awaiting_visual_assets"; batches._save(batch_id,batch)
+    state = row.get("status") if row.get("status") == "succeeded" and result["complete"] else "ready_to_resume" if result["complete"] else "awaiting_visual_assets"
+    phase = row.get("phase") if state == "succeeded" else "validating_visual_coverage" if result["complete"] else "awaiting_visual_assets"
+    row.update({"status":state,"phase":phase,"visualCoverage":result})
+    batch["status"] = batches._aggregate_batch_status(batch["items"]); batches._save(batch_id,batch)
     return result
 
 
@@ -139,14 +141,15 @@ def resume_item(batch_id: str, item_id: str) -> dict:
     return {"status":"succeeded","reused":False}
 
 def resume_batch(batch_id: str) -> dict:
-    _,batch=batches._load(batch_id); resumed=[]; waiting=[]; failed=[]
+    _,batch=batches._load(batch_id); resumed=[]; waiting=[]; failed=[]; skipped=[]
     for row in batch["items"]:
         if row.get("status") in {"ready_to_resume","failed"}:
             try: resume_item(batch_id,row["itemId"]); resumed.append(row["itemId"])
-            except batches.BatchError: failed.append(row["itemId"])
+            except Exception: failed.append(row["itemId"])
         elif row.get("status")=="awaiting_visual_assets": waiting.append(row["itemId"])
+        elif row.get("status") == "succeeded": skipped.append(row["itemId"])
     latest=batches.get(batch_id)
-    return {"batchId":batch_id,"status":latest.get("status"),"resumedItems":resumed,"waitingItems":waiting,"failedItems":failed}
+    return {"batchId":batch_id,"status":latest.get("status"),"resumedItems":resumed,"waitingItems":waiting,"skippedItems":skipped,"failedItems":failed}
 
 def continue_factory(batch_id: str) -> dict:
     batch=batches.get(batch_id); status=batch.get("status")

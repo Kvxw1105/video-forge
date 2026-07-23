@@ -19,24 +19,35 @@ from fastapi.testclient import TestClient
 from main import create_app
 
 
-def _paused_factory(monkeypatch, tmp_path, *, key="factory_structured_helper"):
-    monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
-    monkeypatch.setattr(batches, "PROJECTS_DIR", tmp_path)
+def _mock_fish_alignment(monkeypatch, sentences):
     raw = io.BytesIO()
     with wave.open(raw, "wb") as wav:
         wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(8000)
-        wav.writeframes(b"\0\0" * 8000 * 15)
-    sentences = [f"sentence {index}." for index in range(1, 16)]
+        wav.writeframes(b"\0\0" * 8000 * len(sentences))
     parsed = ParsedFishTimestamp(
         raw.getvalue(),
         tuple(FishAlignmentSegment(text, float(index), float(index + 1), 0) for index, text in enumerate(sentences)),
-        {}, 15.0,
+        {}, float(len(sentences)),
     )
     monkeypatch.setattr(structured_audio, "get_tts_settings_raw", lambda: SimpleNamespace(fishApiKey="x", fishReferenceId="ref", fishModel="s2-pro"))
     monkeypatch.setattr(structured_audio, "request_fish_timestamp", lambda *args, **kwargs: parsed)
-    monkeypatch.setattr(materializer, "probe_media_duration", lambda _: 15.0)
-    markdown = "## STORY\n" + "\n".join(sentences[:5]) + "\n\n## MECHANISM\n" + "\n".join(sentences[5:10]) + "\n\n## METHOD\n" + "\n".join(sentences[10:])
-    spec = {"schemaVersion": 1, "name": "factory", "idempotencyKey": key, "templateId": "tpl_single_voiceover", "defaults": {"inputMode": "structured_markdown", "voiceover": {"enabled": True, "engine": "fish_audio", "generateSubtitles": True}, "outputs": {"preview": True, "jianyingDirect": True, "jianyingZip": False}}, "visualWorkflow": {"enabled": True, "mode": "generation_pack", "planningMode": "fixed_units", "unitsPerScene": 5, "targetDuration": 5, "minDuration": 1, "maxDuration": 10}, "items": [{"itemId": "one", "name": "One", "structuredMarkdown": markdown, "assets": {"images": [], "videos": [], "bgm": None}}]}
+    monkeypatch.setattr(materializer, "probe_media_duration", lambda _: float(len(sentences)))
+
+
+def _structured_markdown(sentences):
+    return "## STORY\n" + "\n".join(sentences[:5]) + "\n\n## MECHANISM\n" + "\n".join(sentences[5:10]) + "\n\n## METHOD\n" + "\n".join(sentences[10:])
+
+
+def _structured_factory_spec(key, items):
+    return {"schemaVersion": 1, "name": "factory", "idempotencyKey": key, "templateId": "tpl_single_voiceover", "defaults": {"inputMode": "structured_markdown", "voiceover": {"enabled": True, "engine": "fish_audio", "generateSubtitles": True}, "outputs": {"preview": True, "jianyingDirect": True, "jianyingZip": False}}, "visualWorkflow": {"enabled": True, "mode": "generation_pack", "planningMode": "fixed_units", "unitsPerScene": 5, "targetDuration": 5, "minDuration": 1, "maxDuration": 10, "requireCompleteCoverage": True}, "items": items}
+
+
+def _paused_factory(monkeypatch, tmp_path, *, key="factory_structured_helper"):
+    monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(batches, "PROJECTS_DIR", tmp_path)
+    sentences = [f"sentence {index}." for index in range(1, 16)]
+    _mock_fish_alignment(monkeypatch, sentences)
+    spec = _structured_factory_spec(key, [{"itemId": "one", "name": "One", "structuredMarkdown": _structured_markdown(sentences), "assets": {"images": [], "videos": [], "bgm": None}}])
     started = batches.start(spec, lambda *_: {"jobId": "job"})
     batch = batches.execute(started["batchId"])
     row = batch["items"][0]
