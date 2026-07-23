@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "Two item visual generation example",
+  "idempotencyKey": "example_two_item_generation_v1",
+  "templateId": "tpl_single_voiceover",
+  "defaults": {
+    "inputMode": "structured_markdown",
+    "voiceover": {"enabled": true, "engine": "fish_audio", "generateSubtitles": true},
+    "outputs": {"preview": true, "jianyingDirect": true, "jianyingZip": false}
+  },
+  "visualWorkflow": {
+    "enabled": true,
+    "mode": "generation_pack",
+    "planningMode": "fixed_units",
+    "unitsPerScene": 5,
+    "targetDuration": 5,
+    "minDuration": 1,
+    "maxDuration": 10,
+    "requireCompleteCoverage": true
+  },
+  "items": [
+    {
+      "itemId": "episode_a",
+      "name": "Example episode A",
+      "structuredMarkdown": "## STORY\nA short opening.\n\n## MECHANISM\nA clear explanation.\n\n## METHOD\nA practical close.",
+      "assets": {"images": [], "videos": [], "bgm": null}
+    },
+    {
+      "itemId": "episode_b",
+      "name": "Example episode B",
+      "structuredMarkdown": "## STORY\nA different opening.\n\n## MECHANISM\nA different explanation.\n\n## METHOD\nA practical close.",
+      "assets": {"images": [], "videos": [], "bgm": null}
+    }
+  ]
+}

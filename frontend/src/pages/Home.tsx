@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Clock,
   ClosedCaptioning,
+  ClipboardText,
   Export,
   FilmSlate,
   FolderOpen,
@@ -123,6 +124,10 @@ export default function Home() {
           <button className="btn-cinematic home-action-button" onClick={() => navigate('/library')}>
             <FolderOpen size={15} weight="bold" />
             <span>素材库</span>
+          </button>
+          <button className="btn-gold home-action-button" onClick={() => navigate('/structured/new')}>
+            <ClipboardText size={15} weight="bold" />
+            <span>创建结构化内容</span>
           </button>
           <button className="btn-cinematic home-action-button" onClick={() => setShowTrash(previous => !previous)}>
             <Archive size={15} weight="bold" />

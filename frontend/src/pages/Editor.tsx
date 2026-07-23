@@ -11,6 +11,7 @@ import ScriptPanel from '../components/panels/ScriptPanel'
 import AudioPanel from '../components/panels/AudioPanel'
 import OverlayPanel from '../components/panels/OverlayPanel'
 import RhythmPanel from '../components/panels/RhythmPanel'
+import StructuredPanel from '../components/panels/StructuredPanel'
 import CanvasPreview from '../components/canvas/CanvasPreview'
 import AudioPlayer from '../components/ui/AudioPlayer'
 import { RatioGroup, ScaleControl, FitControl } from '../components/toolbar/PreviewToolbar'
@@ -107,7 +108,7 @@ export default function Editor() {
   const [perImageDuration, setPerImageDuration] = useState(1.0)
   const [bgmTracks, setBgmTracks] = useState<any[]>([])
   const [cueMode, setCueMode] = useState('uniform')
-  const [activeTab, setActiveTab] = useState<'script' | 'assets' | 'adjust' | 'export'>('script')
+  const [activeTab, setActiveTab] = useState<'script' | 'assets' | 'adjust' | 'export' | 'structured'>('script')
 
   useEffect(() => {
     if (!project || historyProjectIdRef.current === project.id) return
@@ -835,6 +836,7 @@ export default function Editor() {
     { key: 'assets' as const, icon: Images, label: '素材' },
     { key: 'adjust' as const, icon: Sliders, label: '调整' },
     { key: 'export' as const, icon: Export, label: '导出' },
+    ...(project.structuredContent ? [{ key: 'structured' as const, icon: Sliders, label: '链式内容' }] : []),
   ]
 
   return (
@@ -1100,6 +1102,9 @@ export default function Editor() {
                     </button>
                   </div>
                 </div>
+              )}
+              {activeTab === 'structured' && project.structuredContent && (
+                <StructuredPanel projectId={id!} structuredContent={project.structuredContent} onToast={showToast} />
               )}
             </div>
           </div>

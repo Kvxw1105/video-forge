@@ -45,13 +45,13 @@ def list_projects() -> dict:
 
 
 @mcp.tool()
-def create_project(name: str, ratio: str = "9:16") -> dict:
+def create_project(name: str, ratio: str = "9:16", template_id: str | None = None) -> dict:
     """创建新项目。
     name: 项目名
     ratio: 画布比例，可选 "9:16"(抖音/小红书), "16:9"(B站), "1:1"(封面), "4:5"
     返回完整 project 对象，含 id。
     """
-    return _to_json(client.create_project(name, ratio))
+    return _to_json(client.create_project(name, ratio, template_id=template_id))
 
 
 @mcp.tool()
@@ -150,6 +150,227 @@ def get_tts_settings() -> dict:
 def update_tts_settings(data: dict) -> dict:
     """更新 TTS 引擎配置。"""
     return _to_json(client.update_tts_settings(data))
+
+
+@mcp.tool()
+def get_template(template_id: str) -> dict:
+    """Read one reusable VideoForge template without changing any project."""
+    return _to_json(client.get_template(template_id))
+
+
+@mcp.tool()
+def create_project_from_template(name: str, template_id: str, ratio: str = "9:16") -> dict:
+    """Create one normal project from a template through the backend API."""
+    return _to_json(client.create_project(name, ratio, template_id=template_id))
+
+
+@mcp.tool()
+def plan_template_batch(spec: dict) -> dict:
+    """Validate a batch only. It creates no projects and never calls a provider."""
+    return _to_json(client.plan_template_batch(spec))
+
+
+@mcp.tool()
+def start_template_batch(spec: dict) -> dict:
+    """Start durable batch production. TTS is used only when explicitly selected in spec; unknown Sections are never guessed."""
+    return _to_json(client.start_template_batch(spec))
+
+
+@mcp.tool()
+def list_template_batches() -> dict:
+    """List persisted template production batches."""
+    return _to_json(client.list_template_batches())
+
+
+@mcp.tool()
+def get_template_batch(batch_id: str) -> dict:
+    """Read live aggregate state for one template batch without blocking."""
+    return _to_json(client.get_template_batch(batch_id))
+
+
+@mcp.tool()
+def resume_template_batch(batch_id: str) -> dict:
+    """Resume failed/interrupted items only; succeeded items are never re-executed."""
+    return _to_json(client.resume_template_batch(batch_id))
+
+
+@mcp.tool()
+def get_template_batch_manifest(batch_id: str) -> dict:
+    """Read the durable batch manifest through the backend API."""
+    return _to_json(client.get_template_batch_manifest(batch_id))
+
+
+@mcp.tool()
+def get_visual_planning_context(pid: str) -> dict:
+    """Read subtitle-timed narration units. Agent chooses semantics; backend owns time."""
+    return _to_json(client.get_visual_planning_context(pid))
+
+@mcp.tool()
+def propose_visual_scene_plan(pid: str, settings: dict) -> dict:
+    """Return deterministic scene candidates; it never writes a project."""
+    return _to_json(client.propose_visual_scene_plan(pid, settings))
+
+@mcp.tool()
+def set_visual_scene_plan(pid: str, plan: dict, expected_updated_at: str | None = None) -> dict:
+    """Persist explicit Agent scene groups after strict no-cross-Block validation."""
+    return _to_json(client.set_visual_scene_plan(pid, plan, expected_updated_at))
+
+@mcp.tool()
+def get_visual_scene_plan(pid: str) -> dict: return _to_json(client.get_visual_scene_plan(pid))
+@mcp.tool()
+def validate_visual_scene_plan(pid: str) -> dict: return _to_json(client.validate_visual_scene_plan(pid))
+@mcp.tool()
+def set_visual_scene_prompt(pid: str, scene_id: str, prompt: str, negative_prompt: str = "") -> dict:
+    """Update one Scene prompt through the validated HTTP visual-plan contract."""
+    plan = client.get_visual_scene_plan(pid)
+    if not plan or not plan.get("scenes"):
+        raise ValueError("Visual plan not found")
+    for scene in plan["scenes"]:
+        if scene.get("id") == scene_id:
+            scene["prompt"] = prompt
+            scene["negativePrompt"] = negative_prompt
+            return _to_json(client.set_visual_scene_plan(pid, plan))
+    raise ValueError(f"Visual scene not found: {scene_id}")
+
+@mcp.tool()
+def attach_visual_scene_asset(pid: str, scene_id: str, asset_id: str) -> dict:
+    """Attach an existing project asset; backend validates the saved Scene Plan."""
+    plan = client.get_visual_scene_plan(pid)
+    if not plan or not plan.get("scenes"):
+        raise ValueError("Visual plan not found")
+    for scene in plan["scenes"]:
+        if scene.get("id") == scene_id:
+            scene["visualAssetIds"] = [asset_id]
+            scene["primaryAssetId"] = asset_id
+            return _to_json(client.set_visual_scene_plan(pid, plan))
+    raise ValueError(f"Visual scene not found: {scene_id}")
+@mcp.tool()
+def export_visual_generation_pack(pid: str) -> dict: return _to_json(client.export_visual_generation_pack(pid))
+@mcp.tool()
+def import_visual_scene_folder(pid: str, folder: str) -> dict: return _to_json(client.import_visual_scene_folder(pid, folder))
+@mcp.tool()
+def compile_visual_scene_variant(pid: str, variant_id: str) -> dict: return _to_json(client.compile_visual_scene_variant(pid, variant_id))
+
+@mcp.tool()
+def get_pending_visual_scenes(batch_id: str) -> dict: return _to_json(client.factory_pending_visuals(batch_id))
+@mcp.tool()
+def import_agent_video_item_visuals(batch_id: str, item_id: str, folder: str) -> dict: return _to_json(client.factory_import_visuals(batch_id,item_id,{"folder":folder}))
+@mcp.tool()
+def validate_agent_video_item_visuals(batch_id: str, item_id: str) -> dict: return _to_json(client.factory_validate_visuals(batch_id,item_id))
+@mcp.tool()
+def resume_agent_video_item(batch_id: str, item_id: str) -> dict: return _to_json(client.factory_resume_item(batch_id,item_id))
+@mcp.tool()
+def resume_agent_video_batch(batch_id: str) -> dict: return _to_json(client.factory_resume_batch(batch_id))
+@mcp.tool()
+def continue_agent_video_factory(batch_id: str) -> dict: return _to_json(client.factory_continue(batch_id))
+
+
+@mcp.tool()
+def list_structured_projects() -> dict:
+    """List only projects with Structured Content."""
+    return _to_json(client.list_structured_projects())
+
+
+@mcp.tool()
+def get_structured_project_status(pid: str) -> dict:
+    """Return structured episode, composition, alignment, and updatedAt status."""
+    return _to_json(client.get_structured_project_status(pid))
+
+
+@mcp.tool()
+def list_structured_variants(pid: str) -> dict:
+    """List variants available in a Structured Episode."""
+    return _to_json(client.list_structured_variants(pid))
+
+
+@mcp.tool()
+def compile_structured_variant_summary(pid: str, variant_id: str) -> dict:
+    """Compile a read-only summary of one Structured Variant."""
+    return _to_json(client.compile_structured_variant_summary(pid, variant_id))
+
+
+@mcp.tool()
+def parse_structured_markdown(text: str) -> dict:
+    """Parse explicit Markdown/marker headings without writing a project or calling Fish."""
+    return _to_json(client.parse_structured_markdown(text))
+
+
+@mcp.tool()
+def create_structured_project(name: str, episode: dict, ratio: str = "9:16") -> dict:
+    """Create a Structured Project from user-confirmed Blocks and Variants."""
+    return _to_json(client.create_structured_project(name, episode, ratio))
+
+
+@mcp.tool()
+def get_structured_episode_draft(pid: str) -> dict:
+    """Read a Structured Episode draft through the backend API."""
+    return _to_json(client.get_structured_episode_draft(pid))
+
+
+@mcp.tool()
+def update_structured_episode_draft(pid: str, data: dict, expected_updated_at: str | None = None) -> dict:
+    """Update only an unaligned Structured Episode draft with optimistic concurrency protection."""
+    return _to_json(client.update_structured_episode_draft(pid, data, expected_updated_at))
+
+
+@mcp.tool()
+def create_composition_project(name: str, ratio: str = "9:16") -> dict:
+    """Create an empty Composition Project."""
+    return _to_json(client.create_composition_project(name, ratio))
+
+
+@mcp.tool()
+def get_composition(pid: str) -> dict:
+    """Read one Composition Project."""
+    return _to_json(client.get_composition(pid))
+
+
+@mcp.tool()
+def set_composition_items(pid: str, items: list[dict], expected_updated_at: str | None = None) -> dict:
+    """Replace Composition items after an optimistic updatedAt check."""
+    return _to_json(client.set_composition_items(pid, items, expected_updated_at))
+
+
+@mcp.tool()
+def move_composition_item(pid: str, item_id: str, direction: str, expected_updated_at: str | None = None) -> dict:
+    """Move one Composition item up or down."""
+    return _to_json(client.move_composition_item(pid, item_id, direction, expected_updated_at))
+
+
+@mcp.tool()
+def set_composition_item_enabled(pid: str, item_id: str, enabled: bool, expected_updated_at: str | None = None) -> dict:
+    """Enable or disable one Composition item."""
+    return _to_json(client.set_composition_item_enabled(pid, item_id, enabled, expected_updated_at))
+
+
+@mcp.tool()
+def set_structured_block_enabled(pid: str, block_id: str, enabled: bool, expected_updated_at: str | None = None) -> dict:
+    """Toggle only Block.enabled; never changes text, bindings, or audio."""
+    return _to_json(client.set_structured_block_enabled(pid, block_id, enabled, expected_updated_at))
+
+
+@mcp.tool()
+def set_variant_block_order(pid: str, variant_id: str, block_ids: list[str], expected_updated_at: str | None = None) -> dict:
+    """Set an existing Variant block order; IDs must exist and be unique."""
+    return _to_json(client.set_variant_block_order(pid, variant_id, block_ids, expected_updated_at))
+
+
+@mcp.tool()
+def compile_composition(pid: str) -> dict:
+    """Compile a Composition read-only summary."""
+    return _to_json(client.compile_composition(pid))
+
+
+@mcp.tool()
+def preview_composition(pid: str) -> dict:
+    """Generate a long-form Composition preview through the backend API."""
+    return _to_json(client.preview_composition(pid))
+
+
+@mcp.tool()
+def export_composition_to_jianying(pid: str) -> dict:
+    """Export a Composition to a new JianYing draft; replacement is not supported."""
+    return _to_json(client.export_composition_to_jianying(pid))
 
 
 def run(transport: str = "stdio", port: int = 8765):

@@ -158,4 +158,22 @@ export const api = {
     request<{ status: string; bpm: number; duration: number; cue_points: any[]; analysis: any }>(
       `/projects/${projectId}/cue-points?mode=${mode}&image_count=${imageCount}`, { method: 'POST' }
     ),
+  getStructuredAudioStatus: (projectId: string) => request<any>(`/projects/${projectId}/structured/audio/status`),
+  generateFishAlignedAudio: (projectId: string, data: any) => request<any>(`/projects/${projectId}/structured/audio/fish-aligned`, { method: 'POST', body: JSON.stringify(data) }),
+  previewStructuredVariant: (projectId: string, variantId: string) => request<any>(`/projects/${projectId}/structured/variants/${variantId}/preview`, { method: 'POST' }),
+  exportStructuredVariantToJianYing: (projectId: string, variantId: string) => request<any>(`/projects/${projectId}/structured/variants/${variantId}/export/jianying-direct`, { method: 'POST', body: JSON.stringify({ policy: 'create_new' }) }),
+  getVisualPlanContext: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan/context`),
+  getVisualPlan: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan`),
+  proposeVisualPlan: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan/propose`, { method: 'POST', body: JSON.stringify({ mode: 'target_duration', targetDuration: 7 }) }),
+  saveVisualPlan: (projectId: string, plan: any) => request<any>(`/projects/${projectId}/visual-plan`, { method: 'PUT', body: JSON.stringify({ plan }) }),
+  exportVisualPack: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan/generation-pack`, { method: 'POST' }),
+  validateVisualPlan: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan/validate`, { method: 'POST', body: JSON.stringify({}) }),
+  getStructuredCatalog: () => request<any[]>('/projects/structured/catalog'),
+  parseStructuredMarkdown: (text: string) => request<any>('/structured/import/parse', { method: 'POST', body: JSON.stringify({ text, format: 'auto' }) }),
+  createStructuredProject: (name: string, episode: any, ratio = '9:16') => request<any>('/projects/structured', { method: 'POST', body: JSON.stringify({ name, episode, canvas: { ratio } }) }),
+  getStructuredEpisodeDraft: (projectId: string) => request<any>(`/projects/${projectId}/structured/draft`),
+  updateStructuredEpisodeDraft: (projectId: string, data: any) => request<any>(`/projects/${projectId}/structured/draft`, { method: 'PATCH', body: JSON.stringify(data) }),
+  compileComposition: (projectId: string) => request<any>(`/projects/${projectId}/composition/compile`, { method: 'POST' }),
+  previewComposition: (projectId: string) => request<any>(`/projects/${projectId}/composition/preview`, { method: 'POST' }),
+  exportCompositionToJianYing: (projectId: string) => request<any>(`/projects/${projectId}/composition/export/jianying-direct`, { method: 'POST', body: JSON.stringify({ policy: 'create_new' }) }),
 }
