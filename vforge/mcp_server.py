@@ -251,6 +251,19 @@ def import_visual_scene_folder(pid: str, folder: str) -> dict: return _to_json(c
 @mcp.tool()
 def compile_visual_scene_variant(pid: str, variant_id: str) -> dict: return _to_json(client.compile_visual_scene_variant(pid, variant_id))
 
+@mcp.tool()
+def get_pending_visual_scenes(batch_id: str) -> dict: return _to_json(client.factory_pending_visuals(batch_id))
+@mcp.tool()
+def import_agent_video_item_visuals(batch_id: str, item_id: str, folder: str) -> dict: return _to_json(client.factory_import_visuals(batch_id,item_id,{"folder":folder}))
+@mcp.tool()
+def validate_agent_video_item_visuals(batch_id: str, item_id: str) -> dict: return _to_json(client.factory_validate_visuals(batch_id,item_id))
+@mcp.tool()
+def resume_agent_video_item(batch_id: str, item_id: str) -> dict: return _to_json(client.factory_resume_item(batch_id,item_id))
+@mcp.tool()
+def resume_agent_video_batch(batch_id: str) -> dict: return _to_json(client.factory_resume_batch(batch_id))
+@mcp.tool()
+def continue_agent_video_factory(batch_id: str) -> dict: return _to_json(client.factory_continue(batch_id))
+
 
 @mcp.tool()
 def list_structured_projects() -> dict:

@@ -149,6 +149,12 @@ def cmd_visual_validate(args): _print(client.validate_visual_scene_plan(args.pid
 def cmd_visual_pack(args): _print(client.export_visual_generation_pack(args.pid,args.base))
 def cmd_visual_import(args): _print(client.import_visual_scene_folder(args.pid,args.folder,args.base))
 def cmd_visual_compile(args): _print(client.compile_visual_scene_variant(args.pid,args.variant_id,args.base))
+def cmd_factory_pending(args): _print(client.factory_pending_visuals(args.batch_id,args.base))
+def cmd_factory_import(args): _print(client.factory_import_visuals(args.batch_id,args.item_id,{"folder":args.folder},args.base))
+def cmd_factory_validate(args): _print(client.factory_validate_visuals(args.batch_id,args.item_id,args.base))
+def cmd_factory_resume_item(args): _print(client.factory_resume_item(args.batch_id,args.item_id,args.base))
+def cmd_factory_resume(args): _print(client.factory_resume_batch(args.batch_id,args.base))
+def cmd_factory_continue(args): _print(client.factory_continue(args.batch_id,args.base))
 
 
 def cmd_tts_get(args):
@@ -224,6 +230,11 @@ COMMAND_MAP = {
     "batch-start": cmd_batch_start, "batch-list": cmd_batch_list,
     "batch-status": cmd_batch_status, "batch-resume": cmd_batch_resume,
     "batch-manifest": cmd_batch_manifest,
+    "factory-pending-visuals": cmd_factory_pending, "factory-import-visuals": cmd_factory_import,
+    "factory-validate-visuals": cmd_factory_validate, "factory-resume-item": cmd_factory_resume_item,
+    "factory-resume": cmd_factory_resume, "factory-continue": cmd_factory_continue,
+    "factory-plan": cmd_batch_plan, "factory-start": cmd_batch_start, "factory-status": cmd_batch_status,
+    "factory-manifest": cmd_batch_manifest,
     "visual-context": cmd_visual_context, "visual-propose": cmd_visual_propose, "visual-set": cmd_visual_set,
     "visual-validate": cmd_visual_validate, "visual-pack": cmd_visual_pack, "visual-import": cmd_visual_import, "visual-compile": cmd_visual_compile,
     "tts_get": cmd_tts_get, "tts_set": cmd_tts_set,
@@ -302,6 +313,16 @@ def build_parser() -> argparse.ArgumentParser:
     add("visual-pack", "导出视觉生成包", pid={"type": str, "required": True})
     add("visual-import", "从文件夹导入 Scene 素材", pid={"type": str, "required": True}, folder={"type": str, "required": True})
     add("visual-compile", "编译视觉分镜 Variant", pid={"type": str, "required": True}, variant_id={"type": str, "required": True})
+    add("factory-pending-visuals", "读取待生成分镜", batch_id={"type": str, "required": True})
+    add("factory-import-visuals", "导入分镜素材", batch_id={"type": str, "required": True}, item_id={"type": str, "required": True}, folder={"type": str, "required": True})
+    add("factory-validate-visuals", "验证分镜素材", batch_id={"type": str, "required": True}, item_id={"type": str, "required": True})
+    add("factory-resume-item", "恢复单项产片", batch_id={"type": str, "required": True}, item_id={"type": str, "required": True})
+    add("factory-resume", "恢复批次", batch_id={"type": str, "required": True})
+    add("factory-continue", "查询并继续工厂", batch_id={"type": str, "required": True})
+    add("factory-plan", "验证工厂 Spec", spec={"type": str, "required": True})
+    sp = add("factory-start", "启动工厂", spec={"type": str, "required": True}); sp.add_argument("--wait", action="store_true")
+    add("factory-status", "读取工厂状态", batch_id={"type": str, "required": True})
+    add("factory-manifest", "读取工厂 Manifest", batch_id={"type": str, "required": True}, output={"type": str, "default": ""})
     add("tts_get", "获取 TTS 设置")
     add("tts_set", "更新 TTS 设置（--data 是 JSON）",
         data={"type": str, "required": True})

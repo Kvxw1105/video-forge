@@ -111,3 +111,19 @@ def resume_item(batch_id: str, item_id: str) -> dict:
         if isinstance(output,dict) and output.get("status")=="succeeded": output["inputHash"]=output_hash
     row.update({"status":"succeeded","phase":"done","finishedAt":batches._now()}); batch["status"]=batches._aggregate_batch_status(batch["items"]); batches._save(batch_id,batch)
     return {"status":"succeeded","reused":False}
+
+def resume_batch(batch_id: str) -> dict:
+    _,batch=batches._load(batch_id); resumed=[]; waiting=[]; failed=[]
+    for row in batch["items"]:
+        if row.get("status") in {"ready_to_resume","failed"}:
+            try: resume_item(batch_id,row["itemId"]); resumed.append(row["itemId"])
+            except batches.BatchError: failed.append(row["itemId"])
+        elif row.get("status")=="awaiting_visual_assets": waiting.append(row["itemId"])
+    latest=batches.get(batch_id)
+    return {"batchId":batch_id,"status":latest.get("status"),"resumedItems":resumed,"waitingItems":waiting,"failedItems":failed}
+
+def continue_factory(batch_id: str) -> dict:
+    batch=batches.get(batch_id); status=batch.get("status")
+    if status=="awaiting_visual_assets": return pending_visuals(batch_id)
+    if status=="ready_to_resume": return resume_batch(batch_id)
+    return {"batchId":batch_id,"status":status,"items":batch.get("items",[])}

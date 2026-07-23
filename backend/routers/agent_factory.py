@@ -18,3 +18,7 @@ def import_visuals(batch_id:str,item_id:str,data:dict): return _call(factory.imp
 def validate_visuals(batch_id:str,item_id:str): return _call(factory.validate_visuals,batch_id,item_id)
 @router.post("/batches/{batch_id}/items/{item_id}/resume")
 def resume_item(batch_id:str,item_id:str): return _call(factory.resume_item,batch_id,item_id)
+@router.post("/batches/{batch_id}/resume")
+def resume_batch(batch_id:str): return _call(factory.resume_batch,batch_id)
+@router.post("/batches/{batch_id}/continue")
+def continue_factory(batch_id:str): return _call(factory.continue_factory,batch_id)

@@ -216,6 +216,17 @@ def export_visual_generation_pack(pid: str, base: str = DEFAULT_BASE) -> dict: r
 def import_visual_scene_folder(pid: str, folder: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/projects/{pid}/visual-plan/import-folder", base=base,json_body={"folder":folder})
 def compile_visual_scene_variant(pid: str, variant_id: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/projects/{pid}/visual-plan/compile/{variant_id}", base=base,json_body={})
 
+def factory_pending_visuals(batch_id: str, base: str = DEFAULT_BASE) -> dict: return _request("GET", f"/api/agent-factory/batches/{batch_id}/pending-visuals", base=base)
+def factory_import_visuals(batch_id: str, item_id: str, data: dict, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/agent-factory/batches/{batch_id}/items/{item_id}/visuals/import",base=base,json_body=data)
+def factory_validate_visuals(batch_id: str, item_id: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/agent-factory/batches/{batch_id}/items/{item_id}/visuals/validate",base=base,json_body={})
+def factory_resume_item(batch_id: str, item_id: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/agent-factory/batches/{batch_id}/items/{item_id}/resume",base=base,json_body={})
+def factory_resume_batch(batch_id: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/agent-factory/batches/{batch_id}/resume",base=base,json_body={})
+def factory_continue(batch_id: str, base: str = DEFAULT_BASE) -> dict: return _request("POST", f"/api/agent-factory/batches/{batch_id}/continue",base=base,json_body={})
+def factory_plan(spec: dict, base: str = DEFAULT_BASE) -> dict: return plan_template_batch(spec,base)
+def factory_start(spec: dict, base: str = DEFAULT_BASE) -> dict: return start_template_batch(spec,base)
+def factory_status(batch_id: str, base: str = DEFAULT_BASE) -> dict: return get_template_batch(batch_id,base)
+def factory_manifest(batch_id: str, base: str = DEFAULT_BASE) -> dict: return get_template_batch_manifest(batch_id,base)
+
 
 # ── Settings ─────────────────────────────────────────────
 
