@@ -10,6 +10,7 @@ import json
 from services import template_batch_service as batches
 from routers import visual_scene
 from services.project_service import get_project
+from services.project_service import _project_dir, update_project
 from shared.visual_scene import visual_source_hash
 
 @dataclass(frozen=True)
@@ -82,6 +83,79 @@ def import_visuals(batch_id: str,item_id: str,data: dict) -> dict:
     batch,row=_item(batch_id,item_id)
     result=visual_scene.import_folder(row["projectId"],data)
     return {"imported":result["imported"],"coverage":validate_visuals(batch_id,item_id)}
+
+
+def item_visuals(batch_id: str, item_id: str) -> dict:
+    """Return the Visual Plan as a user-facing, timestamp-authoritative view."""
+    _, row = _item(batch_id, item_id)
+    project = get_project(row.get("projectId"))
+    if not project or not project.structuredContent:
+        raise batches.BatchError("project_invalid", "Structured project is invalid")
+    episode = project.structuredContent.episode
+    plan = episode.visualPlan
+    if not plan:
+        raise batches.BatchError("visual_plan_missing", "Visual plan is unavailable")
+    if plan.sourceHash != visual_source_hash(project.model_dump()):
+        raise batches.BatchError("visual_plan_stale", "Visual plan is stale")
+    subtitles = {item.id: item for item in project.subtitles}
+    bindings = {item.blockId: item for item in episode.bindings}
+    assets = {item.id: item for item in project.assets}
+    audio_path = str(episode.alignment.audioPath if episode.alignment else "")
+    audio_duration = next((float(item.duration or 0) for item in project.audio.voiceovers if item.id == (episode.alignment.voiceoverId if episode.alignment else "")), 0.0)
+    scenes = []
+    for index, scene in enumerate(plan.scenes, 1):
+        ids = list(scene.subtitleIds)
+        selected = [subtitles[value] for value in ids if value in subtitles]
+        start = float(selected[0].start) if selected else 0.0
+        end = float(selected[-1].end) if selected else start
+        asset = assets.get(scene.primaryAssetId or "")
+        binding = bindings.get(scene.blockId)
+        scenes.append({
+            "sceneId": scene.id, "sceneIndex": index, "blockId": scene.blockId,
+            "subtitleIds": ids, "start": start, "end": end, "duration": end - start,
+            "text": "".join(item.text for item in selected), "summary": scene.summary,
+            "prompt": scene.prompt, "negativePrompt": scene.negativePrompt,
+            "requestedMediaType": scene.requestedMediaType, "aspectRatio": project.canvas.ratio,
+            "expectedFilename": f"scene_{index:03d}.png",
+            "audioStart": float(binding.audioSlice.sourceStart) if binding and binding.audioSlice else start,
+            "audioEnd": float(binding.audioSlice.sourceEnd) if binding and binding.audioSlice else end,
+            "boundAsset": None if not asset else {"assetId": asset.id, "name": asset.name, "type": asset.type, "path": asset.path, "size": (_project_dir(project.id) / asset.path).stat().st_size if (_project_dir(project.id) / asset.path).is_file() else 0},
+            "coverageStatus": "bound" if asset else "missing",
+        })
+    return {"batchId": batch_id, "itemId": item_id, "projectId": project.id, "itemName": project.name, "status": row.get("status"), "visualPlanId": plan.planId, "sourceHash": plan.sourceHash, "audio": {"url": f"/api/projects/{project.id}/assets/stream?path={audio_path}" if audio_path else "", "duration": audio_duration}, "coverage": row.get("visualCoverage") or {"totalScenes": len(scenes), "boundScenes": sum(bool(item["boundAsset"]) for item in scenes), "missingScenes": [item["sceneId"] for item in scenes if not item["boundAsset"]], "complete": all(item["boundAsset"] for item in scenes)}, "scenes": scenes}
+
+
+def unbind_visual(batch_id: str, item_id: str, scene_id: str, delete_project_asset: bool = False) -> dict:
+    _, row = _item(batch_id, item_id)
+    project = get_project(row.get("projectId"))
+    if not project or not project.structuredContent:
+        raise batches.BatchError("project_invalid", "Structured project is invalid")
+    plan = project.structuredContent.episode.visualPlan
+    if not plan or plan.sourceHash != visual_source_hash(project.model_dump()):
+        raise batches.BatchError("visual_plan_stale", "Visual plan is stale")
+    target = next((scene for scene in plan.scenes if scene.id == scene_id), None)
+    if not target:
+        raise batches.BatchError("scene_not_found", f"Scene not found: {scene_id}")
+    asset_ids = set(target.visualAssetIds)
+    plan_data = plan.model_dump()
+    for scene in plan_data["scenes"]:
+        if scene["id"] == scene_id:
+            scene["visualAssetIds"] = []; scene["primaryAssetId"] = None
+    assets = list(project.assets)
+    warnings = []
+    if delete_project_asset and asset_ids:
+        used_elsewhere = {value for scene in plan.scenes if scene.id != scene_id for value in scene.visualAssetIds}
+        removable = asset_ids - used_elsewhere
+        if asset_ids - removable:
+            warnings.append("asset is still referenced by another scene; file was retained")
+        assets = [asset for asset in assets if asset.id not in removable]
+        for asset in project.assets:
+            if asset.id in removable:
+                path = _project_dir(project.id) / asset.path
+                if path.is_file(): path.unlink()
+    update_project(project.id, {"assets": [asset.model_dump() if hasattr(asset, "model_dump") else asset for asset in assets], "structuredContent": {**project.structuredContent.model_dump(), "episode": {**project.structuredContent.episode.model_dump(), "visualPlan": plan_data}}})
+    coverage = validate_visuals(batch_id, item_id)
+    return {"sceneId": scene_id, "coverage": coverage, "warnings": warnings}
 
 
 def _output_is_current(output: dict | None, expected_hash: str, *, path_key: str, directory: bool) -> bool:
