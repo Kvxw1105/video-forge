@@ -101,7 +101,7 @@ def import_folder(project_id: str, data: dict):
         candidates=[Path(manifest[scene.id])] if scene.id in manifest else list(folder.glob(f"{scene.id}*"))+list(folder.glob(f"scene_{index:03d}*"))
         chosen=next((path for path in candidates if path.is_file() and path.suffix.lower() in _MEDIA),None)
         if not chosen: continue
-        destination=target/f"{scene.id}{chosen.suffix.lower()}"; shutil.copy2(chosen,destination); asset_id=f"visual_{scene.id}"; assets=[asset for asset in assets if asset.id!=asset_id]; assets.append({"id":asset_id,"type":"video" if chosen.suffix.lower() in {'.mp4','.mov','.webm'} else "image","name":destination.name,"path":(Path('assets')/destination.name).as_posix(),"metadata":{}})
+        destination=target/f"{scene.id}{chosen.suffix.lower()}"; shutil.copy2(chosen,destination); asset_id=f"visual_{scene.id}"; assets=[asset for asset in assets if (asset.id if hasattr(asset,"id") else asset.get("id"))!=asset_id]; assets.append({"id":asset_id,"type":"video" if chosen.suffix.lower() in {'.mp4','.mov','.webm'} else "image","name":destination.name,"path":(Path('assets')/destination.name).as_posix(),"metadata":{}})
         by_scene[scene.id]["visualAssetIds"]=[asset_id]; by_scene[scene.id]["primaryAssetId"]=asset_id; imported.append(scene.id)
     new_plan={**plan.model_dump(),"scenes":[by_scene[scene.id] for scene in plan.scenes]}
     updated=update_project(project_id,{"assets":assets,"structuredContent":{**project.structuredContent.model_dump(),"episode":{**project.structuredContent.episode.model_dump(),"visualPlan":new_plan}}})

@@ -43,6 +43,12 @@ class BatchAssets(BaseModel):
     bgm: str | None = None
 
 
+class BatchVisualAssets(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    folder: str | None = None
+    manifest: dict[str, str] | None = None
+
+
 class TemplateBatchItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     itemId: str = Field(min_length=1, max_length=128)
@@ -54,6 +60,7 @@ class TemplateBatchItem(BaseModel):
     assets: BatchAssets = Field(default_factory=BatchAssets)
     overrides: dict = Field(default_factory=dict)
     outputs: BatchOutputs | None = None
+    visualAssets: BatchVisualAssets | None = None
 
     @field_validator("itemId")
     @classmethod
@@ -71,6 +78,7 @@ class TemplateBatchSpec(BaseModel):
     templateId: str | None = None
     defaults: BatchDefaults = Field(default_factory=BatchDefaults)
     items: list[TemplateBatchItem] = Field(min_length=1, max_length=500)
+    visualWorkflow: dict | None = None
 
     @field_validator("idempotencyKey")
     @classmethod

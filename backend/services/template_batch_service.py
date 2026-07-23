@@ -150,6 +150,9 @@ def _validate_item(spec: TemplateBatchSpec, item, index: int) -> list[str]:
         raise BatchError("template_not_found", f"Template not found: {template_id}")
     _validate_overrides(item.overrides)
     mode = spec.defaults.inputMode
+    workflow = spec.visualWorkflow or {}
+    if workflow.get("enabled") and workflow.get("mode") == "generation_pack" and mode != "structured_markdown":
+        raise BatchError("generation_pack_requires_structured_input", "generation_pack requires structured_markdown with timestamp-aligned subtitles")
     if mode == "plain_script" and not str(item.script or "").strip():
         raise BatchError("script_required", "plain_script requires script")
     if mode == "structured_markdown":
@@ -212,7 +215,7 @@ def start(spec_payload: dict, start_job) -> dict:
 
 def _new_manifest(batch_id: str, spec: TemplateBatchSpec, spec_hash: str) -> dict:
     now = _now()
-    return {"schemaVersion": 1, "batchId": batch_id, "name": spec.name, "idempotencyKey": spec.idempotencyKey, "specHash": spec_hash, "status": "queued", "progress": 0, "totalItems": len(spec.items), "succeededItems": 0, "failedItems": 0, "skippedItems": 0, "currentItemId": None, "createdAt": now, "updatedAt": now, "items": [{"itemId": item.itemId, "status": "queued", "phase": "queued", "projectId": None, "previewUrl": None, "jianyingDraftPath": None, "jianyingZipPath": None, "duration": None, "attempts": 0, "errorCode": None, "error": None, "startedAt": None, "finishedAt": None} for item in spec.items]}
+    return {"schemaVersion": 1, "batchId": batch_id, "name": spec.name, "idempotencyKey": spec.idempotencyKey, "specHash": spec_hash, "status": "queued", "progress": 0, "totalItems": len(spec.items), "succeededItems": 0, "failedItems": 0, "skippedItems": 0, "currentItemId": None, "createdAt": now, "updatedAt": now, "items": [{"itemId": item.itemId, "status": "queued", "phase": "queued", "projectId": None, "previewUrl": None, "jianyingDraftPath": None, "jianyingZipPath": None, "duration": None, "visualPlanId": None, "generationPackPath": None, "expectedScenes": [], "visualCoverage": None, "outputs": {"preview": None, "jianying": None}, "attempts": 0, "errorCode": None, "error": None, "startedAt": None, "finishedAt": None} for item in spec.items]}
 
 
 def _copy_assets(project_id: str, item) -> dict:
@@ -232,7 +235,7 @@ def _copy_assets(project_id: str, item) -> dict:
 
 def _create_structured(spec: TemplateBatchSpec, item, index: int, template_id: str) -> str:
     parsed = parse_structured_markdown(item.structuredMarkdown or "")
-    blocks = build_blocks(list(parsed.sections)); variants = build_default_structured_variants(blocks)
+    blocks = build_blocks(list(parsed.sections)); variants = build_default_structured_variants(blocks); variants.pop("warnings", None)
     template = template_service.get_template(template_id) or {}
     project_id = f"proj_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"; now = _now()
     base = Project(id=project_id, name=item.name, created_at=now, updated_at=now).model_dump()
@@ -271,15 +274,37 @@ def _process_item(batch_id: str, spec: TemplateBatchSpec, item, index: int, resu
         else:
             from routers.voiceover import generate
             generate(project_id, {"text": item.script or "", "engine": voice.engine, "speed": voice.speed})
-    if outputs.preview:
-        result["phase"] = "preview"; _event(batch_id, item.itemId, "preview", "started")
-        from routers.render import generate_preview
-        preview = generate_preview(project_id); result["previewUrl"] = preview.get("previewUrl"); result["duration"] = preview.get("duration")
-    if outputs.jianyingDirect:
-        result["phase"] = "jianying_direct"; _event(batch_id, item.itemId, "jianying_direct", "started")
-        from routers.export import export_jianying_direct
-        exported = export_jianying_direct(project_id, policy="create_new"); result["jianyingDraftPath"] = exported.get("finalPath") or exported.get("path")
+    from services import agent_factory_service
+    stage = agent_factory_service.prepare_item_visual_stage(batch_id, spec, item, result)
+    result.update(stage.patch)
+    if stage.outcome == "awaiting_visual_assets":
+        result.update({"status":"awaiting_visual_assets","phase":"awaiting_visual_assets","finishedAt":None})
+        _event(batch_id,item.itemId,"awaiting_visual_assets","paused")
+        return
+    _run_item_outputs(batch_id, item.itemId, project_id, outputs, result)
     result.update({"status": "succeeded", "phase": "done", "finishedAt": _now()}); _event(batch_id, item.itemId, "done", "ok")
+
+
+def _run_item_outputs(batch_id: str, item_id: str, project_id: str, outputs: BatchOutputs, result: dict) -> None:
+    if outputs.preview and not result.get("previewUrl"):
+        result["phase"]="rendering_preview"; _event(batch_id,item_id,"rendering_preview","started")
+        from routers.render import generate_preview
+        preview=generate_preview(project_id); result["previewUrl"]=preview.get("previewUrl"); result["duration"]=preview.get("duration")
+    if outputs.jianyingDirect and not result.get("jianyingDraftPath"):
+        result["phase"]="exporting_jianying"; _event(batch_id,item_id,"exporting_jianying","started")
+        from routers.export import export_jianying_direct
+        exported=export_jianying_direct(project_id,policy="create_new"); result["jianyingDraftPath"]=exported.get("finalPath") or exported.get("path")
+
+
+def _aggregate_batch_status(items: list[dict]) -> str:
+    states=[item.get("status") for item in items]
+    if "running" in states: return "running"
+    if "awaiting_visual_assets" in states: return "awaiting_visual_assets"
+    if "ready_to_resume" in states: return "ready_to_resume"
+    if states and all(state=="succeeded" for state in states): return "succeeded"
+    if "failed" in states and "succeeded" in states: return "partial"
+    if states and all(state=="failed" for state in states): return "failed"
+    return "queued"
 
 
 def execute(batch_id: str, update=lambda *_: None) -> dict:
@@ -297,10 +322,10 @@ def execute(batch_id: str, update=lambda *_: None) -> dict:
             result.update({"status": "failed", "phase": "failed", "errorCode": code, "error": str(exc)[:500], "finishedAt": _now()}); _event(batch_id, item.itemId, "failed", "failed", str(exc))
             if not spec.defaults.continueOnError: break
         finally:
-            total = len(spec.items); done = sum(1 for row in batch["items"] if row["status"] in {"succeeded", "failed"})
+            total = len(spec.items); done = sum(1 for row in batch["items"] if row["status"] in {"succeeded", "failed", "awaiting_visual_assets", "ready_to_resume"})
             batch["succeededItems"] = sum(1 for row in batch["items"] if row["status"] == "succeeded"); batch["failedItems"] = sum(1 for row in batch["items"] if row["status"] == "failed"); batch["progress"] = int(done * 100 / total); update(batch["progress"], "batch", item.itemId); _save(batch_id, batch)
     batch["currentItemId"] = None
-    batch["status"] = "succeeded" if batch["failedItems"] == 0 else "partial" if batch["succeededItems"] else "failed"
+    batch["status"] = _aggregate_batch_status(batch["items"])
     _save(batch_id, batch); return batch
 
 
