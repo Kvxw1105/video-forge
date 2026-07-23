@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Literal
+from pathlib import Path
+import hashlib
+import json
 
 from services import template_batch_service as batches
 from routers import visual_scene
@@ -13,6 +16,11 @@ from shared.visual_scene import visual_source_hash
 class FactoryStageResult:
     outcome: Literal["continue", "awaiting_visual_assets"]
     patch: dict = field(default_factory=dict)
+
+def factory_output_hash(project, variant_id: str, visual_plan, outputs) -> str:
+    episode=project.structuredContent.episode
+    payload={"variantId":variant_id,"canvas":project.canvas.model_dump(),"alignment":episode.alignment.generationId if episode.alignment else None,"plan":visual_plan.sourceHash,"scenes":[{"id":s.id,"assets":s.visualAssetIds,"primary":s.primaryAssetId} for s in visual_plan.scenes],"outputs":outputs.model_dump() if hasattr(outputs,"model_dump") else outputs,"jianyingPolicy":"create_new"}
+    return hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
 
 def prepare_item_visual_stage(batch_id, spec, item, item_result: dict) -> FactoryStageResult:
     workflow = spec.visualWorkflow or {}
@@ -73,7 +81,16 @@ def import_visuals(batch_id: str,item_id: str,data: dict) -> dict:
 
 def resume_item(batch_id: str, item_id: str) -> dict:
     batch,row=_item(batch_id,item_id)
-    if row.get("status")=="succeeded": return {"status":"succeeded","reused":True}
+    if row.get("status")=="succeeded":
+        outputs=row.get("outputs") or {}
+        preview=outputs.get("preview") or {}; jianying=outputs.get("jianying") or {}
+        preview_path=str(preview.get("path") or "")
+        draft_path=str(jianying.get("draftPath") or "")
+        preview_ok=preview.get("status")=="succeeded" and (not preview_path or Path(preview_path).exists())
+        draft_ok=jianying.get("status")=="succeeded" and (not draft_path or Path(draft_path).is_dir())
+        if preview_ok and draft_ok:
+            return {"status":"succeeded","reused":True}
+        row["status"]="ready_to_resume"
     if not (row.get("visualCoverage") or {}).get("complete"): raise batches.BatchError("visual_coverage_incomplete","Visual coverage is incomplete")
     if row.get("status") not in {"ready_to_resume","failed"}: raise batches.BatchError("item_not_ready_to_resume","Item is not ready to resume")
     project=get_project(row.get("projectId"))
@@ -82,7 +99,15 @@ def resume_item(batch_id: str, item_id: str) -> dict:
     if not plan or plan.planId != row.get("visualPlanId") or plan.sourceHash != visual_source_hash(project.model_dump()): raise batches.BatchError("visual_plan_stale","Visual plan is stale")
     spec_payload,_=batches._load(batch_id); spec=batches.TemplateBatchSpec.model_validate(spec_payload)
     item=next(value for value in spec.items if value.itemId==item_id)
+    output_hash=factory_output_hash(project,project.structuredContent.episode.activeVariantId or "publish",plan,item.outputs or spec.defaults.outputs)
     row.update({"status":"running","phase":"compiling_visuals"}); batches._save(batch_id,batch)
-    batches._run_item_outputs(batch_id,item_id,row["projectId"],item.outputs or spec.defaults.outputs,row)
+    try:
+        batches._run_item_outputs(batch_id,item_id,row["projectId"],item.outputs or spec.defaults.outputs,row)
+    except Exception as exc:
+        row.update({"status":"failed","phase":row.get("phase") or "rendering_preview","errorCode":"output_failed","error":str(exc)[:500]})
+        batch["status"]=batches._aggregate_batch_status(batch["items"]); batches._save(batch_id,batch)
+        raise
+    for output in (row.get("outputs") or {}).values():
+        if isinstance(output,dict) and output.get("status")=="succeeded": output["inputHash"]=output_hash
     row.update({"status":"succeeded","phase":"done","finishedAt":batches._now()}); batch["status"]=batches._aggregate_batch_status(batch["items"]); batches._save(batch_id,batch)
     return {"status":"succeeded","reused":False}

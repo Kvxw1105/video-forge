@@ -289,11 +289,11 @@ def _run_item_outputs(batch_id: str, item_id: str, project_id: str, outputs: Bat
     if outputs.preview and not result.get("previewUrl"):
         result["phase"]="rendering_preview"; _event(batch_id,item_id,"rendering_preview","started")
         from routers.render import generate_preview
-        preview=generate_preview(project_id); result["previewUrl"]=preview.get("previewUrl"); result["duration"]=preview.get("duration")
+        preview=generate_preview(project_id); result["previewUrl"]=preview.get("previewUrl"); result["duration"]=preview.get("duration"); result.setdefault("outputs",{})["preview"]={"status":"succeeded","url":result["previewUrl"],"path":str(preview.get("previewPath") or ""),"completedAt":_now()}
     if outputs.jianyingDirect and not result.get("jianyingDraftPath"):
         result["phase"]="exporting_jianying"; _event(batch_id,item_id,"exporting_jianying","started")
         from routers.export import export_jianying_direct
-        exported=export_jianying_direct(project_id,policy="create_new"); result["jianyingDraftPath"]=exported.get("finalPath") or exported.get("path")
+        exported=export_jianying_direct(project_id,policy="create_new"); result["jianyingDraftPath"]=exported.get("finalPath") or exported.get("path"); result.setdefault("outputs",{})["jianying"]={"status":"succeeded","draftPath":result["jianyingDraftPath"],"completedAt":_now()}
 
 
 def _aggregate_batch_status(items: list[dict]) -> str:

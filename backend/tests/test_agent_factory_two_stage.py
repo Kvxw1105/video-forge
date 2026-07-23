@@ -53,7 +53,7 @@ def test_structured_generation_pack_pauses_after_real_alignment(monkeypatch, tmp
     assert complete.status_code==200 and complete.json()["coverage"]["complete"] is True
     calls={"preview":0,"jianying":0}
     def outputs(*args, **kwargs):
-        result=kwargs.get("result") or args[-1]; calls["preview"]+=1; calls["jianying"]+=1; result.update({"previewUrl":"/preview.mp4","jianyingDraftPath":"draft"})
+        result=kwargs.get("result") or args[-1]; calls["preview"]+=1; calls["jianying"]+=1; result.update({"previewUrl":"/preview.mp4","jianyingDraftPath":"draft","outputs":{"preview":{"status":"succeeded"},"jianying":{"status":"succeeded"}}})
     monkeypatch.setattr(batches,"_run_item_outputs",outputs)
     resumed=client.post(f"/api/agent-factory/batches/{started['batchId']}/items/one/resume",json={})
     assert resumed.status_code==200 and resumed.json()["status"]=="succeeded", resumed.json()
