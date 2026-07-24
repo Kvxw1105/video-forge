@@ -1,3 +1,5 @@
+import type { MediaCapability, MediaExecutionResponse } from './mediaProcessing'
+
 const BASE = '/api'
 export type JobStatus<T = any> = {
   jobId: string
@@ -41,6 +43,18 @@ export const api = {
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || '上传失败') }
     return r.json()
   },
+  getMediaProviders: () => request<any>('/media/providers'),
+  executeMedia: (projectId: string, data: {
+    capability: MediaCapability
+    sourceAssetId: string
+    startTime?: number
+    endTime?: number
+    outputName?: string
+    idempotencyToken?: string
+  }) => request<MediaExecutionResponse>(`/projects/${projectId}/media/execute`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
   generateVoiceover: (projectId: string, text: string, speed = 0, pitch = 0, engine = 'edge') =>
     request<any>(`/projects/${projectId}/voiceover`, { method: 'POST', body: JSON.stringify({ text, speed, pitch, engine }) }),
   exportJianying: async (projectId: string, cueMode = 'uniform') => {

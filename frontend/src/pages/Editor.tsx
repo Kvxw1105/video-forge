@@ -45,7 +45,7 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 export default function Editor() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { project, loading, error, reload, update: rawUpdate } = useProject(id!)
+  const { project, loading, error, reload, refresh, update: rawUpdate } = useProject(id!)
 
   // --- Undo/Redo refs (must be before update callback) ---
   const historyRef = useRef<any[]>([])
@@ -991,7 +991,8 @@ export default function Editor() {
                   onShuffleModeChange={handleShuffleModeChange}
                   onPerImageDurationChange={handlePerImageDurationChange}
                   onGenerateCarousel={visualMode === 'carousel' ? handleGenerateCarousel : undefined}
-                  onInsertOpeningBlack={handleInsertOpeningBlack} />
+                  onInsertOpeningBlack={handleInsertOpeningBlack}
+                  onProjectRefresh={refresh} />
               )}
               {activeTab === 'script' && (
                 <div className="space-y-4">

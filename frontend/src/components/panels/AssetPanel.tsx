@@ -2,13 +2,15 @@ import { useCallback, useState, useEffect } from 'react'
 import { Image, Video, Trash, UploadSimple, FolderOpen, Shuffle, ListNumbers, X, ArrowLeft } from '@phosphor-icons/react'
 import { api } from '../../lib/api'
 import { useProgress, LoadingProgress } from '../../hooks/useProgress'
+import MediaAssetInspector from '../MediaAssetInspector'
 
 const ACCEPT_TYPES = 'image/*,video/*'
 
 export default function AssetPanel({
   projectId, assetPath, visualMode = 'single', imageAssets = [], shuffleMode = true, perImageDuration = 1.0,
   voiceoverGenerated = false,
-  onAssetChange, onBatchAssetsChange, onShuffleModeChange, onPerImageDurationChange, onGenerateCarousel, onInsertOpeningBlack
+  onAssetChange, onBatchAssetsChange, onShuffleModeChange, onPerImageDurationChange, onGenerateCarousel, onInsertOpeningBlack,
+  onProjectRefresh
 }: {
   projectId: string
   assetPath: string | null
@@ -23,6 +25,7 @@ export default function AssetPanel({
   onPerImageDurationChange?: (v: number) => void
   onGenerateCarousel?: () => Promise<boolean> | boolean
   onInsertOpeningBlack?: () => Promise<boolean> | boolean
+  onProjectRefresh?: () => Promise<void>
 }) {
   const assetProgress = useProgress()
   const acceptedTypes = visualMode === 'single' ? 'image/*' : ACCEPT_TYPES
@@ -217,6 +220,13 @@ export default function AssetPanel({
   // Drag reorder state
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [overIdx, setOverIdx] = useState<number | null>(null)
+  const [inspectedAssetId, setInspectedAssetId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (inspectedAssetId && !imageAssets.some((asset: any) => (asset.id || asset.path) === inspectedAssetId)) {
+      setInspectedAssetId(null)
+    }
+  }, [imageAssets, inspectedAssetId])
 
   const handleDragStart = useCallback((i: number) => setDragIdx(i), [])
   const handleDragOver = useCallback((e: React.DragEvent, i: number) => { e.preventDefault(); setOverIdx(i) }, [])
@@ -232,8 +242,8 @@ export default function AssetPanel({
     setOverIdx(null)
   }, [dragIdx, imageAssets, onBatchAssetsChange])
 
-  // If batch assets exist, show gallery
-  if (visualMode === 'carousel' && imageAssets.length > 1) {
+  // Carousel projects keep their material grid visible even with one source asset.
+  if (visualMode === 'carousel' && imageAssets.length > 0) {
     const imgCount = imageAssets.filter(a => !isVideo(a)).length
     const vidCount = imageAssets.filter(a => isVideo(a)).length
     const groupedAssets = imageAssets.reduce((acc: Record<string, any[]>, a: any) => {
@@ -342,11 +352,23 @@ export default function AssetPanel({
               onDragOver={(e) => handleDragOver(e, i)}
               onDragEnd={handleDragEnd}
               onDrop={(e) => handleReorderDrop(e, i)}
-              className={`aspect-[3/2] rounded-md overflow-hidden relative group/item cursor-grab active:cursor-grabbing transition-all ${
+              className={`aspect-[3/2] rounded-md overflow-hidden relative group/item cursor-grab active:cursor-grabbing transition-all focus-visible:outline-none ${
                 dragIdx === i ? 'opacity-40 scale-95' : ''
-              } ${overIdx === i && dragIdx !== null && dragIdx !== i ? 'ring-2 ring-[var(--accent)] ring-offset-1' : ''}`}
+              } ${overIdx === i && dragIdx !== null && dragIdx !== i ? 'ring-2 ring-[var(--accent)] ring-offset-1' : ''} ${
+                inspectedAssetId === (a.id || a.path) ? 'ring-2 ring-[var(--accent)] ring-offset-1' : ''
+              }`}
               style={{ background: 'var(--bg-elevated)' }}
             >
+              {isVideo(a) && (
+                <button
+                  type="button"
+                  draggable={false}
+                  aria-label={`检查视频素材 ${a.name}`}
+                  title="查看素材信息和处理操作"
+                  onClick={() => setInspectedAssetId((current) => current === (a.id || a.path) ? null : (a.id || a.path))}
+                  className="absolute inset-0 z-10 focus-visible:outline-none"
+                />
+              )}
               {isVideo(a) ? (
                 <div className="w-full h-full flex items-center justify-center" style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)' }}>
                   <Video size={24} weight="fill" className="opacity-50" />
@@ -361,11 +383,12 @@ export default function AssetPanel({
               )}
               {/* Delete button per item */}
               <button
-                onClick={() => {
+                onClick={(event) => {
+                  event.stopPropagation()
                   const next = imageAssets.filter((_: any, j: number) => j !== i)
                   onBatchAssetsChange?.(next)
                 }}
-                className="absolute top-1 right-1 p-0.5 rounded opacity-0 group-hover/item:opacity-100 transition-opacity shadow-sm"
+                className="absolute z-20 top-1 right-1 p-0.5 rounded opacity-0 group-hover/item:opacity-100 focus:opacity-100 transition-opacity shadow-sm"
                 style={{ background: 'var(--danger)', color: 'var(--text-inverse)' }}
               >
                 <Trash size={10} weight="bold" />
@@ -384,6 +407,17 @@ export default function AssetPanel({
             </div>
           ))}
         </div>
+
+        {(() => {
+          const inspectedAsset = imageAssets.find((asset: any) => (asset.id || asset.path) === inspectedAssetId && isVideo(asset))
+          return inspectedAsset ? (
+            <MediaAssetInspector
+              projectId={projectId}
+              asset={inspectedAsset}
+              onProjectRefresh={onProjectRefresh || (async () => {})}
+            />
+          ) : null
+        })()}
 
         {/* 生成轮播按钮 */}
         {onGenerateCarousel && imageAssets.length >= 2 && (

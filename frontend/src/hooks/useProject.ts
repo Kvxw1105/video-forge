@@ -35,5 +35,11 @@ export function useProject(id: string) {
     }
   }, [id])
 
-  return { project, loading, error, reload: load, update }
+  const refresh = useCallback(async () => {
+    const latest = await api.getProject(id)
+    setProject(latest)
+    return latest
+  }, [id])
+
+  return { project, loading, error, reload: load, refresh, update }
 }
