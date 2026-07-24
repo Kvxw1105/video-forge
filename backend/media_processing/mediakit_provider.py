@@ -26,10 +26,18 @@ class MediaKitError(RuntimeError):
 class MediaKitProvider:
     provider_id = "mediakit"
 
-    def __init__(self, executable: str | list[str] | None = None, *, ffprobe: str = "ffprobe"):
+    def __init__(
+        self,
+        executable: str | list[str] | None = None,
+        *,
+        ffprobe: str = "ffprobe",
+        ffmpeg_dir: str | Path | None = None,
+    ):
         configured = executable or os.environ.get("VIDEOFORGE_MEDIAKIT_CLI") or shutil.which("mediakit-cli")
         self.command = [configured] if isinstance(configured, str) else list(configured or [])
-        self.ffprobe = ffprobe
+        configured_ffmpeg_dir = ffmpeg_dir or os.environ.get("VIDEOFORGE_MEDIAKIT_FFMPEG_DIR")
+        self.ffmpeg_dir = Path(configured_ffmpeg_dir).resolve() if configured_ffmpeg_dir else None
+        self.ffprobe = str(self.ffmpeg_dir / "ffprobe.exe") if self.ffmpeg_dir else ffprobe
 
     def discover(self) -> dict[str, Any]:
         found = bool(self.command and Path(self.command[0]).exists() or (self.command and shutil.which(self.command[0])))
@@ -50,10 +58,12 @@ class MediaKitProvider:
         args = [*self.command, "--local", *capability.providerCommand, "--video-url", str(source)]
         if request.capability == "video.trim":
             args += ["--start-time", str(request.startTime), "--end-time", str(request.endTime)]
+        if request.capability == "audio.extract":
+            args += ["--format", "mp3"]
         if output is not None:
             output.parent.mkdir(parents=True, exist_ok=True)
             args += ["--output-path", str(output)]
-        completed = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180, check=False)
+        completed = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180, check=False, env=self._environment())
         payload = self._json_output(completed.stdout)
         if completed.returncode != 0:
             raise MediaKitError("MediaKit CLI execution failed", details={"returncode": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:], "result": payload}, retryable=False)
@@ -64,14 +74,20 @@ class MediaKitProvider:
     def verify_media(self, path: Path) -> dict[str, Any]:
         if not path.exists() or path.stat().st_size == 0:
             raise MediaKitError("MediaKit reported an output that does not exist", details={"outputPath": str(path)})
-        result = subprocess.run([self.ffprobe, "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False)
+        result = subprocess.run([self.ffprobe, "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False, env=self._environment())
         if result.returncode:
             raise MediaKitError("ffprobe rejected MediaKit output", details={"outputPath": str(path), "stderr": result.stderr[-4000:]})
         return json.loads(result.stdout)
 
     def _schema(self, command: list[str]) -> dict[str, Any]:
-        result = subprocess.run([*self.command, "--local", *command, "--schema"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False)
+        result = subprocess.run([*self.command, "--local", *command, "--schema"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False, env=self._environment())
         return self._json_output(result.stdout) if result.returncode == 0 else {}
+
+    def _environment(self) -> dict[str, str]:
+        environment = os.environ.copy()
+        if self.ffmpeg_dir:
+            environment["PATH"] = str(self.ffmpeg_dir) + os.pathsep + environment.get("PATH", "")
+        return environment
 
     @staticmethod
     def _json_output(stdout: str) -> dict[str, Any]:

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -31,12 +32,22 @@ print(json.dumps({'output_path': output, 'status': 'succeeded'}))
 def test_mediakit_sidecar_executes_real_media_and_registers_derivatives(monkeypatch, tmp_path):
     monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(service, "PROJECTS_DIR", tmp_path)
-    fixture = tmp_path / "mediakit fixture.py"
-    fixture.write_text(FIXTURE, encoding="utf-8")
-    provider = MediaKitProvider([sys.executable, str(fixture)])
+    official_cli = os.environ.get("VIDEOFORGE_MEDIAKIT_CLI")
+    official_ffmpeg = os.environ.get("VIDEOFORGE_MEDIAKIT_FFMPEG_DIR")
+    if official_cli and official_ffmpeg:
+        provider = MediaKitProvider(official_cli, ffmpeg_dir=official_ffmpeg)
+    else:
+        fixture = tmp_path / "mediakit fixture.py"
+        fixture.write_text(FIXTURE, encoding="utf-8")
+        provider = MediaKitProvider([sys.executable, str(fixture)])
     discovered = provider.discover()
     assert discovered["installed"] is True
-    assert discovered["capabilities"][0]["schema"]["mode"] == "local"
+    schema = discovered["capabilities"][0]["schema"]
+    if official_cli and official_ffmpeg:
+        assert schema["name"] == "probe_video_metadata"
+        assert schema["input_schema"]["required"] == ["video_url"]
+    else:
+        assert schema["mode"] == "local"
 
     project = project_service.create_project("MediaKit integration")
     project_dir = tmp_path / project.id
