@@ -18,7 +18,7 @@ from visual_assets.contracts import (
     VisualAssetSourceItem,
     VisualSemantic,
 )
-from visual_assets.hashing import hash_payload
+from visual_assets.hashing import file_sha256, hash_payload
 from visual_assets.rasterizer import PillowSvgRasterizer
 from visual_assets.service import render_visual_asset_project
 
@@ -135,9 +135,18 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
             if user_assets and not body.forceReplaceUserAsset:
                 conflicts.append({"sceneId": item.segmentId, "code": "user_asset_conflict"})
                 continue
-            if provider_assets and not body.replaceManualEdits and not any((asset.get("metadata") or {}).get("inputHash") == item.inputHash for asset in provider_assets):
-                conflicts.append({"sceneId": item.segmentId, "code": "manual_override_protected"})
-                continue
+            if provider_assets and not body.replaceManualEdits:
+                manually_changed = False
+                for asset in provider_assets:
+                    metadata = asset.get("metadata") or {}
+                    asset_path = _project_dir(project_id) / str(asset.get("path") or "")
+                    expected_hash = metadata.get("pngSha256")
+                    if metadata.get("manualOverride") or not asset_path.exists() or (expected_hash and file_sha256(asset_path) != expected_hash):
+                        manually_changed = True
+                        break
+                if manually_changed:
+                    conflicts.append({"sceneId": item.segmentId, "code": "manual_override_protected"})
+                    continue
             asset_id = f"visual_stickman_{item.segmentId}"
             filename = Path(item.pngPath).name
             source_png = output_dir / item.pngPath

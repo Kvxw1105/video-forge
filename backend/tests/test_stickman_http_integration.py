@@ -62,3 +62,38 @@ def test_http_regenerate_one_scene_does_not_unbind_other_scene(monkeypatch, tmp_
     assert regenerated.status_code == 200, regenerated.text
     after = client.get(f"/api/projects/{project_id}").json()
     assert after["structuredContent"]["episode"]["visualPlan"]["scenes"][1]["primaryAssetId"] == original
+
+
+def test_changed_scene_input_regenerates_provider_asset_without_manual_conflict(monkeypatch, tmp_path):
+    client, project_id = _project_with_visual_plan(monkeypatch, tmp_path)
+    assert client.post(f"/api/projects/{project_id}/visual-assets/stickman/render", json={"sourceMode": "visual_plan", "exportPng": True, "bindToProject": True}).status_code == 200
+    project = client.get(f"/api/projects/{project_id}").json()
+    scene = project["structuredContent"]["episode"]["visualPlan"]["scenes"][0]
+    old_hash = project["assets"][0]["metadata"]["inputHash"]
+    scene["metadata"]["semantic"] = {"topic": "pressure", "actors": 1}
+    assert client.put(f"/api/projects/{project_id}", json={"structuredContent": project["structuredContent"]}).status_code == 200
+    result = client.post(f"/api/projects/{project_id}/visual-assets/stickman/scenes/{scene['id']}/regenerate", json={"exportPng": True})
+    assert result.status_code == 200, result.text
+    refreshed = client.get(f"/api/projects/{project_id}").json()
+    assert refreshed["assets"][0]["metadata"]["inputHash"] != old_hash
+
+
+def test_manual_provider_edit_and_user_asset_are_protected(monkeypatch, tmp_path):
+    client, project_id = _project_with_visual_plan(monkeypatch, tmp_path)
+    assert client.post(f"/api/projects/{project_id}/visual-assets/stickman/render", json={"sourceMode": "visual_plan", "exportPng": True, "bindToProject": True}).status_code == 200
+    project = client.get(f"/api/projects/{project_id}").json()
+    asset = project["assets"][0]
+    (tmp_path / project_id / asset["path"]).write_bytes(b"manual")
+    scene_id = project["structuredContent"]["episode"]["visualPlan"]["scenes"][0]["id"]
+    protected = client.post(f"/api/projects/{project_id}/visual-assets/stickman/scenes/{scene_id}/regenerate", json={"exportPng": True})
+    assert protected.status_code == 200
+    assert protected.json()["conflicts"][0]["code"] == "manual_override_protected"
+    project = client.get(f"/api/projects/{project_id}").json()
+    project["assets"].append({"id": "user_asset", "type": "image", "name": "user.png", "path": "assets/user.png", "metadata": {}})
+    project["structuredContent"]["episode"]["visualPlan"]["scenes"][1]["visualAssetIds"] = ["user_asset"]
+    project["structuredContent"]["episode"]["visualPlan"]["scenes"][1]["primaryAssetId"] = "user_asset"
+    (tmp_path / project_id / "assets" / "user.png").write_bytes(b"user")
+    assert client.put(f"/api/projects/{project_id}", json={"assets": project["assets"], "structuredContent": project["structuredContent"]}).status_code == 200
+    conflict = client.post(f"/api/projects/{project_id}/visual-assets/stickman/scenes/{project['structuredContent']['episode']['visualPlan']['scenes'][1]['id']}/regenerate", json={"exportPng": True})
+    assert conflict.status_code == 200
+    assert conflict.json()["conflicts"][0]["code"] == "user_asset_conflict"
