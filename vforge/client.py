@@ -161,6 +161,14 @@ def get_stickman_generation_run(pid: str, run_id: str, base: str = DEFAULT_BASE)
     return _request("GET", f"/api/projects/{pid}/visual-assets/stickman/runs/{run_id}", base=base)
 
 
+def discover_mediakit(base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", "/api/media/providers/mediakit", base=base)
+
+
+def execute_media(pid: str, data: dict, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", f"/api/projects/{pid}/media/execute", base=base, json_body=data)
+
+
 # ── Voiceover ────────────────────────────────────────────
 
 def generate_voiceover(pid: str, text: str, *, engine: str = "edge",
