@@ -114,12 +114,13 @@ class StickmanTheme(StrictModel):
 
 
 class RenderConfig(StrictModel):
-    provider: Literal["stickman_svg"] = "stickman_svg"
+    provider: Literal["stickman_svg", "code_visual_svg"] = "stickman_svg"
     providerVersion: str = "0.1.0"
     seed: int = 0
     canvas: RenderCanvas = Field(default_factory=RenderCanvas)
     theme: StickmanTheme = Field(default_factory=StickmanTheme)
     rendererVersion: str = "0.1.0"
+    providerOptions: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExportOptions(StrictModel):

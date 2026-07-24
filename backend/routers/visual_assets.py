@@ -13,16 +13,18 @@ from visual_assets.contracts import (
     ExportOptions,
     GenerationBehavior,
     RoutingOptions,
+    RenderConfig,
     VisualAssetRenderRequest,
     VisualAssetSource,
     VisualAssetSourceItem,
     VisualSemantic,
 )
 from visual_assets.hashing import file_sha256, hash_payload
-from visual_assets.rasterizer import PillowSvgRasterizer
+from visual_assets.rasterizer import PillowSvgRasterizer, ResvgSvgRasterizer
 from visual_assets.service import render_visual_asset_project
 
 router = APIRouter(prefix="/api/projects/{project_id}/visual-assets/stickman", tags=["visual-assets"])
+code_visual_router = APIRouter(prefix="/api/projects/{project_id}/visual-assets/code-visual", tags=["visual-assets"])
 
 
 class StickmanRenderBody(BaseModel):
@@ -37,6 +39,12 @@ class StickmanRenderBody(BaseModel):
     replaceManualEdits: bool = False
     forceReplaceUserAsset: bool = False
     routing: RoutingOptions = Field(default_factory=lambda: RoutingOptions(lowConfidencePolicy="fallback"))
+
+
+class CodeVisualRenderBody(StickmanRenderBody):
+    rendererId: Literal["auto", "white_sketch", "silhouette", "pixel_rules", "mechanism_diagram"] = "auto"
+    themeMode: Literal["dark", "light"] | None = None
+    ipPack: Literal["neutral", "xuanqi", "huicewolf", "ayin"] = "neutral"
 
 
 def _project_dir(project_id: str) -> Path:
@@ -95,7 +103,7 @@ def _subtitle_items(project: dict) -> list[VisualAssetSourceItem]:
     return items
 
 
-def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None = None) -> dict:
+def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None = None, provider_id: str = "stickman_svg") -> dict:
     project_model = get_project(project_id)
     if project_model is None:
         raise HTTPException(404, "project_not_found")
@@ -113,12 +121,13 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
         source=source,
         routing=body.routing,
         exports=ExportOptions(svg=body.exportSvg, png=body.exportPng, manifest=True, contactSheet=body.generateContactSheet, generationReport=True),
+        renderer=RenderConfig(provider=provider_id, providerVersion="0.5.0" if provider_id == "code_visual_svg" else "0.1.0", providerOptions=({"rendererId": body.rendererId, "themeMode": body.themeMode, "ipPack": body.ipPack} if provider_id == "code_visual_svg" else {})),
         behavior=GenerationBehavior(existingOutputPolicy="skip_unchanged", protectManualEdits=True, replaceManualEdits=body.replaceManualEdits, segmentId=single_scene_id),
     )
     run_hash = hash_payload({"projectId": request.projectId, "source": request.source.model_dump(mode="python"), "renderer": request.renderer.model_dump(mode="python"), "exports": request.exports.model_dump(mode="python")})
     run_id = "stickman_run_" + run_hash[:12]
     output_dir = _project_dir(project_id) / "visual-assets" / "stickman" / run_id
-    result = render_visual_asset_project(request, output_dir, PillowSvgRasterizer())
+    result = render_visual_asset_project(request, output_dir, ResvgSvgRasterizer() if provider_id == "code_visual_svg" else PillowSvgRasterizer())
     bindings, conflicts = [], []
     if bind:
         assets = list(project.get("assets") or [])
@@ -147,7 +156,7 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
                 if manually_changed:
                     conflicts.append({"sceneId": item.segmentId, "code": "manual_override_protected"})
                     continue
-            asset_id = f"visual_stickman_{item.segmentId}"
+            asset_id = f"visual_{provider_id.replace('_svg', '')}_{item.segmentId}"
             filename = Path(item.pngPath).name
             source_png = output_dir / item.pngPath
             target_png = asset_dir / filename
@@ -160,7 +169,7 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
                 "path": f"assets/{filename}",
                 "metadata": {
                     "generatedBy": "visual_asset_provider",
-                    "provider": "stickman_svg",
+                    "provider": provider_id,
                     "providerVersion": result.providerVersion,
                     "sceneId": item.segmentId,
                     "templateId": item.templateId,
@@ -203,6 +212,16 @@ def render_stickman_assets(project_id: str, body: StickmanRenderBody):
 @router.post("/scenes/{scene_id}/regenerate")
 def regenerate_stickman_scene(project_id: str, scene_id: str, body: StickmanRenderBody):
     return _run(project_id, body, scene_id)
+
+
+@code_visual_router.post("/render")
+def render_code_visual_assets(project_id: str, body: CodeVisualRenderBody):
+    return _run(project_id, body, provider_id="code_visual_svg")
+
+
+@code_visual_router.post("/scenes/{scene_id}/regenerate")
+def regenerate_code_visual_scene(project_id: str, scene_id: str, body: CodeVisualRenderBody):
+    return _run(project_id, body, scene_id, provider_id="code_visual_svg")
 
 
 @router.get("/runs/{run_id}")
