@@ -1,0 +1,110 @@
+id: structured-knowledge-video
+name: Structured Knowledge Talking Video
+description: Turn a natural or semi-structured knowledge script into a narrated short video.
+entry_modes:
+  - director
+  - continue
+required_inputs:
+  - source_script_or_project_id
+facts:
+  timing_authority: subtitles_or_alignment
+  scene_boundary: block
+steps:
+  - id: inspect
+    type: tool
+    tool: inspect_video_project
+    auto: true
+    outputs:
+      - project_summary
+      - readiness_report
+  - id: analyze_script
+    type: agent
+    auto: true
+    outputs:
+      - script_analysis
+    policy: analyze_script
+  - id: prepare_structured_script
+    type: tool
+    tool: prepare_structured_script
+    auto: true
+    outputs:
+      - structured_episode_proposal
+  - id: approve_structured_script
+    type: approval
+    required: true
+    reason: User must approve source text or structural rewrite before materialization.
+  - id: materialize_audio_and_subtitles
+    type: tool
+    tool: create_video_factory_job
+    auto: false
+    approval_required_when:
+      - paid_tts
+      - paid_llm
+      - regenerate_voiceover
+    retry: safe
+    outputs:
+      - batch_ref
+      - subtitle_alignment_ref
+  - id: plan_scenes
+    type: tool
+    tool: review_visual_scene_plan
+    auto: true
+    constraints:
+      - no_free_start_end
+      - no_cross_block_scenes
+    outputs:
+      - scene_plan_report
+  - id: prepare_visuals
+    type: tool
+    tool: prepare_visual_generation_pack
+    auto: true
+    outputs:
+      - visual_generation_pack
+      - pending_visuals_report
+  - id: wait_for_assets
+    type: external_wait
+    resume_when: visual_coverage_complete
+    waiting_status: waiting_assets
+  - id: bind_assets
+    type: tool
+    tool: bind_scene_assets
+    auto: true
+    approval_required_when:
+      - replace_existing_asset
+    outputs:
+      - visual_binding_report
+  - id: validate_assets
+    type: tool
+    tool: validate_video_assets
+    auto: true
+    outputs:
+      - asset_validation_report
+  - id: preview
+    type: tool
+    tool: build_video_preview
+    auto: true
+    retry: safe
+    outputs:
+      - preview_ref
+  - id: qa
+    type: tool
+    tool: audit_video_preview
+    auto: true
+    outputs:
+      - qa_report
+  - id: export
+    type: tool
+    tool: export_editable_draft
+    auto: true
+    mode: create_new
+    outputs:
+      - draft_export_ref
+completion:
+  requires:
+    - preview_ref
+    - qa_report
+    - draft_export_ref
+failure_handling:
+  missing_assets: pause_waiting_assets
+  stale_project: reinspect_and_retry_affected_step
+  provider_failure: mark_recoverable_without_repeating_paid_step

@@ -1,0 +1,46 @@
+id: paid-operation-policy
+name: Paid Operation Policy
+version: 0.1.0
+paid_operations:
+  - operation: paid_tts
+    default: require_approval
+    must_show:
+      - provider
+      - estimated_characters_or_tokens
+      - estimated_cost
+      - currency
+  - operation: paid_llm
+    default: require_approval
+    must_show:
+      - provider
+      - model
+      - estimated_input_tokens
+      - estimated_output_tokens
+      - estimated_cost
+      - currency
+  - operation: image_generation
+    default: require_approval
+    must_show:
+      - provider
+      - image_count
+      - estimated_cost
+      - currency
+  - operation: video_generation
+    default: require_approval
+    must_show:
+      - provider
+      - duration_or_units
+      - estimated_cost
+      - currency
+repeat_execution:
+  paid_step_retry: require_approval_if_previous_success
+  provider_failure_retry: allow_once_if_no_billable_success
+  unknown_billing_state: require_approval
+logging:
+  required_fields:
+    - provider
+    - operation
+    - approvalId
+    - estimatedCost
+    - actualCost
+    - currency

@@ -1,0 +1,32 @@
+{
+  "id": "case-14-bad-binding",
+  "category": "bad-binding",
+  "recipeId": "existing-assets-recut",
+  "goal": "Detect and repair incorrect scene asset binding (1/3)",
+  "fixtures": {
+    "projectId": "synthetic_project_14",
+    "batchId": "synthetic_batch_14",
+    "notes": "Synthetic Phase 0 fixture. Do not copy real project data into eval cases."
+  },
+  "expected": {
+    "finalState": "succeeded",
+    "recipeSelected": "existing-assets-recut",
+    "constraints": [
+      "no_subtitle_timing_mutation",
+      "no_cross_block_scene",
+      "no_paid_provider_without_approval",
+      "no_duplicate_successful_step"
+    ]
+  },
+  "metrics": {
+    "completed": null,
+    "toolCallCount": null,
+    "duplicateToolCallCount": null,
+    "approvalCount": null,
+    "errorCount": null,
+    "recovered": null,
+    "finalPreviewUsable": null,
+    "editableDraftOpenable": null,
+    "tokenCost": null
+  }
+}

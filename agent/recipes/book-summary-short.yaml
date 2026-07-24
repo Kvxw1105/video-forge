@@ -1,0 +1,97 @@
+id: book-summary-short
+name: Book Summary Short Video
+description: Compress a book idea into a short structured narrated video with semantic scenes.
+entry_modes:
+  - director
+required_inputs:
+  - source_notes_or_book_excerpt
+facts:
+  timing_authority: subtitles_or_alignment
+  scene_boundary: block
+steps:
+  - id: inspect_or_create_project
+    type: tool
+    tool: inspect_video_project
+    auto: true
+    allow_missing_project: true
+    outputs:
+      - project_summary
+  - id: select_atomic_point
+    type: agent
+    auto: true
+    outputs:
+      - atomic_point_selection
+  - id: compress_script
+    type: agent
+    auto: true
+    outputs:
+      - compressed_script_draft
+  - id: prepare_structured_script
+    type: tool
+    tool: prepare_structured_script
+    auto: true
+    outputs:
+      - structured_episode_proposal
+  - id: approve_script
+    type: approval
+    required: true
+    reason: User must approve the compressed interpretation before voiceover.
+  - id: materialize_audio_and_subtitles
+    type: tool
+    tool: create_video_factory_job
+    auto: false
+    approval_required_when:
+      - paid_tts
+      - paid_llm
+    retry: safe
+    outputs:
+      - batch_ref
+      - subtitle_alignment_ref
+  - id: plan_scenes
+    type: tool
+    tool: review_visual_scene_plan
+    auto: true
+    constraints:
+      - no_free_start_end
+      - no_cross_block_scenes
+    outputs:
+      - scene_plan_report
+  - id: prepare_visuals
+    type: tool
+    tool: prepare_visual_generation_pack
+    auto: true
+    outputs:
+      - visual_generation_pack
+  - id: wait_for_assets
+    type: external_wait
+    resume_when: visual_coverage_complete
+  - id: bind_assets
+    type: tool
+    tool: bind_scene_assets
+    auto: true
+    outputs:
+      - visual_binding_report
+  - id: preview
+    type: tool
+    tool: build_video_preview
+    auto: true
+    retry: safe
+    outputs:
+      - preview_ref
+  - id: export
+    type: tool
+    tool: export_editable_draft
+    auto: true
+    mode: create_new
+    outputs:
+      - draft_export_ref
+completion:
+  requires:
+    - atomic_point_selection
+    - structured_episode_proposal
+    - preview_ref
+    - draft_export_ref
+failure_handling:
+  source_too_broad: ask_user_to_select_scope
+  missing_assets: pause_waiting_assets
+  stale_alignment: reinspect_before_scene_plan

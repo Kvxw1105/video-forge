@@ -1,0 +1,88 @@
+id: existing-assets-recut
+name: Existing Assets Recut
+description: Recut a video from existing project or library assets plus existing audio/subtitles.
+entry_modes:
+  - director
+  - continue
+  - repair
+required_inputs:
+  - project_id
+  - existing_assets
+  - audio_or_subtitles
+facts:
+  timing_authority: imported_subtitles_or_alignment
+  scene_boundary: block
+steps:
+  - id: inspect
+    type: tool
+    tool: inspect_video_project
+    auto: true
+    outputs:
+      - project_summary
+      - asset_inventory
+  - id: validate_readiness
+    type: tool
+    tool: inspect_video_readiness
+    auto: true
+    outputs:
+      - readiness_report
+  - id: read_audio_and_subtitles
+    type: agent
+    auto: true
+    constraints:
+      - do_not_edit_subtitle_time
+      - do_not_regenerate_voiceover_without_approval
+    outputs:
+      - alignment_summary
+  - id: divide_scenes
+    type: tool
+    tool: review_visual_scene_plan
+    auto: true
+    constraints:
+      - no_free_start_end
+      - no_cross_block_scenes
+    outputs:
+      - scene_plan_report
+  - id: match_assets
+    type: tool
+    tool: bind_scene_assets
+    auto: true
+    approval_required_when:
+      - replace_existing_asset
+      - delete_or_unbind_asset
+    outputs:
+      - visual_binding_report
+  - id: validate_assets
+    type: tool
+    tool: validate_video_assets
+    auto: true
+    outputs:
+      - asset_validation_report
+  - id: preview
+    type: tool
+    tool: build_video_preview
+    auto: true
+    retry: safe
+    outputs:
+      - preview_ref
+  - id: qa
+    type: tool
+    tool: audit_video_preview
+    auto: true
+    outputs:
+      - qa_report
+  - id: export
+    type: tool
+    tool: export_editable_draft
+    auto: true
+    mode: create_new
+    outputs:
+      - draft_export_ref
+completion:
+  requires:
+    - preview_ref
+    - draft_export_ref
+failure_handling:
+  missing_audio_or_subtitles: pause_waiting_user
+  visual_coverage_incomplete: pause_waiting_assets
+  stale_scene_plan: replan_scenes_only

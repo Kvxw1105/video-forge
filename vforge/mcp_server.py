@@ -373,6 +373,102 @@ def export_composition_to_jianying(pid: str) -> dict:
     return _to_json(client.export_composition_to_jianying(pid))
 
 
+@mcp.tool()
+def inspect_video_project(pid: str) -> dict:
+    """High-level read-only Video Director inspection for one project."""
+    return _to_json(client.inspect_video_project(pid))
+
+
+@mcp.tool()
+def create_video_factory_job(spec: dict) -> dict:
+    """Start a VideoForge factory job through existing batch APIs."""
+    return _to_json(client.create_video_factory_job(spec))
+
+
+@mcp.tool()
+def prepare_structured_script(spec: dict) -> dict:
+    """Parse text or read a project draft as a structured script proposal."""
+    return _to_json(client.prepare_structured_script(spec))
+
+
+@mcp.tool()
+def review_visual_scene_plan(
+    pid: str,
+    settings: dict | None = None,
+    plan: dict | None = None,
+    expected_updated_at: str | None = None,
+    persist: bool = False,
+) -> dict:
+    """Review, propose, or persist a visual scene plan under VideoForge validation."""
+    return _to_json(client.review_visual_scene_plan(pid, settings, plan, expected_updated_at, persist))
+
+
+@mcp.tool()
+def prepare_visual_generation_pack(pid: str) -> dict:
+    """Export a prompt/asset pack for pending visual generation."""
+    return _to_json(client.prepare_visual_generation_pack(pid))
+
+
+@mcp.tool()
+def inspect_pending_visuals(batch_id: str) -> dict:
+    """Inspect scenes/items that still need visual assets for one batch."""
+    return _to_json(client.inspect_pending_visuals(batch_id))
+
+
+@mcp.tool()
+def bind_scene_assets(batch_id: str, item_id: str, data: dict) -> dict:
+    """Bind or import visual assets for an item through the factory API."""
+    return _to_json(client.bind_scene_assets(batch_id, item_id, data))
+
+
+@mcp.tool()
+def validate_video_assets(batch_id: str, item_id: str) -> dict:
+    """Validate visual coverage and asset readiness for one factory item."""
+    return _to_json(client.validate_video_assets(batch_id, item_id))
+
+
+@mcp.tool()
+def validate_video_readiness(pid: str, batch_id: str | None = None, item_id: str | None = None) -> dict:
+    """Return a project readiness checklist without changing project facts."""
+    return _to_json(client.validate_video_readiness(pid, batch_id, item_id))
+
+
+@mcp.tool()
+def inspect_video_readiness(pid: str, batch_id: str | None = None, item_id: str | None = None) -> dict:
+    """Alias for validate_video_readiness, matching the Recipe DSL tool name."""
+    return _to_json(client.inspect_video_readiness(pid, batch_id, item_id))
+
+
+@mcp.tool()
+def build_video_preview(pid: str) -> dict:
+    """Build a project preview through the existing renderer API."""
+    return _to_json(client.build_video_preview(pid))
+
+
+@mcp.tool()
+def audit_video_preview(pid: str) -> dict:
+    """Run a lightweight preview readiness audit with scene-addressable issues when available."""
+    return _to_json(client.audit_video_preview(pid))
+
+
+@mcp.tool()
+def export_editable_draft(pid: str) -> dict:
+    """Export to a new editable JianYing draft through the existing API."""
+    return _to_json(client.export_editable_draft(pid))
+
+
+@mcp.tool()
+def recover_video_job(batch_id: str, item_id: str | None = None) -> dict:
+    """Resume a failed batch or batch item without rerunning succeeded items."""
+    return _to_json(client.recover_video_job(batch_id, item_id))
+
+
+@mcp.tool()
+def get_video_job_status(batch_id: str) -> dict:
+    """Read current VideoForge job status for recovery and continuation."""
+    return _to_json(client.get_video_job_status(batch_id))
+
+
 def run(transport: str = "stdio", port: int = 8765):
     """Run the MCP server.
     transport: 'stdio' (default, for Claude Code/Codex stdio) or
