@@ -179,6 +179,18 @@ def compile_structured_media_variant(
         if block_scenes:
             for scene in block_scenes:
                 timing = scene_timing(raw, scene, cursor)
+                requested_media_type = str(scene.get("requestedMediaType") or "image")
+                if requested_media_type in {"black", "color", "text_card"}:
+                    scene_metadata = scene.get("metadata") or {}
+                    default_color = "#000000" if requested_media_type != "color" else "#1a1814"
+                    generated_segments.append({
+                        "id": f"{variant_id}__{scene['id']}__visual_000", "assetPath": "", "type": "black",
+                        "start": timing["targetStart"], "end": timing["targetEnd"],
+                        "transform": {"x": 0.5, "y": 0.5, "scale": 1.0, "rotation": 0, "fit": "stretch"},
+                        "bgColor": str(scene_metadata.get("backgroundColor") or default_color),
+                        "metadata": {"sceneId": scene["id"], "requestedMediaType": requested_media_type, "durationPolicy": scene.get("durationPolicy", "fit_scene")},
+                    })
+                    continue
                 selected_ids = list(scene.get("visualAssetIds") or [])
                 if scene.get("primaryAssetId") and scene["primaryAssetId"] in selected_ids:
                     selected_ids.remove(scene["primaryAssetId"]); selected_ids.insert(0, scene["primaryAssetId"])

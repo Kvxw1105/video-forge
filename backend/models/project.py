@@ -120,7 +120,9 @@ class VisualScene(BaseModel):
     summary: str = ""
     prompt: str = ""
     negativePrompt: str = ""
-    requestedMediaType: Literal["image", "video", "either"] = "image"
+    # These are scene intents, not renderer timestamps. ``black``, ``color``
+    # and ``text_card`` intentionally need no uploaded visual asset.
+    requestedMediaType: Literal["image", "video", "either", "black", "color", "text_card"] = "image"
     visualAssetIds: list[str] = Field(default_factory=list)
     primaryAssetId: str | None = None
     durationPolicy: Literal["fit_scene", "trim", "freeze_last_frame", "loop"] = "fit_scene"

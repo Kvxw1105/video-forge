@@ -39,7 +39,8 @@ def context(project_id: str): return planning_context(_project(project_id).model
 def propose(project_id: str, data: dict):
     project=_project(project_id); _conflict(project, data)
     settings=data.get("settings") or {"mode":data.get("mode", "hybrid"), "unitsPerScene":data.get("unitsPerScene",3), "targetDuration":data.get("targetDuration",7), "minDuration":data.get("minDuration",3), "maxDuration":data.get("maxDuration",12)}
-    return {"sourceHash":visual_source_hash(project.model_dump()), "settings":settings, "scenes":propose_scenes(project.model_dump(), settings)}
+    episode = project.structuredContent.episode
+    return {"sourceHash":visual_source_hash(project.model_dump()), "alignmentGenerationId":episode.alignment.generationId if episode.alignment else None, "settings":settings, "scenes":propose_scenes(project.model_dump(), settings)}
 
 
 @router.get("")
@@ -52,7 +53,7 @@ def get_plan(project_id: str):
 def set_plan(project_id: str, data: dict):
     project=_project(project_id); _conflict(project, data)
     raw=data.get("plan") or data
-    raw={**raw, "planId":raw.get("planId") or f"plan_{uuid4().hex[:12]}", "sourceHash":raw.get("sourceHash") or visual_source_hash(project.model_dump())}
+    raw={**raw, "planId":raw.get("planId") or f"plan_{uuid4().hex[:12]}", "sourceHash":raw.get("sourceHash") or visual_source_hash(project.model_dump()), "alignmentGenerationId":raw.get("alignmentGenerationId", project.structuredContent.episode.alignment.generationId if project.structuredContent.episode.alignment else None)}
     try: plan=StructuredVisualPlan.model_validate(raw)
     except Exception as exc: raise HTTPException(422, str(exc)) from exc
     errors=validate_plan(project.model_dump(), plan.model_dump())
@@ -83,7 +84,7 @@ def generation_pack(project_id: str):
         ids = list(scene.subtitleIds)
         start = float(subtitles[ids[0]].get("start", 0)) if ids else 0.0
         end = float(subtitles[ids[-1]].get("end", start)) if ids else start
-        rows.append({"sceneId":scene.id,"blockId":scene.blockId,"subtitleIds":ids,"start":start,"end":end,"duration":end-start,"text":"".join(str(subtitles[item].get("text") or "") for item in ids if item in subtitles),"summary":scene.summary,"prompt":scene.prompt,"negativePrompt":scene.negativePrompt,"mediaType":scene.requestedMediaType,"aspectRatio":project.canvas.ratio,"expectedFilename":f"scene_{index:03d}.png"})
+        rows.append({"sceneId":scene.id,"blockId":scene.blockId,"subtitleIds":ids,"start":start,"end":end,"duration":end-start,"text":"".join(str(subtitles[item].get("text") or "") for item in ids if item in subtitles),"summary":scene.summary,"prompt":scene.prompt,"negativePrompt":scene.negativePrompt,"mediaType":scene.requestedMediaType,"visualPolicy":scene.metadata.get("visualPolicy", {}),"aspectRatio":project.canvas.ratio,"expectedFilename":f"scene_{index:03d}.png"})
     (directory/"visual-plan.json").write_text(plan.model_dump_json(indent=2),encoding="utf-8"); (directory/"prompts.json").write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding="utf-8")
     with (directory/"prompts.csv").open("w",encoding="utf-8",newline="") as handle:
         writer=csv.DictWriter(handle,fieldnames=rows[0].keys() if rows else ["sceneId"]); writer.writeheader(); writer.writerows(rows)

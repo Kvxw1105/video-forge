@@ -16,7 +16,11 @@ STRUCTURE_BLOCK_TYPES = (
 
 
 class VisualPolicy(BaseModel):
-    """Default visual direction. It deliberately contains no clock values."""
+    """Default visual direction. It deliberately contains no clock values.
+
+    The policy is semantic: subtitle alignment remains the sole authority for
+    scene timing after this policy has chosen the subtitle groups.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -24,8 +28,10 @@ class VisualPolicy(BaseModel):
         "black_screen_text", "color_card", "cinematic_images", "diagram_or_steps", "mixed"
     ] = "mixed"
     scenePolicy: Literal[
-        "single_clip", "split_by_semantic_cluster", "one_scene_per_step", "auto"
+        "single_clip", "fixed_units", "split_by_semantic_cluster", "one_scene_per_step", "auto"
     ] = "auto"
+    mediaType: Literal["auto", "image", "video", "black", "color", "text_card", "either"] = "auto"
+    unitsPerScene: int | None = Field(default=None, ge=1, le=20)
     notes: str = Field(default="", max_length=500)
 
 

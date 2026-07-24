@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shared.structured_content import compile_structured_media_variant
-from shared.visual_scene import build_narration_units, propose_scenes, validate_plan, visual_source_hash
+from shared.visual_scene import build_narration_units, propose_scenes, resolve_block_visual_policy, validate_plan, visual_source_hash
 
 
 def _project(tmp_path):
@@ -60,3 +60,33 @@ def test_fifteen_subtitles_three_scenes_cover_without_gaps(tmp_path):
     assert [item["type"] for item in publish.project_view["segments"]] == ["image","video","image"]
     master=compile_structured_media_variant(project,"master",duration_resolver=lambda _:15)
     assert [item["metadata"]["sceneId"] for item in master.project_view["segments"]] == ["scene_c","scene_a"]
+
+
+def test_profile_policy_controls_media_intent_and_subtitle_grouping(tmp_path):
+    project = _project(tmp_path)
+    project["subtitles"] = [
+        {"id": f"s{i}", "text": f"line {i}!", "start": float(i - 1), "end": float(i), "style": {}, "metadata": {}}
+        for i in range(1, 7)
+    ]
+    project["structureProfileSnapshot"] = {
+        "profileId": "policy", "profileVersion": 1, "capturedAt": "now",
+        "profile": {"id": "policy", "name": "Policy", "version": 1, "blocks": [
+            {"id": "story", "type": "STORY", "label": "Story", "visualPolicy": {"mediaType": "video", "scenePolicy": "fixed_units", "unitsPerScene": 2}},
+            {"id": "method", "type": "METHOD", "label": "Method", "visualPolicy": {"mediaType": "text_card", "scenePolicy": "single_clip"}},
+        ]},
+    }
+    scenes = propose_scenes(project, {"mode": "hybrid"})
+    assert [(scene["blockId"], scene["requestedMediaType"], scene["subtitleIds"]) for scene in scenes] == [
+        ("a", "video", ["s1", "s2"]), ("a", "video", ["s3"]), ("b", "text_card", ["s4", "s5", "s6"]),
+    ]
+    assert all("start" not in scene and "end" not in scene for scene in scenes)
+    assert scenes[0]["metadata"]["visualPolicy"]["scenePolicy"] == "fixed_units"
+
+
+def test_old_project_proposal_is_image_compatible_and_unknown_subtitles_fail(tmp_path):
+    project = _project(tmp_path)
+    assert resolve_block_visual_policy(project, project["structuredContent"]["episode"]["blocks"][0])["mediaType"] == "image"
+    proposal = propose_scenes(project, {"mode": "fixed_units", "unitsPerScene": 1})
+    assert all(scene["requestedMediaType"] == "image" for scene in proposal)
+    plan = {"sourceHash": visual_source_hash(project), "scenes": [{"id": "bad", "blockId": "a", "subtitleIds": ["missing"]}]}
+    assert any("unknown subtitle" in error for error in validate_plan(project, plan))
