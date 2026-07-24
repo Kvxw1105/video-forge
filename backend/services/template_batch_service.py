@@ -300,6 +300,21 @@ def _run_item_outputs(
     Factory resume supplies a structured variant and an input hash.  The generic
     batch path deliberately keeps its existing behavior.
     """
+    if os.environ.get("VIDEOFORGE_LAB_OUTPUT_STUB") == "1":
+        root = _dir(batch_id) / "lab-output" / item_id
+        root.mkdir(parents=True, exist_ok=True)
+        if outputs.preview and not result.get("previewUrl"):
+            preview_path = root / "preview.mp4"
+            preview_path.write_bytes(b"VideoForge Lab preview stub")
+            result["previewUrl"] = f"/api/agent-factory/batches/{batch_id}/items/{item_id}/preview"
+            result.setdefault("outputs", {})["preview"] = {"status": "succeeded", "url": result["previewUrl"], "path": str(preview_path), "inputHash": input_hash, "completedAt": _now()}
+        if outputs.jianyingDirect and not result.get("jianyingDraftPath"):
+            draft = root / "jianying-draft"
+            draft.mkdir(exist_ok=True)
+            (draft / "draft_content.json").write_text("{}", encoding="utf-8")
+            result["jianyingDraftPath"] = str(draft)
+            result.setdefault("outputs", {})["jianying"] = {"status": "succeeded", "draftPath": result["jianyingDraftPath"], "inputHash": input_hash, "completedAt": _now()}
+        return
     if outputs.preview and not result.get("previewUrl"):
         result["phase"]="rendering_preview"; _event(batch_id,item_id,"rendering_preview","started")
         if structured_variant_id:

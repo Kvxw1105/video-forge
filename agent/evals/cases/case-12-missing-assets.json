@@ -28,5 +28,20 @@
     "finalPreviewUsable": null,
     "editableDraftOpenable": null,
     "tokenCost": null
-  }
+  },
+  "executionLevel": "integration",
+  "expectedStateTransitions": [
+    "running",
+    "waiting_assets",
+    "running",
+    "succeeded"
+  ],
+  "expectedPolicies": [
+    "script_content_change"
+  ],
+  "expectedArtifacts": [
+    "run_log",
+    "eval_result"
+  ],
+  "closedLoopExecuted": false
 }

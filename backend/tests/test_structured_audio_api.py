@@ -44,6 +44,20 @@ def test_missing_key_returns_409(monkeypatch, tmp_path):
     assert exc.value.status_code == 409
 
 
+def test_local_mock_transport_materializes_without_network(monkeypatch, tmp_path):
+    project = make_project(tmp_path)
+    monkeypatch.setenv("VIDEOFORGE_FISH_TIMESTAMP_MOCK", "1")
+    monkeypatch.setattr(structured_audio, "get_project", lambda _: project)
+    monkeypatch.setattr(structured_audio, "get_tts_settings_raw", lambda: SimpleNamespace(fishApiKey="configured", fishReferenceId="ref", fishModel="s2-pro"))
+    monkeypatch.setattr(structured_audio, "_project_dir", lambda _: tmp_path)
+    monkeypatch.setattr(materializer, "probe_media_duration", lambda _: 2.0)
+    monkeypatch.setattr(materializer, "update_project", lambda _, data: data)
+    result = structured_audio.generate_fish_aligned("p", {"generateSubtitles": True})
+    assert result["mockTransport"] is True
+    assert result["liveCallPerformed"] is False
+    assert result["subtitleCount"] > 0
+
+
 def test_mock_fish_materializes_audio_ranges_subtitles_and_preserves_existing(monkeypatch, tmp_path):
     project = make_project(tmp_path)
     original = copy.deepcopy(project.model_dump())

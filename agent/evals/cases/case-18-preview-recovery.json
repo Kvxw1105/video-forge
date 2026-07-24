@@ -28,5 +28,16 @@
     "finalPreviewUsable": null,
     "editableDraftOpenable": null,
     "tokenCost": null
-  }
+  },
+  "executionLevel": "recovery",
+  "expectedStateTransitions": [
+    "running",
+    "succeeded"
+  ],
+  "expectedPolicies": [],
+  "expectedArtifacts": [
+    "run_log",
+    "eval_result"
+  ],
+  "closedLoopExecuted": false
 }

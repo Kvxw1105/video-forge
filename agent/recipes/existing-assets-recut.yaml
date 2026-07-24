@@ -1,6 +1,15 @@
 id: existing-assets-recut
+version: 1
 name: Existing Assets Recut
 description: Recut a video from existing project or library assets plus existing audio/subtitles.
+inputContract:
+  required:
+    - project_id
+    - existing_assets
+    - audio_or_subtitles
+  optional:
+    - batchId
+    - itemId
 entry_modes:
   - director
   - continue
@@ -14,68 +23,137 @@ facts:
   scene_boundary: block
 steps:
   - id: inspect
-    type: tool
+    kind: tool
     tool: inspect_video_project
     auto: true
+    required: true
+    inputFrom: []
+    completionCondition: inspection_available
+    retry: safe
+    onError: fail
+    produces:
+      - project_inspection
     outputs:
       - project_summary
       - asset_inventory
   - id: validate_readiness
-    type: tool
+    kind: tool
     tool: inspect_video_readiness
     auto: true
+    required: true
+    inputFrom:
+      - inspect
+    completionCondition: readiness_available
+    retry: safe
+    onError: pause
+    produces:
+      - readiness_report
     outputs:
       - readiness_report
   - id: read_audio_and_subtitles
-    type: agent
+    kind: inspection
     auto: true
+    required: true
+    inputFrom:
+      - validate_readiness
+    completionCondition: alignment_summary_available
+    onError: pause
+    produces:
+      - alignment_summary
     constraints:
       - do_not_edit_subtitle_time
       - do_not_regenerate_voiceover_without_approval
     outputs:
       - alignment_summary
   - id: divide_scenes
-    type: tool
+    kind: tool
     tool: review_visual_scene_plan
     auto: true
+    required: true
+    inputFrom:
+      - read_audio_and_subtitles
+    completionCondition: scene_plan_ready
+    retry: safe
+    onError: recoverable
+    produces:
+      - scene_plan_report
     constraints:
       - no_free_start_end
       - no_cross_block_scenes
     outputs:
       - scene_plan_report
   - id: match_assets
-    type: tool
+    kind: tool
     tool: bind_scene_assets
     auto: true
+    required: true
+    inputFrom:
+      - divide_scenes
+    completionCondition: assets_bound
+    retry: idempotent
+    onError: recoverable
+    produces:
+      - visual_binding_report
     approval_required_when:
       - replace_existing_asset
       - delete_or_unbind_asset
     outputs:
       - visual_binding_report
   - id: validate_assets
-    type: tool
+    kind: tool
     tool: validate_video_assets
     auto: true
+    required: true
+    inputFrom:
+      - match_assets
+    completionCondition: assets_valid
+    retry: safe
+    onError: pause
+    produces:
+      - asset_validation_report
     outputs:
       - asset_validation_report
   - id: preview
-    type: tool
+    kind: tool
     tool: build_video_preview
     auto: true
+    required: true
+    inputFrom:
+      - validate_assets
+    completionCondition: preview_ready
+    onError: recoverable
     retry: safe
+    produces:
+      - preview_ref
     outputs:
       - preview_ref
   - id: qa
-    type: tool
+    kind: evaluation
     tool: audit_video_preview
     auto: true
+    required: true
+    inputFrom:
+      - preview
+    completionCondition: qa_complete
+    retry: safe
+    onError: recoverable
+    produces:
+      - qa_report
     outputs:
       - qa_report
   - id: export
-    type: tool
+    kind: tool
     tool: export_editable_draft
     auto: true
+    required: true
+    inputFrom:
+      - qa
+    completionCondition: editable_draft_exported
+    retry: idempotent
+    onError: recoverable
     mode: create_new
+    produces:
+      - draft_export_ref
     outputs:
       - draft_export_ref
 completion:

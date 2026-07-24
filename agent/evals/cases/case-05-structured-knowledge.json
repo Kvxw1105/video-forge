@@ -28,5 +28,18 @@
     "finalPreviewUsable": null,
     "editableDraftOpenable": null,
     "tokenCost": null
-  }
+  },
+  "executionLevel": "static",
+  "expectedStateTransitions": [
+    "running",
+    "succeeded"
+  ],
+  "expectedPolicies": [
+    "script_content_change"
+  ],
+  "expectedArtifacts": [
+    "run_log",
+    "eval_result"
+  ],
+  "closedLoopExecuted": false
 }

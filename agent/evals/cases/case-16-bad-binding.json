@@ -28,5 +28,18 @@
     "finalPreviewUsable": null,
     "editableDraftOpenable": null,
     "tokenCost": null
-  }
+  },
+  "executionLevel": "policy",
+  "expectedStateTransitions": [
+    "running",
+    "succeeded"
+  ],
+  "expectedPolicies": [
+    "replace_scene_asset"
+  ],
+  "expectedArtifacts": [
+    "run_log",
+    "eval_result"
+  ],
+  "closedLoopExecuted": false
 }
