@@ -1,8 +1,11 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from media_processing.contracts import MediaExecutionRequest
 from media_processing.mediakit_provider import MediaKitProvider
@@ -37,6 +40,8 @@ def test_mediakit_sidecar_executes_real_media_and_registers_derivatives(monkeypa
     if official_cli and official_ffmpeg:
         provider = MediaKitProvider(official_cli, ffmpeg_dir=official_ffmpeg)
     else:
+        if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+            pytest.skip("FFmpeg integration dependencies are not installed")
         fixture = tmp_path / "mediakit fixture.py"
         fixture.write_text(FIXTURE, encoding="utf-8")
         provider = MediaKitProvider([sys.executable, str(fixture)])
