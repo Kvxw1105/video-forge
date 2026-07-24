@@ -244,6 +244,42 @@ def attach_visual_scene_asset(pid: str, scene_id: str, asset_id: str) -> dict:
             scene["primaryAssetId"] = asset_id
             return _to_json(client.set_visual_scene_plan(pid, plan))
     raise ValueError(f"Visual scene not found: {scene_id}")
+
+
+@mcp.tool()
+def render_stickman_assets(
+    pid: str,
+    scene_ids: list[str] | None = None,
+    export_png: bool = True,
+    bind_to_project: bool = True,
+    replace_manual_edits: bool = False,
+) -> dict:
+    """Render deterministic Stickman SVG/PNG assets from the project's Visual Plan."""
+    return _to_json(client.render_stickman_assets(
+        pid,
+        scene_ids=scene_ids,
+        export_png=export_png,
+        bind_to_project=bind_to_project,
+        replace_manual_edits=replace_manual_edits,
+    ))
+
+
+@mcp.tool()
+def regenerate_stickman_scene(
+    pid: str,
+    scene_id: str,
+    export_png: bool = True,
+) -> dict:
+    """Regenerate one Visual Scene without rewriting the other Scene outputs."""
+    return _to_json(client.regenerate_stickman_scene(pid, scene_id, export_png=export_png))
+
+
+@mcp.tool()
+def get_stickman_generation_run(pid: str, run_id: str) -> dict:
+    """Read manifest, report, and contact-sheet reference for one Stickman run."""
+    return _to_json(client.get_stickman_generation_run(pid, run_id))
+
+
 @mcp.tool()
 def export_visual_generation_pack(pid: str) -> dict: return _to_json(client.export_visual_generation_pack(pid))
 @mcp.tool()
