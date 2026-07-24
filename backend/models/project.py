@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional, Literal, Union
 from datetime import datetime
+from models.structure_profile import StructureProfileSnapshot
 
 
 STRUCTURED_BLOCK_TYPES = Literal[
@@ -393,6 +394,7 @@ class Project(BaseModel):
     shuffleMode: bool = True
     timeline: Timeline = Field(default_factory=Timeline)
     structuredContent: StructuredContent | None = None
+    structureProfileSnapshot: StructureProfileSnapshot | None = None
     composition: StructuredComposition | None = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
