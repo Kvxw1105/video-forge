@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import MediaCapability, MediaExecutionRequest
+from .provider import MediaProcessingError
 
 
 CAPABILITIES = {
@@ -17,10 +18,7 @@ CAPABILITIES = {
 }
 
 
-class MediaKitError(RuntimeError):
-    def __init__(self, message: str, *, details: dict[str, Any] | None = None, retryable: bool = False):
-        super().__init__(message)
-        self.details, self.retryable = details or {}, retryable
+MediaKitError = MediaProcessingError
 
 
 class MediaKitProvider:

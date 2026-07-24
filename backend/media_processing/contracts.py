@@ -15,7 +15,7 @@ class StrictModel(BaseModel):
 
 class MediaCapability(StrictModel):
     name: CapabilityName
-    providerCommand: list[str]
+    providerCommand: list[str] = Field(default_factory=list)
     local: bool
     asyncCapable: bool
     outputType: Literal["metadata", "video", "audio", "artifact"]
@@ -24,6 +24,7 @@ class MediaCapability(StrictModel):
 
 class MediaExecutionRequest(StrictModel):
     capability: CapabilityName
+    provider: Literal["videoforge_native", "mediakit"] | None = None
     sourceAssetId: str | None = None
     sourcePath: str | None = None
     startTime: float | None = Field(default=None, ge=0)
@@ -43,7 +44,7 @@ class MediaExecutionRequest(StrictModel):
 class MediaExecutionRecord(StrictModel):
     id: str
     status: TaskStatus
-    provider: str = "mediakit"
+    provider: str = "videoforge_native"
     providerTaskId: str | None = None
     idempotencyToken: str
     capability: CapabilityName

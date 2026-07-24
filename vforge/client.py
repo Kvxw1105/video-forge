@@ -165,6 +165,10 @@ def discover_mediakit(base: str = DEFAULT_BASE) -> dict:
     return _request("GET", "/api/media/providers/mediakit", base=base)
 
 
+def discover_media_providers(base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", "/api/media/providers", base=base)
+
+
 def execute_media(pid: str, data: dict, base: str = DEFAULT_BASE) -> dict:
     return _request("POST", f"/api/projects/{pid}/media/execute", base=base, json_body=data)
 

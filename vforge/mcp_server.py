@@ -287,6 +287,12 @@ def discover_mediakit() -> dict:
 
 
 @mcp.tool()
+def discover_media_providers() -> dict:
+    """Discover VideoForge's native media engine and optional compatibility providers."""
+    return _to_json(client.discover_media_providers())
+
+
+@mcp.tool()
 def execute_media_capability(pid: str, request: dict) -> dict:
     """Run media.probe, video.trim, or audio.extract and register a derived project asset."""
     return _to_json(client.execute_media(pid, request))
