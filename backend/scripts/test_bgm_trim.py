@@ -94,7 +94,7 @@ def test_jianying_bgm_trim():
             "assets": [],
             "exportSettings": {"outputDir": str(td / "export")},
         }
-        draft_dir = generate_jianying_draft(project, output_dir=td / "drafts")
+        draft_dir = generate_jianying_draft(project, output_dir=td / "drafts").final_path
         draft_content_path = draft_dir / "draft_content.json"
         assert draft_content_path.exists(), "draft_content.json not generated"
         data = json.loads(draft_content_path.read_text(encoding="utf-8"))

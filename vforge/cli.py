@@ -169,6 +169,8 @@ def cmd_stickman_render(args):
 def cmd_stickman_regenerate(args):
     _print(client.regenerate_stickman_scene(args.pid, args.scene_id, export_png=args.png, replace_manual_edits=args.replace_manual_edits, base=args.base))
 def cmd_stickman_inspect(args): _print(client.get_stickman_generation_run(args.pid, args.run_id, args.base))
+def cmd_media_discover(args): _print(client.discover_media_providers(args.base))
+def cmd_media_execute(args): _print(client.execute_media(args.pid, _spec(args.data), args.base))
 
 
 def cmd_tts_get(args):
@@ -365,6 +367,15 @@ def build_parser() -> argparse.ArgumentParser:
     stickman_inspect.add_argument("--project", "--pid", dest="pid", required=True)
     stickman_inspect.add_argument("--run", "--run-id", dest="run_id", required=True)
     stickman_inspect.set_defaults(func=cmd_stickman_inspect)
+
+    media = sub.add_parser("media", help="Run VideoForge canonical media capabilities")
+    media_sub = media.add_subparsers(dest="media_cmd", required=True)
+    media_discover = media_sub.add_parser("discover", help="Discover VideoForge media providers and schemas")
+    media_discover.set_defaults(func=cmd_media_discover)
+    media_execute = media_sub.add_parser("execute", help="Run a media capability")
+    media_execute.add_argument("--project", "--pid", dest="pid", required=True)
+    media_execute.add_argument("--data", required=True, help="JSON or @request.json")
+    media_execute.set_defaults(func=cmd_media_execute)
 
     sp.add_argument("--port", type=int, default=8765)
     sp.set_defaults(func=lambda args: None)
