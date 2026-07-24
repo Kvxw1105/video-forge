@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "projectId": "proj_stickman_cases",
+  "source": {
+    "mode": "inline_segments",
+    "segments": [
+      {
+        "id": "case_a",
+        "order": 1,
+        "blockId": "mechanism_a",
+        "subtitleIds": ["sub_a"],
+        "start": 0.0,
+        "end": 2.8,
+        "text": "越害怕失去的人，越容易提前控制关系。",
+        "semantic": {"actors": 2, "visualIntent": "red_string_pull"}
+      },
+      {
+        "id": "case_b",
+        "order": 2,
+        "blockId": "mechanism_b",
+        "subtitleIds": ["sub_b"],
+        "start": 2.8,
+        "end": 5.6,
+        "text": "他背着整个家族的期待，却没有人问过他累不累。",
+        "semantic": {"actors": 1}
+      },
+      {
+        "id": "case_c",
+        "order": 3,
+        "blockId": "mechanism_c",
+        "subtitleIds": ["sub_c"],
+        "start": 5.6,
+        "end": 8.4,
+        "text": "一个自己想逃走，另一个自己逼着他继续证明。",
+        "semantic": {"actors": 2}
+      }
+    ]
+  },
+  "exports": {"svg": true, "png": true, "manifest": true, "contactSheet": true, "generationReport": true}
+}
