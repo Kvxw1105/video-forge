@@ -194,6 +194,15 @@ export const api = {
   saveAgentProviderSettings: (data: any) => request<any>('/settings/agent', { method: 'PUT', body: JSON.stringify(data) }),
   testAgentProvider: (data: any) => request<any>('/settings/agent/test', { method: 'POST', body: JSON.stringify(data) }),
   fetchAgentProviderModels: (data: any) => request<any>('/settings/agent/models', { method: 'POST', body: JSON.stringify(data) }),
+  uploadDirectorSrtIntake: async (file: File) => {
+    const fd = new FormData(); fd.append('file', file)
+    const response = await fetch(`${BASE}/director/intake/srt`, { method: 'POST', body: fd })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body?.detail?.message || body?.detail || body?.message || 'SRT import failed')
+    }
+    return response.json()
+  },
   createDirectorRun: (data: any) => request<any>('/director/runs', { method: 'POST', body: JSON.stringify(data) }),
   listDirectorRuns: () => request<any[]>('/director/runs'),
   getDirectorRun: (runId: string) => request<any>('/director/runs/' + encodeURIComponent(runId)),

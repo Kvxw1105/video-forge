@@ -75,6 +75,11 @@ def main() -> None:
             assert "VideoForge Product Constitution v1" in spy.payloads[-1]["task"]
             assert "VideoForge Product Harness context" in spy.payloads[-1]["task"]
             assert spy.store.saved[-1]["intake"]["source"]["projectId"] == project.id
+
+            started_from_srt = client.post("/api/director/runs", json={"intake": srt_intake, "task": "Plan subtitle scenes"})
+            assert started_from_srt.status_code == 200, started_from_srt.text
+            assert spy.store.saved[-1]["intake"]["source"]["type"] == "srt_upload"
+            assert spy.store.saved[-1]["intake"]["subtitleTimeline"][0]["text"] == "First line"
         finally:
             project_service.PROJECTS_DIR = original_projects_dir
             director.service = original_service

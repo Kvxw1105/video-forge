@@ -6,7 +6,7 @@ import json
 from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from agent_runtime.director_intake import build_project_intake, build_srt_intake, list_project_intakes, prompt_context
+from agent_runtime.director_intake import build_project_intake, build_srt_intake, list_project_intakes, normalize_srt_intake, prompt_context
 from agent_runtime.director_service import DirectorService
 
 router = APIRouter(prefix="/api/director", tags=["director"])
@@ -55,8 +55,14 @@ def create_run(payload: dict):
         if intake is None:
             raise HTTPException(404, {"code": "project_not_found", "message": f"Project not found: {payload['projectId']}"})
     if intake is not None:
-        if not isinstance(intake, dict) or not isinstance(intake.get("source"), dict):
-            raise HTTPException(422, {"code": "intake_invalid", "message": "Director intake must contain a source object."})
+        if payload.get("projectId"):
+            # Project source is always re-read from VideoForge storage above.
+            intake = build_project_intake(str(payload["projectId"]))
+        else:
+            try:
+                intake = normalize_srt_intake(intake)
+            except ValueError as exc:
+                raise HTTPException(422, {"code": "intake_invalid", "message": str(exc)}) from exc
         payload["intake"] = intake
         task = str(payload.get("task") or "Create a structured, previewable video draft.").strip()
         payload["task"] = f"{task}\n\n{prompt_context(intake)}"

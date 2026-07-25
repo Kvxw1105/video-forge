@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from .director_store import DirectorStore
+from .director_proposals import merge_action_proposals, proposal_instruction, proposals_from_agent_end
 from .lab_actions import dispatch_factory_binding, record_binding_action
 from .pi_transport import FakePiTransport, PiRpcError, PiRpcTransport
 from .plugin_tools import create_delivery_artifacts, generate_vector_card
@@ -44,7 +45,8 @@ class DirectorService:
             self.store.save(run)
         run_id = run["runId"]
         task = run["task"] or "Create a previewable and JianYing-importable video draft from this script."
-        session = self.transport.create_session(run_id, task)
+        pi_prompt = f"{task}\n\n{proposal_instruction()}"
+        session = self.transport.create_session(run_id, pi_prompt)
         run["piSession"] = session
         run["piState"] = "starting"
         run["transport"] = self.transport.name
@@ -68,32 +70,6 @@ class DirectorService:
         self.store.append_event(run_id, {"type": "recipe.loaded", "recipeId": recipe.id, "recipeVersion": recipe.version, "stepCount": len(recipe.steps)})
         for event in self.transport.initial_events(run_id, task):
             self.store.append_event(run_id, event)
-        prompt = getattr(self.transport, "prompt", None)
-        if prompt:
-            with self._state_lock:
-                run["piState"] = "running"
-                self.store.save(run)
-            try:
-                prompt_result = prompt(run_id, task)
-            except PiRpcError as exc:
-                run["piState"] = "failed"
-                run["status"] = "recoverable"
-                run["errors"].append({"code": "pi_prompt_failed", "message": str(exc), "recoverable": True})
-                self.store.save(run)
-                self.store.append_event(run_id, {"type": "pi.prompt.failed", "errorCode": "pi_prompt_failed"})
-                return self.get_run(run_id)
-            with self._state_lock:
-                run = self.store.load(run_id)
-                run["piPromptAccepted"] = bool(prompt_result.get("accepted"))
-                if prompt_result.get("settled"):
-                    run["piState"] = "settled"
-                run["liveCallPerformed"] = bool(run["liveCallPerformed"] or not run["mockTransport"])
-                run["metrics"]["liveCallPerformed"] = run["liveCallPerformed"]
-                self.store.save(run)
-                is_settled = run["piState"] == "settled"
-            self.store.append_event(run_id, {"type": "pi.prompt.accepted", "settled": is_settled})
-            if is_settled:
-                self.store.append_event(run_id, {"type": "agent.settled", "transport": self.transport.name})
         artifact = generate_vector_card(self.store.run_dir(run_id), scene_id="scene_001", title="Director Draft", body=task)
         run["toolCalls"].append({"toolName": "vector_card.generate_scene_asset", "status": "succeeded", "sceneId": "scene_001", "artifactId": artifact["artifactId"]})
         run["artifacts"].append(artifact)
@@ -115,6 +91,36 @@ class DirectorService:
         run["status"] = "waiting_approval"
         self.store.save(run)
         self.store.append_event(run_id, {"type": "approval.requested", "approval": approval})
+        # The approval exists before Pi can emit agent_end, so a proposal can
+        # only enrich this gate and never become a detached executable action.
+        prompt = getattr(self.transport, "prompt", None)
+        if prompt:
+            with self._state_lock:
+                run = self.store.load(run_id)
+                run["piState"] = "running"
+                self.store.save(run)
+            try:
+                prompt_result = prompt(run_id, pi_prompt)
+            except PiRpcError as exc:
+                run = self.store.load(run_id)
+                run["piState"] = "failed"
+                run["status"] = "recoverable"
+                run["errors"].append({"code": "pi_prompt_failed", "message": str(exc), "recoverable": True})
+                self.store.save(run)
+                self.store.append_event(run_id, {"type": "pi.prompt.failed", "errorCode": "pi_prompt_failed"})
+                return self.get_run(run_id)
+            with self._state_lock:
+                run = self.store.load(run_id)
+                run["piPromptAccepted"] = bool(prompt_result.get("accepted"))
+                if prompt_result.get("settled"):
+                    run["piState"] = "settled"
+                run["liveCallPerformed"] = bool(run["liveCallPerformed"] or not run["mockTransport"])
+                run["metrics"]["liveCallPerformed"] = run["liveCallPerformed"]
+                self.store.save(run)
+                is_settled = run["piState"] == "settled"
+            self.store.append_event(run_id, {"type": "pi.prompt.accepted", "settled": is_settled})
+            if is_settled:
+                self.store.append_event(run_id, {"type": "agent.settled", "transport": self.transport.name})
         return self.get_run(run_id)
 
     def list_runs(self) -> list[dict[str, Any]]:
@@ -144,11 +150,25 @@ class DirectorService:
         target = next((item for item in run["approvals"] if item.get("approvalId") == approval_id), None)
         if not target:
             raise KeyError("approval_not_found")
-        target["status"] = "approved"
         target["decision"] = decision
         run["currentApprovalId"] = None
+        proposal = target.get("actionProposal")
+        is_approved = decision in {"replace", "approve", "approved"}
+        target["status"] = "approved" if is_approved else "rejected"
+        if isinstance(proposal, dict):
+            proposal["status"] = "approved" if is_approved else "rejected"
+            proposal_id = proposal.get("proposalId")
+            for item in run.get("actionProposals", []):
+                if item.get("proposalId") == proposal_id:
+                    item["status"] = proposal["status"]
         self.store.save(run)
         self.store.append_event(run_id, {"type": "approval.resolved", "approvalId": approval_id, "decision": decision})
+        if not is_approved:
+            run["status"] = "rejected"
+            run["waitingReason"] = "approval_rejected"
+            self.store.save(run)
+            self.store.append_event(run_id, {"type": "run.rejected", "approvalId": approval_id})
+            return self.get_run(run_id)
         return self.resume(run_id)
 
     def resume(self, run_id: str) -> dict[str, Any]:
@@ -189,6 +209,9 @@ class DirectorService:
         self.store.append_event(run_id, {"type": "artifact.created", "artifact": delivery["preview"]})
         self.store.append_event(run_id, {"type": "artifact.created", "artifact": delivery["jianying"]})
         run["status"] = "succeeded"
+        for proposal in run.get("actionProposals", []):
+            if proposal.get("status") == "approved":
+                proposal["status"] = "completed"
         self.store.save(run)
         run["finishedAt"] = run["updatedAt"]
         self.store.save(run)
@@ -201,11 +224,18 @@ class DirectorService:
         try:
             with self._state_lock:
                 self.store.append_event(run_id, event)
-                if event.get("type") == "agent.settled":
+                if event.get("type") == "agent.settled" or event.get("piEventType") == "agent_end":
                     run = self.store.load(run_id)
+                if event.get("type") == "agent.settled":
                     run["piState"] = "settled"
                     self.store.save(run)
                     should_resume = run.get("status") == "waiting_pi" and not run.get("currentApprovalId")
+                elif event.get("piEventType") == "agent_end":
+                    proposals = merge_action_proposals(run, proposals_from_agent_end(event))
+                    if proposals:
+                        self.store.save(run)
+                        for proposal in proposals:
+                            self.store.append_event(run_id, {"type": "approval.proposed", "proposal": proposal})
         except FileNotFoundError:
             # A process can finish its final stdout flush after a failed create;
             # never let that background callback crash the Pi reader thread.

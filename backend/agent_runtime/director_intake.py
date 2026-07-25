@@ -87,10 +87,46 @@ def build_project_intake(project_id: str) -> dict[str, Any] | None:
 def build_srt_intake(content: bytes, *, filename: str | None = None) -> dict[str, Any]:
     text = decode_srt(content)
     subtitles, ignored_count = parse_srt(text)
+    return _build_srt_intake(subtitles, filename=filename, ignored_count=ignored_count)
+
+
+def normalize_srt_intake(value: Any) -> dict[str, Any]:
+    """Rebuild a client-posted SRT snapshot from a bounded public schema.
+
+    The browser receives an intake preview before it creates a run, but that
+    object is not a trusted server contract.  Ignore its prompt/harness fields
+    and derive a fresh snapshot from only validated subtitle timings and text.
+    """
+    if not isinstance(value, dict):
+        raise ValueError("Director intake must be an object.")
+    source = value.get("source")
+    if not isinstance(source, dict) or source.get("type") != "srt_upload":
+        raise ValueError("Direct Director intake is only supported for an SRT upload.")
+    rows = value.get("subtitleTimeline")
+    if not isinstance(rows, list) or not rows or len(rows) > MAX_PROMPT_SUBTITLES:
+        raise ValueError(f"SRT intake must contain 1-{MAX_PROMPT_SUBTITLES} subtitle rows.")
+    subtitles: list[dict[str, Any]] = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise ValueError("SRT subtitle rows must be objects.")
+        text = str(row.get("text") or "").strip()
+        if not text or len(text) > 2_000:
+            raise ValueError("Each SRT subtitle must contain at most 2000 characters.")
+        try:
+            start, end = float(row.get("start")), float(row.get("end"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("SRT subtitle timings must be numeric.") from exc
+        if start < 0 or end <= start or end > 86_400:
+            raise ValueError("SRT subtitle timing is outside the supported range.")
+        subtitles.append({"id": f"srt_{index:04d}", "text": text, "start": start, "end": end, "style": {}})
+    return _build_srt_intake(subtitles, filename=str(source.get("filename") or "subtitles.srt"), ignored_count=0)
+
+
+def _build_srt_intake(subtitles: list[dict[str, Any]], *, filename: str | None, ignored_count: int) -> dict[str, Any]:
     transcript = subtitles_to_transcript(subtitles)
     intake = {
         "version": INTAKE_VERSION,
-        "source": {"type": "srt_upload", "filename": filename or "subtitles.srt"},
+        "source": {"type": "srt_upload", "filename": Path(filename or "subtitles.srt").name[:180] or "subtitles.srt"},
         "project": None,
         "sourceScript": transcript,
         "subtitleTimeline": subtitles,

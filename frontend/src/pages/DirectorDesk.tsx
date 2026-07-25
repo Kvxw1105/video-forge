@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useState } from 'react'
-import { Check, FileText, FilmSlate, GitBranch, Play, Robot, UploadSimple, WarningCircle } from '@phosphor-icons/react'
+import { Check, FileText, FilmSlate, GearSix, GitBranch, Play, Robot, UploadSimple, WarningCircle } from '@phosphor-icons/react'
 import { api } from '../lib/api'
 
 const DEFAULT_TASK = '把这篇文案生成一个可预览、可导入剪映的视频草稿。'
@@ -18,6 +18,7 @@ export default function DirectorDesk() {
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [selectedProject, setSelectedProject] = useState<any>(null)
   const [srtFileName, setSrtFileName] = useState('')
+  const [standaloneSrtIntake, setStandaloneSrtIntake] = useState<any>(null)
   const [intakeNotice, setIntakeNotice] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
@@ -43,6 +44,7 @@ export default function DirectorDesk() {
     setSelectedProjectId(projectId)
     setSelectedProject(null)
     setSrtFileName('')
+    setStandaloneSrtIntake(null)
     setIntakeNotice('')
     if (!projectId) return
     setBusy('project')
@@ -75,11 +77,38 @@ export default function DirectorDesk() {
     }
   }
 
+  const importStandaloneSrt = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setBusy('standalone-srt')
+    setError('')
+    setIntakeNotice('')
+    try {
+      const result = await api.uploadDirectorSrtIntake(file)
+      setSelectedProjectId('')
+      setSelectedProject(null)
+      setSrtFileName(file.name)
+      setStandaloneSrtIntake(result.intake)
+      const readiness = result.intake?.readiness || {}
+      setIntakeNotice(`已读取 ${readiness.subtitleCount || 0} 条字幕，时长 ${readiness.durationSeconds || 0} 秒；不会修改任何项目。`)
+    } catch (requestError: any) {
+      setError(requestError.message || '读取 SRT 失败')
+    } finally {
+      setBusy('')
+    }
+  }
+
   const createRun = async () => {
     setBusy('create')
     setError('')
     try {
-      const created = await api.createDirectorRun({ task, recipeId: 'structured-knowledge-video', projectId: selectedProject?.id || undefined })
+      const created = await api.createDirectorRun({
+        task,
+        recipeId: 'structured-knowledge-video',
+        projectId: selectedProject?.id || undefined,
+        intake: standaloneSrtIntake || undefined,
+      })
       await load(created.runId)
     } catch (requestError: any) {
       setError(requestError.message || '创建 Director Run 失败')
@@ -116,6 +145,9 @@ export default function DirectorDesk() {
             <span><GitBranch size={13} className="inline mr-1" />{version?.branch || 'unknown'}</span>
             <span>{String(version?.commit || '').slice(0, 8) || 'no-sha'} / {version?.environment || 'local'}</span>
           </div>
+          <a className="btn-cinematic icon-button" href="/settings/agent" title="模型与上游服务设置" aria-label="模型与上游服务设置">
+            <GearSix size={18} />
+          </a>
         </header>
 
         <section className="grid lg:grid-cols-[380px_minmax(0,1fr)] gap-4">
@@ -129,6 +161,15 @@ export default function DirectorDesk() {
                 <option value="">不绑定项目（仅任务说明）</option>
                 {projects.map(project => <option key={project.id} value={project.id}>{project.name || project.id}</option>)}
               </select>
+              {!selectedProject && <div className="rounded-lg p-3 text-xs space-y-2" style={{ background: 'var(--bg-elevated)' }}>
+                <div className="flex items-center justify-between gap-2"><b>仅上传 SRT 开始</b><FileText size={15} /></div>
+                <p style={{ color: 'var(--text-muted)' }}>直接读取字幕时间轴创建 Director Run，不写入现有项目。</p>
+                <label className="btn-cinematic inline-flex items-center gap-2 cursor-pointer">
+                  <UploadSimple size={15} /> {busy === 'standalone-srt' ? '正在读取...' : '选择 SRT 文件'}
+                  <input className="sr-only" type="file" accept=".srt,application/x-subrip,text/plain" onChange={importStandaloneSrt} disabled={busy === 'standalone-srt'} />
+                </label>
+                {standaloneSrtIntake && <div style={{ color: 'var(--accent)' }}>{standaloneSrtIntake.readiness?.subtitleCount || 0} 条字幕 / {standaloneSrtIntake.readiness?.durationSeconds || 0} 秒</div>}
+              </div>}
               {selectedProject && <div className="rounded-lg p-3 text-xs space-y-2" style={{ background: 'var(--bg-elevated)' }}>
                 <div className="flex items-center gap-2"><FilmSlate size={14} /><b>{selectedProject.name}</b></div>
                 <div style={{ color: 'var(--text-muted)' }}>{subtitleCount} 条字幕 · {projectScript.length} 字文案{selectedProject.structuredContent ? ' · 已结构化' : ''}</div>
@@ -158,6 +199,10 @@ export default function DirectorDesk() {
             {approval && <div className="rounded-lg border p-4 space-y-3" style={{ borderColor: 'var(--accent)', background: 'var(--bg-surface)' }}>
               <div className="flex items-center gap-2 text-sm"><WarningCircle size={16} />审批：{approval.operation}</div>
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{approval.message}</p>
+              {approval.actionProposal?.reason && <div className="text-xs p-3 rounded" style={{ background: 'var(--bg-elevated)' }}>
+                <b>Pi 建议依据</b>
+                <p className="mt-1" style={{ color: 'var(--text-muted)' }}>{approval.actionProposal.reason}</p>
+              </div>}
               <button className="btn-gold w-full justify-center" disabled={busy === 'approval'} onClick={resolveApproval}>
                 <Check size={15} /> replace 并恢复执行
               </button>
