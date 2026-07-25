@@ -1,11 +1,11 @@
 id: pi-video-director
-status: shared-run-store-complete
+status: pi-rpc-sidecar-complete
 branch: codex/pi-video-director
 worktree: D:/A-Project/video-forge-worktrees/pi-video-director
 parent_pr: 25
 base_ref: origin/codex/video-agent-lab
 expected_base_sha: ef5f760e47c7f0e62fda03d67dc7de9496e1f676
-latest_commit: 6df7cd851a21c9610a8922f1d59b5b339fdd78e7
+latest_commit: pending
 draft_pr: https://github.com/Kvxw1105/video-forge/pull/29
 ci_status: passed
 
@@ -39,9 +39,10 @@ completed:
   - Committed and pushed the initial Director implementation.
   - Opened Draft PR #29 against the parent PR branch.
   - PR #29 verify CI passed.
+  - Audited and built Pi RPC source at 8eef62ed3ea62d646a7fad92fa583fc8d71fec17.
+  - Added opt-in PiRpcTransport with JSONL correlation, session metadata, abort, and controlled shutdown.
+  - Added restricted videoforge_recipe_contract extension and verified direct RPC plus Director API startup.
 remaining:
-  - Inspect and adopt the user-provided Pi source/runtime version.
-  - Replace FakePiTransport with Pi RPC Sidecar behind the same transport interface.
   - Connect actual Video Agent Lab recipe execution and VideoForge project operations to DirectorService.
   - Diagnose the Factory preview renderer stall before claiming full Lab closed-loop coverage.
   - Produce an uploaded candidate artifact after real Pi and renderer integration.
@@ -49,15 +50,14 @@ tests:
   - python scripts/verify_pi_director.py
   - npm run build (frontend)
 blockers:
-  - Pi source path/version has not been supplied in this worktree.
   - Mock Factory closed-loop reaches rendering_preview but the local ffmpeg preview process can exceed the verifier 30 second request limit.
-next_action: Obtain Pi source path/version, then implement PiRpcTransport after source audit; keep FakePiTransport as CI fixture.
+next_action: Translate Pi events and connect one approval-gated Lab recipe action; keep FakePiTransport as CI fixture.
 
 delivery:
   type: local-production-entry
   url: http://127.0.0.1:8012/director
-  artifact: local Director Run artifacts under projects/.director-runs
-  build_sha: 6df7cd851a21c9610a8922f1d59b5b339fdd78e7
+  artifact: local Director Run artifacts under .agent-runs
+  build_sha: pending
   verified_at: 2026-07-25T01:57:15Z
   process:
     pid: 9212

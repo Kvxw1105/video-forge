@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from .director_store import DirectorStore
-from .pi_transport import FakePiTransport
+from .pi_transport import FakePiTransport, PiRpcTransport
 from .plugin_tools import create_delivery_artifacts, generate_vector_card
 from agent.lab_runner.recipe_loader import RecipeValidationError, load_recipe_by_id
 
@@ -13,9 +14,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class DirectorService:
-    def __init__(self, store: DirectorStore | None = None, transport: FakePiTransport | None = None):
+    def __init__(self, store: DirectorStore | None = None, transport: Any | None = None):
         self.store = store or DirectorStore()
-        self.transport = transport or FakePiTransport()
+        if transport is not None:
+            self.transport = transport
+        elif os.getenv("VIDEOFORGE_PI_TRANSPORT", "fake").lower() == "rpc":
+            self.transport = PiRpcTransport.from_environment(run_dir=self.store.run_dir, repo_root=REPO_ROOT)
+        else:
+            self.transport = FakePiTransport()
 
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         recipe_id = str(payload.get("recipeId") or "structured-knowledge-video")
@@ -28,6 +34,15 @@ class DirectorService:
         task = run["task"] or "Create a previewable and JianYing-importable video draft from this script."
         session = self.transport.create_session(run_id, task)
         run["piSession"] = session
+        run["transport"] = self.transport.name
+        run["mockTransport"] = bool(session.get("mockTransport"))
+        run["liveCallPerformed"] = bool(session.get("liveCallPerformed"))
+        run["networkCalls"] = session.get("networkCalls")
+        run["metrics"] = {
+            "mockTransport": run["mockTransport"],
+            "liveCallPerformed": run["liveCallPerformed"],
+            "networkCalls": run["networkCalls"],
+        }
         run["recipe"] = {
             "id": recipe.id,
             "version": recipe.version,
@@ -76,6 +91,9 @@ class DirectorService:
         run["messages"].append(message)
         self.store.save(run)
         self.store.append_event(run_id, {"type": "message.created", "message": message})
+        follow_up = getattr(self.transport, "follow_up", None)
+        if follow_up and message["content"]:
+            follow_up(run_id, message["content"])
         return self.get_run(run_id)
 
     def decide_approval(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +133,12 @@ class DirectorService:
 
     def cancel(self, run_id: str) -> dict[str, Any]:
         run = self.store.load(run_id)
+        abort = getattr(self.transport, "abort", None)
+        if abort:
+            abort(run_id)
+        shutdown = getattr(self.transport, "shutdown", None)
+        if shutdown:
+            shutdown(run_id)
         run["status"] = "cancelled"
         self.store.save(run)
         self.store.append_event(run_id, {"type": "run.cancelled"})

@@ -1,38 +1,75 @@
 # Pi Source Adoption
 
-## Status
+## Adopted Source
 
-No external Pi source tree, package, version, or commit has been supplied to
-this worktree. The initial phase deliberately uses FakePiTransport so the
-Director API, UI, approval state, artifact contract, and CI path can be tested
-without a model account or network call.
+- Repository: https://github.com/earendil-works/pi
+- Local audit checkout: `D:/A-Project/video-forge-worktrees/pi-source`
+- Audited commit: `8eef62ed3ea62d646a7fad92fa583fc8d71fec17`
+- Package: `@earendil-works/pi-coding-agent` `0.82.0`
+- License: MIT
 
-## Integration Boundary
+No Pi source is copied into VideoForge. VideoForge launches Pi's built
+`packages/coding-agent/dist/rpc-entry.js` as a sidecar and speaks Pi's public
+RPC protocol.
 
-The future PiRpcTransport belongs in backend/agent_runtime. It must expose the
-same operations now used by FakePiTransport:
+## Implemented Boundary
 
-- create or resume a session;
-- emit ordered agent and tool events;
-- accept cancellation;
-- shut down only its own sidecar process.
+`PiRpcTransport` in `backend/agent_runtime/pi_transport.py` owns one child
+process per Director Run. It uses Pi's strict LF JSONL framing, correlates
+responses by `id`, forwards unsolicited events into the Director event stream,
+and maps cancellation to Pi `abort` followed by a bounded child shutdown.
 
-DirectorService remains the owner of Run state. Pi must not write project JSON,
-JianYing files, or a second Run Store.
+The authoritative Pi session id and session file returned by `get_state` are
+persisted in the Director Run. VideoForge remains the owner of Lab RunStore,
+project JSON, VisualPlan binding, preview generation, and JianYing drafts.
 
-## Required Source Audit
+The production switch is deliberately opt-in:
 
-Before replacing FakePi, record:
+```powershell
+$env:VIDEOFORGE_PI_TRANSPORT = 'rpc'
+$env:VIDEOFORGE_PI_SOURCE = 'D:\A-Project\video-forge-worktrees\pi-source'
+```
 
-1. Pi version, commit, source path, and license.
-2. JSONL/RPC framing and request-response correlation implementation.
-3. AgentSession and SessionManager lifecycle.
-4. Event subscription and replay behavior.
-5. ResourceLoader, extensions, skills, and tool registration APIs.
-6. Cancellation and shutdown semantics on Windows.
-7. Exact copied code, if any, and the upgrade path.
+`fake` remains the default transport, which preserves deterministic CI and
+does not make a model or network request.
 
-## Current Adopted Modules
+## Tool Boundary
 
-None. The existing FakePiTransport is VideoForge-owned test infrastructure,
-not copied Pi source.
+Pi starts with all built-in tools disabled. The only explicit extension is
+`backend/agent_runtime/pi_extensions/recipe_contract.mjs` and its only tool is
+`videoforge_recipe_contract`. It can describe the already-selected Lab recipe
+contract, but has no filesystem, process, network, project-write, renderer, or
+JianYing permissions.
+
+## Source Evidence
+
+- RPC entry: `packages/coding-agent/src/rpc-entry.ts`
+- JSONL framing: `packages/coding-agent/src/modes/rpc/jsonl.ts`
+- Commands/responses: `packages/coding-agent/src/modes/rpc/rpc-types.ts`
+- RPC lifecycle and signal cleanup: `packages/coding-agent/src/modes/rpc/rpc-mode.ts`
+
+Minimum build order verified on Windows:
+
+```powershell
+npm ci --ignore-scripts
+npm --prefix packages/tui run build
+npm --prefix packages/ai run build
+npm --prefix packages/agent run build
+npm --prefix packages/coding-agent run build
+```
+
+## Verification
+
+- `python scripts/verify_pi_rpc_transport.py`: starts built Pi, obtains a
+  correlated `get_state` response, confirms a non-mock session, then aborts and
+  shuts down the sidecar.
+- API smoke with `VIDEOFORGE_PI_TRANSPORT=rpc`: Director Run records
+  `transport=pi_rpc`, a real Pi session id, and reaches `cancelled` after
+  controlled shutdown.
+
+## Still Separate
+
+- Pi prompts are not yet the completion authority for the Lab recipe.
+- Pi event translation into Director planning/tool timeline is not yet wired.
+- VideoForge's Factory preview/JianYing render chain remains separate; its
+  known local ffmpeg preview stall is not masked by this adapter.
