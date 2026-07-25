@@ -73,8 +73,8 @@ The workstream started its own detached uvicorn process:
     Command: python -m uvicorn production_app:app --host 127.0.0.1 --port 8011
 
 At 2026-07-25T01:57:15Z, GET /director returned 200 and GET
-/api/version returned branch codex/pi-video-director with commit
-ef5f760e47c7f0e62fda03d67dc7de9496e1f676.
+/api/version returned branch codex/pi-video-director with the initial Director
+code commit 6df7cd851a21c9610a8922f1d59b5b339fdd78e7.
 
 ## Known Limitations
 
