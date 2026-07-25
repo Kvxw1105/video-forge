@@ -55,7 +55,16 @@ def fetch_models(payload: dict | None = None):
         response = httpx.get(url, headers=_headers(settings), timeout=settings.timeoutSeconds)
         latency = round((time.monotonic() - started) * 1000)
         if response.status_code >= 400:
-            return {"ok": False, "latencyMs": latency, "message": f"HTTP {response.status_code}: {response.text[:180]}", "models": []}
+            detail = response.text[:180]
+            try:
+                body = response.json()
+                code = str(body.get("code") or body.get("error", {}).get("code") or "")
+                message = str(body.get("message") or body.get("error", {}).get("message") or detail)
+            except Exception:
+                code, message = "", detail
+            if response.status_code == 403 and code.upper() in {"INSUFFICIENT_BALANCE", "INSUFFICIENT_QUOTA"}:
+                message = "上游账户余额或配额不足。请到该中转站充值或切换有余额的 Key；即使手动填写模型，实际推理也会被上游拒绝。"
+            return {"ok": False, "latencyMs": latency, "code": code or None, "message": message, "models": []}
         raw = response.json()
         rows = raw.get("data", raw.get("models", raw if isinstance(raw, list) else []))
         models = [{"id": str(row.get("id") or row.get("name")), "name": str(row.get("name") or row.get("id"))} for row in rows if isinstance(row, dict) and (row.get("id") or row.get("name"))]

@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
+from agent_runtime.director_intake import build_project_intake, build_srt_intake, list_project_intakes, prompt_context
 from agent_runtime.director_service import DirectorService
 
 router = APIRouter(prefix="/api/director", tags=["director"])
@@ -19,12 +20,56 @@ def _run_or_404(run_id: str):
         raise HTTPException(404, {"code": "run_not_found", "message": f"Director run not found: {run_id}"}) from exc
 
 
+@router.get("/intake/projects")
+def list_intake_projects():
+    """List projects that can be attached to a Director run."""
+    return {"projects": list_project_intakes()}
+
+
+@router.get("/intake/projects/{project_id}")
+def inspect_project_intake(project_id: str):
+    intake = build_project_intake(project_id)
+    if intake is None:
+        raise HTTPException(404, {"code": "project_not_found", "message": f"Project not found: {project_id}"})
+    return {"intake": intake}
+
+
+@router.post("/intake/srt")
+async def upload_srt_intake(file: UploadFile = File(...)):
+    """Parse an SRT upload without modifying a VideoForge project."""
+    if not (file.filename or "").lower().endswith(".srt"):
+        raise HTTPException(422, {"code": "srt_file_required", "message": "Please upload an .srt subtitle file."})
+    try:
+        intake = build_srt_intake(await file.read(), filename=file.filename)
+    except ValueError as exc:
+        raise HTTPException(422, {"code": "srt_invalid", "message": str(exc)}) from exc
+    return {"intake": intake}
+
+
 @router.post("/runs")
 def create_run(payload: dict):
+    payload = dict(payload)
+    intake = payload.get("intake")
+    if intake is None and payload.get("projectId"):
+        intake = build_project_intake(str(payload["projectId"]))
+        if intake is None:
+            raise HTTPException(404, {"code": "project_not_found", "message": f"Project not found: {payload['projectId']}"})
+    if intake is not None:
+        if not isinstance(intake, dict) or not isinstance(intake.get("source"), dict):
+            raise HTTPException(422, {"code": "intake_invalid", "message": "Director intake must contain a source object."})
+        payload["intake"] = intake
+        task = str(payload.get("task") or "Create a structured, previewable video draft.").strip()
+        payload["task"] = f"{task}\n\n{prompt_context(intake)}"
     try:
-        return service.create_run(payload)
+        run = service.create_run(payload)
     except ValueError as exc:
         raise HTTPException(422, {"code": "recipe_invalid", "message": str(exc)}) from exc
+    if intake is not None:
+        # DirectorStore intentionally has a compact create contract. Persist the
+        # intake snapshot on the already-created Run without mutating its source project.
+        run["intake"] = intake
+        service.store.save(run)
+    return run
 
 
 @router.get("/runs")

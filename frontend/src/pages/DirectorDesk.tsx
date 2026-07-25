@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Check, FilmSlate, GitBranch, Play, Robot, WarningCircle } from '@phosphor-icons/react'
+import { ChangeEvent, useEffect, useMemo, useState } from 'react'
+import { Check, FileText, FilmSlate, GitBranch, Play, Robot, UploadSimple, WarningCircle } from '@phosphor-icons/react'
 import { api } from '../lib/api'
 
 const DEFAULT_TASK = '把这篇文案生成一个可预览、可导入剪映的视频草稿。'
@@ -14,9 +14,16 @@ export default function DirectorDesk() {
   const [run, setRun] = useState<any>(null)
   const [events, setEvents] = useState<any[]>([])
   const [version, setVersion] = useState<any>(null)
+  const [projects, setProjects] = useState<any[]>([])
+  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const [selectedProject, setSelectedProject] = useState<any>(null)
+  const [srtFileName, setSrtFileName] = useState('')
+  const [intakeNotice, setIntakeNotice] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const approval = useMemo(() => (run?.approvals || []).find((item: any) => item.status === 'pending'), [run])
+  const subtitleCount = Array.isArray(selectedProject?.subtitles) ? selectedProject.subtitles.length : 0
+  const projectScript = String(selectedProject?.script || '').trim()
 
   const load = async (runId: string) => {
     const result = await Promise.all([api.getDirectorRun(runId), api.getDirectorRunEvents(runId)])
@@ -26,16 +33,53 @@ export default function DirectorDesk() {
 
   useEffect(() => {
     api.getVersion().then(setVersion).catch(() => undefined)
+    api.listProjects().then(setProjects).catch(() => undefined)
     api.listDirectorRuns().then((runs: any[]) => {
       if (runs[0]?.runId) load(runs[0].runId).catch(() => undefined)
     }).catch(() => undefined)
   }, [])
 
+  const selectProject = async (projectId: string) => {
+    setSelectedProjectId(projectId)
+    setSelectedProject(null)
+    setSrtFileName('')
+    setIntakeNotice('')
+    if (!projectId) return
+    setBusy('project')
+    setError('')
+    try {
+      setSelectedProject(await api.getProject(projectId))
+    } catch (requestError: any) {
+      setError(requestError.message || '读取项目失败')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const importSrt = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || !selectedProjectId) return
+    setBusy('srt')
+    setError('')
+    setIntakeNotice('')
+    try {
+      const result = await api.importSrt(selectedProjectId, file)
+      setSelectedProject(result.project)
+      setSrtFileName(file.name)
+      setIntakeNotice(`已导入 ${result.subtitleCount} 条字幕${result.ignoredCount ? `，忽略 ${result.ignoredCount} 条无效片段` : ''}`)
+    } catch (requestError: any) {
+      setError(requestError.message || '导入 SRT 失败')
+    } finally {
+      setBusy('')
+    }
+  }
+
   const createRun = async () => {
     setBusy('create')
     setError('')
     try {
-      const created = await api.createDirectorRun({ task, recipeId: 'structured-knowledge-video' })
+      const created = await api.createDirectorRun({ task, recipeId: 'structured-knowledge-video', projectId: selectedProject?.id || undefined })
       await load(created.runId)
     } catch (requestError: any) {
       setError(requestError.message || '创建 Director Run 失败')
@@ -76,6 +120,27 @@ export default function DirectorDesk() {
 
         <section className="grid lg:grid-cols-[380px_minmax(0,1fr)] gap-4">
           <aside className="card-cinematic p-5 space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="label-cinematic">输入资料</p>
+                {busy === 'project' && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>读取项目...</span>}
+              </div>
+              <select className="input-cinematic w-full text-sm" value={selectedProjectId} onChange={event => selectProject(event.target.value)} disabled={busy === 'project'}>
+                <option value="">不绑定项目（仅任务说明）</option>
+                {projects.map(project => <option key={project.id} value={project.id}>{project.name || project.id}</option>)}
+              </select>
+              {selectedProject && <div className="rounded-lg p-3 text-xs space-y-2" style={{ background: 'var(--bg-elevated)' }}>
+                <div className="flex items-center gap-2"><FilmSlate size={14} /><b>{selectedProject.name}</b></div>
+                <div style={{ color: 'var(--text-muted)' }}>{subtitleCount} 条字幕 · {projectScript.length} 字文案{selectedProject.structuredContent ? ' · 已结构化' : ''}</div>
+                <label className="btn-cinematic inline-flex items-center gap-2 cursor-pointer">
+                  <UploadSimple size={15} /> {busy === 'srt' ? '导入中...' : '导入 SRT'}
+                  <input className="sr-only" type="file" accept=".srt,application/x-subrip,text/plain" onChange={importSrt} disabled={busy === 'srt'} />
+                </label>
+                {srtFileName && <div className="flex items-center gap-2 break-all"><FileText size={14} />{srtFileName}</div>}
+                {intakeNotice && <div style={{ color: 'var(--accent)' }}>{intakeNotice}</div>}
+              </div>}
+              {!selectedProject && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>选择项目后可导入 SRT；字幕会写入项目时间轴，并作为 Director 的结构化上下文。</p>}
+            </div>
             <div>
               <p className="label-cinematic">任务</p>
               <textarea className="input-cinematic w-full min-h-[180px] mt-2 text-sm" value={task} onChange={event => setTask(event.target.value)} />
