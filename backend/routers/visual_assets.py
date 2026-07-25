@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Literal
@@ -20,6 +21,7 @@ from visual_assets.contracts import (
     VisualSemantic,
 )
 from visual_assets.hashing import file_sha256, hash_payload
+from visual_assets.code_visual.motion_export import render_motion_mp4
 from visual_assets.rasterizer import PillowSvgRasterizer, ResvgSvgRasterizer
 from visual_assets.service import render_visual_asset_project
 
@@ -45,6 +47,8 @@ class CodeVisualRenderBody(StickmanRenderBody):
     rendererId: Literal["auto", "white_sketch", "silhouette", "pixel_rules", "mechanism_diagram"] = "auto"
     themeMode: Literal["dark", "light"] | None = None
     ipPack: Literal["neutral", "xuanqi", "huicewolf", "ayin"] = "neutral"
+    exportVideo: bool = True
+    videoFps: int = Field(default=12, ge=6, le=30)
 
 
 def _project_dir(project_id: str) -> Path:
@@ -103,6 +107,62 @@ def _subtitle_items(project: dict) -> list[VisualAssetSourceItem]:
     return items
 
 
+def _provider_run_root(provider_id: str) -> str:
+    return "code-visual" if provider_id == "code_visual_svg" else "stickman"
+
+
+def _provider_run_prefix(provider_id: str) -> str:
+    return provider_id.replace("_svg", "") + "_run_"
+
+
+def _render_code_visual_videos(result, output_dir: Path, canvas: dict, fps: int) -> tuple[dict[str, dict], list[dict]]:
+    manifest_path = output_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {"items": []}
+    manifest_items = list(manifest.get("items") or [])
+    by_segment = {str(item.get("segmentId")): item for item in manifest_items if isinstance(item, dict)}
+    video_exports: dict[str, dict] = {}
+    width = int(canvas.get("width", 1080) or 1080)
+    height = int(canvas.get("height", 1920) or 1920)
+    for item in result.items:
+        if item.status not in {"generated", "fallback", "needs_review", "skipped_unchanged"}:
+            continue
+        if not item.svgPath or not item.motionPlanPath:
+            continue
+        manifest_item = by_segment.get(item.segmentId, {})
+        existing_rel = manifest_item.get("videoPath")
+        existing_path = output_dir / str(existing_rel or "")
+        if existing_rel and existing_path.exists() and manifest_item.get("videoSha256") == file_sha256(existing_path):
+            video_exports[item.segmentId] = {
+                "videoPath": existing_rel,
+                "videoSha256": manifest_item.get("videoSha256"),
+            }
+            continue
+        sidecar = json.loads((output_dir / item.motionPlanPath).read_text(encoding="utf-8"))
+        motion_plan = sidecar.get("motionPlan") or {}
+        video_rel = f"assets/{Path(item.svgPath).stem}.mp4"
+        video_path = output_dir / video_rel
+        render_motion_mp4(
+            output_dir / item.svgPath,
+            motion_plan,
+            video_path,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+        video_hash = file_sha256(video_path)
+        manifest_item.update({"videoPath": video_rel, "videoSha256": video_hash})
+        video_exports[item.segmentId] = {
+            "videoPath": video_rel,
+            "videoSha256": video_hash,
+            "motionPlanPath": item.motionPlanPath,
+            "duration": motion_plan.get("duration"),
+        }
+    if video_exports:
+        manifest["items"] = manifest_items
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return video_exports, manifest_items
+
+
 def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None = None, provider_id: str = "stickman_svg") -> dict:
     project_model = get_project(project_id)
     if project_model is None:
@@ -125,17 +185,24 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
         behavior=GenerationBehavior(existingOutputPolicy="skip_unchanged", protectManualEdits=True, replaceManualEdits=body.replaceManualEdits, segmentId=single_scene_id),
     )
     run_hash = hash_payload({"projectId": request.projectId, "source": request.source.model_dump(mode="python"), "renderer": request.renderer.model_dump(mode="python"), "exports": request.exports.model_dump(mode="python")})
-    run_id = "stickman_run_" + run_hash[:12]
-    output_dir = _project_dir(project_id) / "visual-assets" / "stickman" / run_id
+    run_id = _provider_run_prefix(provider_id) + run_hash[:12]
+    run_root = _provider_run_root(provider_id)
+    output_dir = _project_dir(project_id) / "visual-assets" / run_root / run_id
     result = render_visual_asset_project(request, output_dir, ResvgSvgRasterizer() if provider_id == "code_visual_svg" else PillowSvgRasterizer())
+    video_exports, response_items = ({}, [item.model_dump(mode="json") for item in result.items])
+    if provider_id == "code_visual_svg" and isinstance(body, CodeVisualRenderBody) and body.exportVideo:
+        video_exports, response_items = _render_code_visual_videos(result, output_dir, project.get("canvas") or {}, body.videoFps)
     bindings, conflicts = [], []
     if bind:
         assets = list(project.get("assets") or [])
         asset_dir = _project_dir(project_id) / "assets"
         asset_dir.mkdir(parents=True, exist_ok=True)
+        segment_updates: dict[str, dict] = {}
         for item in result.items:
             scene = scenes.get(item.segmentId)
-            if scene is None or item.pngPath is None or item.status not in {"generated", "fallback", "needs_review", "skipped_unchanged"}:
+            has_png = item.pngPath is not None
+            has_video = item.segmentId in video_exports
+            if scene is None or (not has_png and not has_video) or item.status not in {"generated", "fallback", "needs_review", "skipped_unchanged"}:
                 continue
             existing_ids = list(scene.get("visualAssetIds") or [])
             existing = [asset for asset in assets if asset.get("id") in existing_ids]
@@ -149,7 +216,7 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
                 for asset in provider_assets:
                     metadata = asset.get("metadata") or {}
                     asset_path = _project_dir(project_id) / str(asset.get("path") or "")
-                    expected_hash = metadata.get("pngSha256")
+                    expected_hash = metadata.get("videoSha256") or metadata.get("pngSha256") or metadata.get("contentSha256")
                     if metadata.get("manualOverride") or not asset_path.exists() or (expected_hash and file_sha256(asset_path) != expected_hash):
                         manually_changed = True
                         break
@@ -157,14 +224,24 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
                     conflicts.append({"sceneId": item.segmentId, "code": "manual_override_protected"})
                     continue
             asset_id = f"visual_{provider_id.replace('_svg', '')}_{item.segmentId}"
-            filename = Path(item.pngPath).name
-            source_png = output_dir / item.pngPath
-            target_png = asset_dir / filename
-            if not target_png.exists() or item.pngSha256 != next((a.get("metadata", {}).get("pngSha256") for a in assets if a.get("id") == asset_id), None):
-                shutil.copy2(source_png, target_png)
+            if has_video:
+                exported = video_exports[item.segmentId]
+                filename = Path(exported["videoPath"]).name
+                source_asset = output_dir / exported["videoPath"]
+                target_asset = asset_dir / filename
+                asset_type = "video"
+                content_hash = exported["videoSha256"]
+            else:
+                filename = Path(item.pngPath).name
+                source_asset = output_dir / item.pngPath
+                target_asset = asset_dir / filename
+                asset_type = "image"
+                content_hash = item.pngSha256
+            if not target_asset.exists() or content_hash != next((a.get("metadata", {}).get("contentSha256") or a.get("metadata", {}).get("videoSha256") or a.get("metadata", {}).get("pngSha256") for a in assets if a.get("id") == asset_id), None):
+                shutil.copy2(source_asset, target_asset)
             record = {
                 "id": asset_id,
-                "type": "image",
+                "type": asset_type,
                 "name": filename,
                 "path": f"assets/{filename}",
                 "metadata": {
@@ -175,8 +252,14 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
                     "templateId": item.templateId,
                     "templateVersion": item.templateVersion,
                     "inputHash": item.inputHash,
-                    "svgPath": f"visual-assets/stickman/{run_id}/{item.svgPath}",
+                    "svgPath": f"visual-assets/{run_root}/{run_id}/{item.svgPath}",
+                    "motionPlanPath": f"visual-assets/{run_root}/{run_id}/{item.motionPlanPath}" if item.motionPlanPath else None,
+                    "videoPath": f"visual-assets/{run_root}/{run_id}/{video_exports[item.segmentId]['videoPath']}" if has_video else None,
                     "pngSha256": item.pngSha256,
+                    "videoSha256": video_exports[item.segmentId]["videoSha256"] if has_video else None,
+                    "contentSha256": content_hash,
+                    "motionPlan": item.motionHint.get("motionPlan") if item.motionHint else None,
+                    "motionLayerIds": item.motionHint.get("layerIds") if item.motionHint else None,
                     "manualOverride": False,
                     "transform": {"x": 0.5, "y": 0.46, "scale": 0.9, "rotation": 0, "fit": "contain"},
                 },
@@ -186,17 +269,42 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
             scene["visualAssetIds"] = [asset_id]
             scene["primaryAssetId"] = asset_id
             bindings.append({"sceneId": item.segmentId, "assetId": asset_id})
+            if provider_id == "code_visual_svg":
+                segment_updates[item.segmentId] = {
+                    "id": f"visual_code_visual_{item.segmentId}_segment",
+                    "assetPath": f"assets/{filename}",
+                    "type": asset_type,
+                    "start": item.start,
+                    "end": item.end,
+                    "sourceStart": 0,
+                    "transform": record["metadata"]["transform"],
+                    "metadata": {"sceneId": item.segmentId, "assetId": asset_id, "generatedBy": "visual_asset_provider", "provider": provider_id},
+                }
         if bindings:
-            updated = update_project(project_id, {"assets": assets, "structuredContent": project["structuredContent"]})
+            payload = {"assets": assets, "structuredContent": project["structuredContent"]}
+            if provider_id == "code_visual_svg" and segment_updates:
+                replacement_segment_ids = {entry["id"] for entry in segment_updates.values()}
+                existing_segments = [
+                    segment for segment in list(project.get("segments") or [])
+                    if str(segment.get("id") or "") not in replacement_segment_ids
+                ]
+                provider_scene_ids = set(segment_updates)
+                existing_segments = [
+                    segment for segment in existing_segments
+                    if not ((segment.get("metadata") or {}).get("provider") == provider_id and (segment.get("metadata") or {}).get("sceneId") in provider_scene_ids)
+                ]
+                payload["segments"] = sorted([*existing_segments, *segment_updates.values()], key=lambda segment: (float(segment.get("start", 0) or 0), str(segment.get("id") or "")))
+            updated = update_project(project_id, payload)
             if updated is None:
                 raise HTTPException(404, "project_not_found")
     return {
         "runId": result.runId,
         "status": "partial" if conflicts and result.status == "succeeded" else result.status,
-        "manifest": f"visual-assets/stickman/{run_id}/manifest.json",
-        "generationReport": f"visual-assets/stickman/{run_id}/generation_report.json",
-        "contactSheet": f"visual-assets/stickman/{run_id}/contact_sheet.png" if result.contactSheetPngPath else f"visual-assets/stickman/{run_id}/contact_sheet.svg",
-        "items": [item.model_dump(mode="json") for item in result.items],
+        "manifest": f"visual-assets/{run_root}/{run_id}/manifest.json",
+        "generationReport": f"visual-assets/{run_root}/{run_id}/generation_report.json",
+        "contactSheet": f"visual-assets/{run_root}/{run_id}/contact_sheet.png" if result.contactSheetPngPath else f"visual-assets/{run_root}/{run_id}/contact_sheet.svg",
+        "items": response_items,
+        "videoExports": list(video_exports.values()),
         "bindings": bindings,
         "conflicts": conflicts,
         "warnings": result.warnings,

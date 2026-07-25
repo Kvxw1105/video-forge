@@ -21,7 +21,22 @@ def _source_items(request: VisualAssetRenderRequest):
     return list(request.source.segments)
 
 
-def _manifest_item(item, route, input_hash, status, rendered=None, svg_path=None, png_path=None, svg_hash=None, png_hash=None, error=None, warnings=None):
+def _manifest_item(
+    item,
+    route,
+    input_hash,
+    status,
+    rendered=None,
+    svg_path=None,
+    png_path=None,
+    motion_plan_path=None,
+    video_path=None,
+    svg_hash=None,
+    png_hash=None,
+    video_hash=None,
+    error=None,
+    warnings=None,
+):
     return VisualAssetManifestItem(
         segmentId=item.id,
         order=item.order,
@@ -38,8 +53,11 @@ def _manifest_item(item, route, input_hash, status, rendered=None, svg_path=None
         templateParameters=route.parameters,
         svgPath=svg_path,
         pngPath=png_path,
+        motionPlanPath=motion_plan_path,
+        videoPath=video_path,
         svgSha256=svg_hash,
         pngSha256=png_hash,
+        videoSha256=video_hash,
         composition=rendered.composition if rendered else {},
         motionHint=rendered.motionHint if rendered else {},
         inputHash=input_hash,
@@ -104,6 +122,17 @@ def render_visual_asset_project(request: VisualAssetRenderRequest, output_dir: P
             errors.append(err); manifest_items.append(_manifest_item(item, route, item_hash, "failed", rendered, error=err)); continue
         atomic_write_text(svg_path, rendered.svg)
         svg_hash = file_sha256(svg_path)
+        motion_plan_rel = None
+        motion_plan = (rendered.motionHint or {}).get("motionPlan") if rendered else None
+        if isinstance(motion_plan, dict) and motion_plan:
+            motion_plan_rel = f"assets/{asset_filename(item.order, item.id, route.templateId, 'motion.json')}"
+            atomic_write_json(output_dir / motion_plan_rel, {
+                "schemaVersion": 1,
+                "segmentId": item.id,
+                "templateId": route.templateId,
+                "layerIds": (rendered.motionHint or {}).get("layerIds") or [],
+                "motionPlan": motion_plan,
+            })
         item_status = "needs_review" if route.needsReview else ("fallback" if route.fallbackUsed else "generated")
         png_hash = None
         if request.exports.png:
@@ -122,7 +151,7 @@ def render_visual_asset_project(request: VisualAssetRenderRequest, output_dir: P
                         png_status = "succeeded"
                 else:
                     errors.append(GenerationError(code=result.error_code or "png_render_failed", message=result.message, segmentId=item.id))
-        manifest_items.append(_manifest_item(item, route, item_hash, item_status, rendered, svg_rel, png_rel if png_hash else None, svg_hash, png_hash))
+        manifest_items.append(_manifest_item(item, route, item_hash, item_status, rendered, svg_rel, png_rel if png_hash else None, motion_plan_rel, None, svg_hash, png_hash, None))
         manifest = VisualAssetManifest(projectId=request.projectId, provider=provider.provider_id, providerVersion=provider.provider_version, visualPlanId=request.source.visualPlanId, visualSourceHash=request.source.visualSourceHash, inputHash=run_hash, items=sorted(manifest_items, key=lambda x: x.order))
         atomic_write_json(manifest_path, manifest.model_dump(mode="json"))
         atomic_write_text(events_path, (events_path.read_text(encoding="utf-8") if events_path.exists() else "") + f"generated {item.id}\n")
@@ -152,4 +181,5 @@ def render_visual_asset_project(request: VisualAssetRenderRequest, output_dir: P
     status = "failed" if failed == len(manifest.items) and failed else ("partial" if errors or warnings or manual or png_status in {"unavailable", "failed"} else "succeeded")
     report = GenerationReport(projectId=request.projectId, provider=provider.provider_id, providerVersion=provider.provider_version, status=status, itemCount=len(manifest.items), generatedCount=sum(1 for item in manifest.items if item.status in {"generated", "fallback", "needs_review"}), skippedCount=skipped, manualOverrideCount=manual, failedCount=failed, pngStatus=png_status, errors=errors, warnings=sorted(set(warnings)), rasterizer={"id": getattr(rasterizer, "rasterizer_id", None), "available": bool(rasterizer and rasterizer.is_available())})
     atomic_write_json(report_path, report.model_dump(mode="json"))
-    return VisualAssetGenerationResult(runId="stickman_run_" + run_hash[:12], projectId=request.projectId, visualPlanId=request.source.visualPlanId, visualSourceHash=request.source.visualSourceHash, inputHash=run_hash, provider=provider.provider_id, providerVersion=provider.provider_version, status=status, manifestPath=str(manifest_path), contactSheetPath=str(contact_path) if contact_path else None, contactSheetPngPath=str(contact_png) if contact_png else None, generationReportPath=str(report_path), items=manifest.items, errors=errors, warnings=sorted(set(warnings)))
+    run_prefix = provider.provider_id.replace("_svg", "") + "_run_"
+    return VisualAssetGenerationResult(runId=run_prefix + run_hash[:12], projectId=request.projectId, visualPlanId=request.source.visualPlanId, visualSourceHash=request.source.visualSourceHash, inputHash=run_hash, provider=provider.provider_id, providerVersion=provider.provider_version, status=status, manifestPath=str(manifest_path), contactSheetPath=str(contact_path) if contact_path else None, contactSheetPngPath=str(contact_png) if contact_png else None, generationReportPath=str(report_path), items=manifest.items, errors=errors, warnings=sorted(set(warnings)))

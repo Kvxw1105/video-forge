@@ -199,8 +199,11 @@ class VisualAssetManifestItem(StrictModel):
     templateParameters: dict[str, Any] = Field(default_factory=dict)
     svgPath: str | None = None
     pngPath: str | None = None
+    motionPlanPath: str | None = None
+    videoPath: str | None = None
     svgSha256: str | None = None
     pngSha256: str | None = None
+    videoSha256: str | None = None
     composition: dict[str, Any] = Field(default_factory=dict)
     motionHint: dict[str, Any] = Field(default_factory=dict)
     inputHash: str
