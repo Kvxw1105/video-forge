@@ -86,3 +86,11 @@ or JianYing output. No Pi source has been adopted yet.
 Audit the supplied Pi source version, add a PiRpcTransport that preserves the
 existing FakePiTransport interface, then use Director tool events to invoke the
 existing Lab Runner and Factory APIs.
+
+## Draft PR
+
+Draft PR #29 is open against codex/video-agent-lab:
+
+https://github.com/Kvxw1105/video-forge/pull/29
+
+Its verify workflow started after the initial feature and handoff commits.
