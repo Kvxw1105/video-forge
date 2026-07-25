@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from .director_store import DirectorStore
 from .lab_actions import dispatch_factory_binding, record_binding_action
-from .pi_transport import FakePiTransport, PiRpcTransport
+from .pi_transport import FakePiTransport, PiRpcError, PiRpcTransport
 from .plugin_tools import create_delivery_artifacts, generate_vector_card
 from agent.lab_runner.recipe_loader import RecipeValidationError, load_recipe_by_id
 from vforge.client import VForgeError, bind_scene_assets
@@ -18,9 +19,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class DirectorService:
     def __init__(self, store: DirectorStore | None = None, transport: Any | None = None, factory_binder: Any | None = None):
         self.store = store or DirectorStore()
+        self._state_lock = threading.RLock()
         self.factory_binder = factory_binder or bind_scene_assets
         if transport is not None:
             self.transport = transport
+            set_event_sink = getattr(self.transport, "set_event_sink", None)
+            if set_event_sink:
+                set_event_sink(self._on_pi_event)
         elif os.getenv("VIDEOFORGE_PI_TRANSPORT", "fake").lower() == "rpc":
             self.transport = PiRpcTransport.from_environment(run_dir=self.store.run_dir, repo_root=REPO_ROOT, event_sink=self._on_pi_event)
         else:
@@ -41,6 +46,7 @@ class DirectorService:
         task = run["task"] or "Create a previewable and JianYing-importable video draft from this script."
         session = self.transport.create_session(run_id, task)
         run["piSession"] = session
+        run["piState"] = "starting"
         run["transport"] = self.transport.name
         run["mockTransport"] = bool(session.get("mockTransport"))
         run["liveCallPerformed"] = bool(session.get("liveCallPerformed"))
@@ -62,6 +68,32 @@ class DirectorService:
         self.store.append_event(run_id, {"type": "recipe.loaded", "recipeId": recipe.id, "recipeVersion": recipe.version, "stepCount": len(recipe.steps)})
         for event in self.transport.initial_events(run_id, task):
             self.store.append_event(run_id, event)
+        prompt = getattr(self.transport, "prompt", None)
+        if prompt:
+            with self._state_lock:
+                run["piState"] = "running"
+                self.store.save(run)
+            try:
+                prompt_result = prompt(run_id, task)
+            except PiRpcError as exc:
+                run["piState"] = "failed"
+                run["status"] = "recoverable"
+                run["errors"].append({"code": "pi_prompt_failed", "message": str(exc), "recoverable": True})
+                self.store.save(run)
+                self.store.append_event(run_id, {"type": "pi.prompt.failed", "errorCode": "pi_prompt_failed"})
+                return self.get_run(run_id)
+            with self._state_lock:
+                run = self.store.load(run_id)
+                run["piPromptAccepted"] = bool(prompt_result.get("accepted"))
+                if prompt_result.get("settled"):
+                    run["piState"] = "settled"
+                run["liveCallPerformed"] = bool(run["liveCallPerformed"] or not run["mockTransport"])
+                run["metrics"]["liveCallPerformed"] = run["liveCallPerformed"]
+                self.store.save(run)
+                is_settled = run["piState"] == "settled"
+            self.store.append_event(run_id, {"type": "pi.prompt.accepted", "settled": is_settled})
+            if is_settled:
+                self.store.append_event(run_id, {"type": "agent.settled", "transport": self.transport.name})
         artifact = generate_vector_card(self.store.run_dir(run_id), scene_id="scene_001", title="Director Draft", body=task)
         run["toolCalls"].append({"toolName": "vector_card.generate_scene_asset", "status": "succeeded", "sceneId": "scene_001", "artifactId": artifact["artifactId"]})
         run["artifacts"].append(artifact)
@@ -125,6 +157,12 @@ class DirectorService:
             return run
         if run.get("status") == "succeeded":
             return run
+        if run.get("piState") != "settled":
+            run["status"] = "waiting_pi"
+            run["waitingReason"] = "pi_agent_settled"
+            self.store.save(run)
+            self.store.append_event(run_id, {"type": "lab.action.waiting_for_pi", "stepId": "bind_assets", "piState": run.get("piState")})
+            return self.get_run(run_id)
         self.store.append_event(run_id, {"type": "run.resumed"})
         recipe = load_recipe_by_id(run["recipeId"], root=REPO_ROOT / "agent" / "recipes")
         record_binding_action(self.store, run, recipe, artifact_id="artifact_scene_001_vector_card")
@@ -159,12 +197,21 @@ class DirectorService:
 
     def _on_pi_event(self, run_id: str, event: dict[str, Any]) -> None:
         """Persist asynchronous Pi events in the same ordered RunStore stream."""
+        should_resume = False
         try:
-            self.store.append_event(run_id, event)
+            with self._state_lock:
+                self.store.append_event(run_id, event)
+                if event.get("type") == "agent.settled":
+                    run = self.store.load(run_id)
+                    run["piState"] = "settled"
+                    self.store.save(run)
+                    should_resume = run.get("status") == "waiting_pi" and not run.get("currentApprovalId")
         except FileNotFoundError:
             # A process can finish its final stdout flush after a failed create;
             # never let that background callback crash the Pi reader thread.
             return
+        if should_resume:
+            self.resume(run_id)
 
     def cancel(self, run_id: str) -> dict[str, Any]:
         run = self.store.load(run_id)
@@ -174,6 +221,7 @@ class DirectorService:
         shutdown = getattr(self.transport, "shutdown", None)
         if shutdown:
             shutdown(run_id)
+        run["piState"] = "cancelled"
         run["status"] = "cancelled"
         self.store.save(run)
         self.store.append_event(run_id, {"type": "run.cancelled"})

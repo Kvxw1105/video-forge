@@ -117,7 +117,7 @@ class _PiRpcSidecar:
                     response.update(payload)
                     ready.set()
                     continue
-            self._on_event({"type": "pi.event", "event": payload})
+            self._on_event(payload)
         self._reject_pending(self._exit_message())
 
     def _read_stderr(self) -> None:
@@ -208,8 +208,15 @@ class PiRpcTransport:
             *([] if self._event_sink else streamed),
         ]
 
+    def set_event_sink(self, event_sink: Callable[[str, dict[str, Any]], None] | None) -> None:
+        self._event_sink = event_sink
+
     def follow_up(self, run_id: str, message: str) -> None:
         self._get_or_start(run_id).request({"type": "follow_up", "message": message})
+
+    def prompt(self, run_id: str, message: str) -> dict[str, Any]:
+        self._get_or_start(run_id).request({"type": "prompt", "message": message})
+        return {"accepted": True, "settled": False}
 
     def abort(self, run_id: str) -> None:
         sidecar = self._sidecars.get(run_id)
@@ -260,3 +267,6 @@ class FakePiTransport:
             {"type": "agent.message", "role": "assistant", "content": "Director Run created; preparing the first structured scene asset."},
             {"type": "tool.call.started", "toolName": "vector_card.generate_scene_asset", "sceneId": "scene_001"},
         ]
+
+    def prompt(self, run_id: str, message: str) -> dict[str, Any]:
+        return {"accepted": True, "settled": True}

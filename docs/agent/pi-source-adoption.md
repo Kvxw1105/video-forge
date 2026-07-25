@@ -66,10 +66,18 @@ npm --prefix packages/coding-agent run build
 - API smoke with `VIDEOFORGE_PI_TRANSPORT=rpc`: Director Run records
   `transport=pi_rpc`, a real Pi session id, and reaches `cancelled` after
   controlled shutdown.
+- `python scripts/verify_real_pi_director_lifecycle.py`: starts Pi's official
+  RPC entrypoint against a temporary local OpenAI-compatible model provider.
+  It proves the real `prompt` event stream is stored, an approval pauses at
+  `waiting_pi`, a real Pi `agent_settled` releases the action, and exactly one
+  explicit-context Factory bind is dispatched. The test makes no external model
+  or paid provider request.
 
 ## Still Separate
 
-- Pi prompts are not yet the completion authority for the Lab recipe.
+- Pi prompt acknowledgement is not a completion signal. A Director action now
+  waits for Pi `agent_settled` before it leaves `waiting_pi` or dispatches an
+  explicit-context Factory binding.
 - Pi `tool_execution_*`, message, turn, and settlement events now map into the
   Director SSE/replay timeline. A successful approval records the selected
   recipe's `bind_assets` / `bind_scene_assets` Lab action before the existing

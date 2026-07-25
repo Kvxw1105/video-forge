@@ -28,6 +28,9 @@ and creates preview and JianYing candidate artifacts.
   existing binding approval to the recipe's `bind_assets` Lab action contract.
 - Dispatches the existing Factory `bind_scene_assets` API after approval only
   when the Run supplies explicit batch/item/binding context.
+- Real Pi prompt streams are now persisted and approval waits for Pi
+  `agent_settled` before dispatching Factory binding; deterministic FakePi
+  settles synchronously for CI.
 
 ## Not Implemented
 
@@ -112,9 +115,9 @@ not a passing verification result.
 
 ## Next Precise Task
 
-Use Pi's `agent_settled` event as a completion gate for an approved Lab action,
-without treating a successful RPC acknowledgement as a completed render. Keep
-Pi restricted to explicit VideoForge extensions; do not enable raw Pi read,
+Add Pi session rebind after a backend restart, then decide whether planned
+tool-call proposals should be surfaced as new Director approvals. Keep Pi
+restricted to explicit VideoForge extensions; do not enable raw Pi read,
 write, edit, bash, or filesystem tools.
 
 ## Draft PR
