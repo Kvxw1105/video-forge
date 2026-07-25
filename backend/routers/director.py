@@ -21,7 +21,10 @@ def _run_or_404(run_id: str):
 
 @router.post("/runs")
 def create_run(payload: dict):
-    return service.create_run(payload)
+    try:
+        return service.create_run(payload)
+    except ValueError as exc:
+        raise HTTPException(422, {"code": "recipe_invalid", "message": str(exc)}) from exc
 
 
 @router.get("/runs")

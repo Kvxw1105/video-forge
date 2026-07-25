@@ -32,7 +32,7 @@ class DirectorStore:
         run_id = self.new_run_id()
         run = self.store.create(
             str(payload.get("recipeId") or "structured-knowledge-video"),
-            1,
+            int(payload.get("recipeVersion") or 1),
             run_id=run_id,
             runtime="director",
         )

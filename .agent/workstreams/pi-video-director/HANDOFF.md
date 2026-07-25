@@ -58,6 +58,13 @@ projects/.director-runs directory may remain on a developer machine from the
 first implementation pass; it is historical data and must not be deleted by
 this workstream.
 
+DirectorService now loads the selected Lab Recipe before Run creation, persists
+its id/version/step count in the Run, and emits a recipe.loaded event. Unknown
+recipe ids return HTTP 422 without creating a Run.
+
+Recipe loading uses the repository-relative agent/recipes directory so it works
+when the production backend process starts from the backend directory.
+
 ## Environment
 
 Optional values VIDEOFORGE_BRANCH, VIDEOFORGE_COMMIT, VIDEOFORGE_BUILD_TIME,
@@ -73,7 +80,7 @@ and VIDEOFORGE_ENV override the API version endpoint.
 
 The workstream started its own detached uvicorn process:
 
-    PID: 53960
+    PID: 9212
     Port: 8012
     URL: http://127.0.0.1:8012/director
     Command: python -m uvicorn production_app:app --host 127.0.0.1 --port 8012

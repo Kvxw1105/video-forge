@@ -22,12 +22,17 @@ def main() -> int:
     run = started.json()
     assert run["status"] == "waiting_approval", run
     assert run["runtime"] == "director", run
+    assert run["recipe"]["id"] == "structured-knowledge-video", run
+    assert run["recipe"]["stepCount"] > 0, run
     assert run["mockTransport"] is True
     assert run["liveCallPerformed"] is False
     assert run["networkCalls"] == 0
     events = client.get(f"/api/director/runs/{run['runId']}/events").json()["events"]
     assert events[0]["sequence"] == 1
+    assert any(item["type"] == "recipe.loaded" for item in events)
     assert any(item["type"] == "approval.requested" for item in events)
+    invalid = client.post("/api/director/runs", json={"task": "invalid recipe", "recipeId": "missing-recipe"})
+    assert invalid.status_code == 422, invalid.text
     approval = run["approvals"][0]
     decided = client.post(f"/api/director/runs/{run['runId']}/approvals", json={"approvalId": approval["approvalId"], "decision": "replace"})
     assert decided.status_code == 200, decided.text

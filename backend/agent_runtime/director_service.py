@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from .director_store import DirectorStore
 from .pi_transport import FakePiTransport
 from .plugin_tools import create_delivery_artifacts, generate_vector_card
+from agent.lab_runner.recipe_loader import RecipeValidationError, load_recipe_by_id
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class DirectorService:
@@ -14,14 +18,26 @@ class DirectorService:
         self.transport = transport or FakePiTransport()
 
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
-        run = self.store.create(payload)
+        recipe_id = str(payload.get("recipeId") or "structured-knowledge-video")
+        try:
+            recipe = load_recipe_by_id(recipe_id, root=REPO_ROOT / "agent" / "recipes")
+        except RecipeValidationError as exc:
+            raise ValueError(str(exc)) from exc
+        run = self.store.create({**payload, "recipeId": recipe.id, "recipeVersion": recipe.version})
         run_id = run["runId"]
         task = run["task"] or "Create a previewable and JianYing-importable video draft from this script."
         session = self.transport.create_session(run_id, task)
         run["piSession"] = session
+        run["recipe"] = {
+            "id": recipe.id,
+            "version": recipe.version,
+            "description": recipe.description,
+            "stepCount": len(recipe.steps),
+        }
         run["messages"].append({"role": "user", "content": task})
         self.store.save(run)
         self.store.append_event(run_id, {"type": "run.created", "status": run["status"], "recipeId": run["recipeId"]})
+        self.store.append_event(run_id, {"type": "recipe.loaded", "recipeId": recipe.id, "recipeVersion": recipe.version, "stepCount": len(recipe.steps)})
         for event in self.transport.initial_events(run_id, task):
             self.store.append_event(run_id, event)
         artifact = generate_vector_card(self.store.run_dir(run_id), scene_id="scene_001", title="Director Draft", body=task)
