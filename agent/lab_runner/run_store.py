@@ -51,8 +51,8 @@ def atomic_write_json(path: Path, data: Any) -> None:
 
 
 class RunStore:
-    def __init__(self, root: Path | str = ".agent-runs"):
-        self.root = Path(root)
+    def __init__(self, root: Path | str | None = None):
+        self.root = Path(root) if root else Path(__file__).resolve().parents[2] / ".agent-runs"
         self.root.mkdir(parents=True, exist_ok=True)
 
     def new_run_id(self) -> str:
@@ -61,8 +61,16 @@ class RunStore:
     def run_dir(self, run_id: str) -> Path:
         return self.root / run_id
 
-    def create(self, recipe_id: str, recipe_version: int, case_id: str | None = None) -> dict[str, Any]:
-        run_id = self.new_run_id()
+    def create(
+        self,
+        recipe_id: str,
+        recipe_version: int,
+        case_id: str | None = None,
+        *,
+        run_id: str | None = None,
+        runtime: str = "phase0_lab_runner",
+    ) -> dict[str, Any]:
+        run_id = run_id or self.new_run_id()
         data = {
             "runId": run_id,
             "recipeId": recipe_id,
@@ -72,7 +80,7 @@ class RunStore:
             "currentStepId": None,
             "projectId": None,
             "batchId": None,
-            "runtime": "phase0_lab_runner",
+            "runtime": runtime,
             "startedAt": now_iso(),
             "updatedAt": now_iso(),
             "finishedAt": None,
@@ -95,16 +103,45 @@ class RunStore:
     def load(self, run_id: str) -> dict[str, Any]:
         return json.loads((self.run_dir(run_id) / "run.json").read_text(encoding="utf-8"))
 
+    def list(self) -> list[dict[str, Any]]:
+        runs = []
+        for directory in self.root.iterdir():
+            path = directory / "run.json"
+            if not path.is_file():
+                continue
+            try:
+                runs.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError):
+                continue
+        return sorted(runs, key=lambda run: str(run.get("updatedAt") or run.get("startedAt") or ""), reverse=True)
+
     def save(self, run: dict[str, Any]) -> None:
         run["updatedAt"] = now_iso()
         atomic_write_json(self.run_dir(run["runId"]) / "run.json", run)
 
-    def append_event(self, run_id: str, event: dict[str, Any]) -> None:
+    def events(self, run_id: str, after: int = 0) -> list[dict[str, Any]]:
         path = self.run_dir(run_id) / "events.jsonl"
-        payload = json.dumps(sanitize({"time": now_iso(), **event}), ensure_ascii=False)
+        if not path.is_file():
+            raise FileNotFoundError(run_id)
+        events = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            if int(payload.get("sequence") or 0) > after:
+                events.append(payload)
+        return events
+
+    def append_event(self, run_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        path = self.run_dir(run_id) / "events.jsonl"
+        prior = self.events(run_id)
+        sequence = int(prior[-1].get("sequence") or 0) + 1 if prior else 1
+        record = sanitize({"sequence": sequence, "time": now_iso(), **event})
+        payload = json.dumps(record, ensure_ascii=False)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(payload + "\n")
             handle.flush()
+        return record
 
     def save_eval(self, run_id: str, data: dict[str, Any]) -> None:
         atomic_write_json(self.run_dir(run_id) / "eval.json", data)

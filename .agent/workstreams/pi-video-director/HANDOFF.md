@@ -52,6 +52,12 @@ The frontend never starts a process. The FastAPI process owns DirectorService.
 FakePi is in-process for the initial phase. The real Pi sidecar must be launched
 and stopped by the backend adapter only.
 
+DirectorStore is now only a compatibility adapter over the Lab RunStore. New
+Director Runs are persisted under .agent-runs alongside Lab Runs. The old
+projects/.director-runs directory may remain on a developer machine from the
+first implementation pass; it is historical data and must not be deleted by
+this workstream.
+
 ## Environment
 
 Optional values VIDEOFORGE_BRANCH, VIDEOFORGE_COMMIT, VIDEOFORGE_BUILD_TIME,
@@ -67,10 +73,10 @@ and VIDEOFORGE_ENV override the API version endpoint.
 
 The workstream started its own detached uvicorn process:
 
-    PID: 37348
-    Port: 8011
-    URL: http://127.0.0.1:8011/director
-    Command: python -m uvicorn production_app:app --host 127.0.0.1 --port 8011
+    PID: 53960
+    Port: 8012
+    URL: http://127.0.0.1:8012/director
+    Command: python -m uvicorn production_app:app --host 127.0.0.1 --port 8012
 
 At 2026-07-25T01:57:15Z, GET /director returned 200 and GET
 /api/version returned branch codex/pi-video-director with the initial Director
@@ -80,6 +86,12 @@ code commit 6df7cd851a21c9610a8922f1d59b5b339fdd78e7.
 
 The delivery artifacts are candidate marker files, not the real renderer MP4
 or JianYing output. No Pi source has been adopted yet.
+
+The Lab closed-loop verifier reaches mock Fish generation and visual asset
+binding on this machine, then can stall in the real ffmpeg preview process.
+The item remains at rendering_preview with a zero-byte preview file after the
+verifier's 30-second HTTP limit. This is an open renderer/environment issue,
+not a passing verification result.
 
 ## Next Precise Task
 

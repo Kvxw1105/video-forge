@@ -21,6 +21,7 @@ def main() -> int:
     assert started.status_code == 200, started.text
     run = started.json()
     assert run["status"] == "waiting_approval", run
+    assert run["runtime"] == "director", run
     assert run["mockTransport"] is True
     assert run["liveCallPerformed"] is False
     assert run["networkCalls"] == 0
@@ -34,6 +35,7 @@ def main() -> int:
     assert final["status"] == "succeeded", final
     artifacts = client.get(f"/api/director/runs/{run['runId']}/artifacts").json()["artifacts"]
     paths = [Path(item["path"]) for item in artifacts]
+    assert all(".agent-runs" in path.parts for path in paths), paths
     assert any(path.suffix == ".svg" and path.is_file() for path in paths), paths
     assert any(path.name == "preview-manifest.json" and path.is_file() for path in paths), paths
     assert any(path.name == "jianying-draft" and path.is_dir() for path in paths), paths

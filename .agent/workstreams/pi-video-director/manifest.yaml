@@ -1,5 +1,5 @@
 id: pi-video-director
-status: initial-phase-complete
+status: shared-run-store-complete
 branch: codex/pi-video-director
 worktree: D:/A-Project/video-forge-worktrees/pi-video-director
 parent_pr: 25
@@ -30,6 +30,7 @@ completed:
   - Created isolated worktree on the current open parent PR head.
   - Added Director Run API, event replay, SSE endpoint, approval, resume, cancel, artifacts, and version endpoint.
   - Added FakePiTransport with zero live calls and zero network calls.
+  - Moved Director Run persistence onto the Lab RunStore under .agent-runs.
   - Added local vector_card plugin artifact generation.
   - Added Director Desk route backed by the real Director API.
   - Verified API approval/resume/artifact flow with scripts/verify_pi_director.py.
@@ -40,25 +41,26 @@ completed:
 remaining:
   - Inspect and adopt the user-provided Pi source/runtime version.
   - Replace FakePiTransport with Pi RPC Sidecar behind the same transport interface.
-  - Connect actual Video Agent Lab recipes and VideoForge project operations to DirectorService.
-  - Add browser-level smoke and refresh verification against a running server.
+  - Connect actual Video Agent Lab recipe execution and VideoForge project operations to DirectorService.
+  - Diagnose the Factory preview renderer stall before claiming full Lab closed-loop coverage.
   - Produce an uploaded candidate artifact after real Pi and renderer integration.
 tests:
   - python scripts/verify_pi_director.py
   - npm run build (frontend)
 blockers:
   - Pi source path/version has not been supplied in this worktree.
-next_action: Implement real Pi RPC adapter after source audit; keep FakePiTransport as CI fixture.
+  - Mock Factory closed-loop reaches rendering_preview but the local ffmpeg preview process can exceed the verifier 30 second request limit.
+next_action: Obtain Pi source path/version, then implement PiRpcTransport after source audit; keep FakePiTransport as CI fixture.
 
 delivery:
   type: local-production-entry
-  url: http://127.0.0.1:8011/director
+  url: http://127.0.0.1:8012/director
   artifact: local Director Run artifacts under projects/.director-runs
   build_sha: 6df7cd851a21c9610a8922f1d59b5b339fdd78e7
   verified_at: 2026-07-25T01:57:15Z
   process:
-    pid: 37348
-    port: 8011
-    command: python -m uvicorn production_app:app --host 127.0.0.1 --port 8011
+    pid: 53960
+    port: 8012
+    command: python -m uvicorn production_app:app --host 127.0.0.1 --port 8012
 
 safe_to_handoff: true
