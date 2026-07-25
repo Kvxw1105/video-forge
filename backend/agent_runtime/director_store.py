@@ -60,7 +60,8 @@ class DirectorStore:
         return self.store.load(run_id)
 
     def save(self, run: dict[str, Any]) -> dict[str, Any]:
-        self.store.save(run)
+        with self._event_lock:
+            self.store.save(run)
         return run
 
     def append_event(self, run_id: str, event: dict[str, Any]) -> dict[str, Any]:

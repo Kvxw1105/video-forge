@@ -15,12 +15,13 @@ def create_app(*, serve_frontend: bool | None = None, frontend_dist=None) -> Fas
         allow_headers=["*"],
     )
 
-    from routers import project, voiceover, export, assets, settings, render, template, subtitle, library, audio_analysis, jobs, system_readiness, structured_audio, composition, structured_authoring, template_batch, visual_scene, agent_factory, director, version
+    from routers import project, voiceover, export, assets, settings, agent_settings, render, template, subtitle, library, audio_analysis, jobs, system_readiness, structured_audio, composition, structured_authoring, template_batch, visual_scene, agent_factory, director, version
     app.include_router(project.router)
     app.include_router(voiceover.router)
     app.include_router(export.router)
     app.include_router(assets.router)
     app.include_router(settings.router)
+    app.include_router(agent_settings.router)
     app.include_router(render.router)
     app.include_router(template.router)
     app.include_router(subtitle.router)

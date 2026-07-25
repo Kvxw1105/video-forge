@@ -8,6 +8,7 @@ import StructuredNew from './pages/StructuredNew'
 import FactoryVisualPairing from './pages/FactoryVisualPairing'
 import FactoryQuickStart from './pages/FactoryQuickStart'
 import DirectorDesk from './pages/DirectorDesk'
+import AgentProviderSettings from './pages/AgentProviderSettings'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/factory/new" element={<FactoryQuickStart />} />
           <Route path="/factory/batches/:batchId/items/:itemId/visuals" element={<FactoryVisualPairing />} />
           <Route path="/director" element={<DirectorDesk />} />
+          <Route path="/settings/agent" element={<AgentProviderSettings />} />
         </Routes>
       </BrowserRouter>
     </ErrorBoundary>

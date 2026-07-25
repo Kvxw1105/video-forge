@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from .provider_settings import load_agent_provider
 
 
 class PiRpcError(RuntimeError):
@@ -39,7 +40,7 @@ def normalize_pi_event(event: dict[str, Any]) -> dict[str, Any]:
 class _PiRpcSidecar:
     """A single Pi RPC process with strict JSONL request correlation."""
 
-    def __init__(self, command: Sequence[str], *, cwd: Path, on_event: Callable[[dict[str, Any]], None]):
+    def __init__(self, command: Sequence[str], *, cwd: Path, on_event: Callable[[dict[str, Any]], None], env: dict[str, str] | None = None):
         self._command = list(command)
         self._cwd = cwd
         self._on_event = on_event
@@ -56,6 +57,7 @@ class _PiRpcSidecar:
             text=True,
             encoding="utf-8",
             bufsize=1,
+            env=env,
         )
         self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
         self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
@@ -151,13 +153,14 @@ class PiRpcTransport:
 
     name = "pi_rpc"
 
-    def __init__(self, command: Sequence[str], *, cwd: Path, run_dir: Callable[[str], Path], event_sink: Callable[[str, dict[str, Any]], None] | None = None):
+    def __init__(self, command: Sequence[str], *, cwd: Path, run_dir: Callable[[str], Path], event_sink: Callable[[str, dict[str, Any]], None] | None = None, provider: Any | None = None):
         if not command:
             raise ValueError("Pi RPC command is required")
         self._command = tuple(command)
         self._cwd = cwd
         self._run_dir = run_dir
         self._event_sink = event_sink
+        self._provider = provider
         self._sidecars: dict[str, _PiRpcSidecar] = {}
         self._events: dict[str, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
@@ -177,14 +180,15 @@ class PiRpcTransport:
             entry = source / "packages" / "coding-agent" / "dist" / "rpc-entry.js"
             if not source or not entry.is_file():
                 raise ValueError("Set VIDEOFORGE_PI_SOURCE to a built Pi checkout or VIDEOFORGE_PI_RPC_COMMAND to a JSON command array")
-            model = os.getenv("VIDEOFORGE_PI_MODEL", "openai/gpt-4o-mini")
+            provider = load_agent_provider()
+            model = f"{provider.providerId}/{provider.model}" if provider.enabled and provider.model else os.getenv("VIDEOFORGE_PI_MODEL", "openai/gpt-4o-mini")
             extension = repo_root / "backend" / "agent_runtime" / "pi_extensions" / "recipe_contract.mjs"
             command = [
                 "node", str(entry), "--mode", "rpc", "--model", model,
                 "--no-builtin-tools", "--no-extensions", "--extension", str(extension),
                 "--tools", "videoforge_recipe_contract", "--no-skills", "--no-prompt-templates", "--no-context-files",
             ]
-        return cls(command, cwd=repo_root, run_dir=run_dir, event_sink=event_sink)
+        return cls(command, cwd=repo_root, run_dir=run_dir, event_sink=event_sink, provider=locals().get("provider"))
 
     def create_session(self, run_id: str, task: str) -> dict[str, Any]:
         sidecar = self._get_or_start(run_id)
@@ -237,7 +241,13 @@ class PiRpcTransport:
             session_dir = self._run_dir(run_id) / "pi-session"
             session_dir.mkdir(parents=True, exist_ok=True)
             command = [*self._command, "--session-dir", str(session_dir)]
-            sidecar = _PiRpcSidecar(command, cwd=self._cwd, on_event=lambda event: self._record_event(run_id, event))
+            env = dict(os.environ)
+            if self._provider and self._provider.enabled:
+                agent_dir = session_dir / "agent-config"; agent_dir.mkdir(exist_ok=True)
+                (agent_dir / "models.json").write_text(json.dumps({"providers": {self._provider.providerId: {"baseUrl": self._provider.baseUrl.rstrip("/"), "api": self._provider.apiType, "apiKey": "$VIDEOFORGE_PI_PROVIDER_KEY", "models": [{"id": self._provider.model, "input": ["text"], "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 128000, "maxTokens": 16384}]}}}), encoding="utf-8")
+                env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+                env["VIDEOFORGE_PI_PROVIDER_KEY"] = self._provider.apiKey
+            sidecar = _PiRpcSidecar(command, cwd=self._cwd, on_event=lambda event: self._record_event(run_id, event), env=env)
             self._sidecars[run_id] = sidecar
             return sidecar
 
