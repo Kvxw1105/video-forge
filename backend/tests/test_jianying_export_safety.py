@@ -386,7 +386,7 @@ def test_rewrite_write_failure_is_atomic_and_cleans_temp(monkeypatch, tmp_path):
     real_replace = jianying.os.replace
 
     def fail_rewrite_replace(source: Path, target: Path):
-        if ".videoforge-rewrite-" in Path(source).name:
+        if Path(source).name.startswith(".vf-"):
             raise OSError("simulated rewrite write failure")
         return real_replace(source, target)
 

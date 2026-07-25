@@ -592,9 +592,10 @@ def _rewrite_draft_media_paths(draft_dir: Path, old_root: Path, new_root: Path) 
     try:
         payload = json.loads(content_file.read_text(encoding="utf-8"))
         rewritten = rewrite(payload)
-        temp_file = content_file.with_name(
-            f".{content_file.name}.videoforge-rewrite-{uuid4().hex}.tmp"
-        )
+        # Keep this short. On Windows the staging root already includes a
+        # versioned draft folder, and a verbose temp name can exceed MAX_PATH
+        # even when draft_content.json itself is readable.
+        temp_file = content_file.with_name(f".vf-{uuid4().hex[:8]}.tmp")
         try:
             with temp_file.open("w", encoding="utf-8", newline="") as handle:
                 json.dump(rewritten, handle, ensure_ascii=False, indent=4)

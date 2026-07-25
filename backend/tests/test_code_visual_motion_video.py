@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from main import create_app
+from adapters import jianying
 from routers import visual_assets
 from services import project_service
 
@@ -132,3 +134,15 @@ def test_code_visual_render_bakes_motion_to_project_video_and_preview(monkeypatc
         check=True,
     )
     assert float(probe.stdout.strip()) >= 2.0
+
+    resolved = project_service.resolve_project_paths(tmp_path / project_id, project_service.get_project(project_id).model_dump())
+    importlib.reload(jianying)
+    draft = jianying.generate_jianying_draft(
+        resolved,
+        output_dir=tmp_path / project_id / "jianying",
+        policy="create_new",
+    )
+    content = draft.final_path / "draft_content.json"
+    assert content.is_file()
+    serialized = content.read_text(encoding="utf-8")
+    assert asset["name"] in serialized
