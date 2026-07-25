@@ -171,6 +171,20 @@ export const api = {
   saveVisualPlan: (projectId: string, plan: any) => request<any>(`/projects/${projectId}/visual-plan`, { method: 'PUT', body: JSON.stringify({ plan }) }),
   exportVisualPack: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan/generation-pack`, { method: 'POST' }),
   validateVisualPlan: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan/validate`, { method: 'POST', body: JSON.stringify({}) }),
+  renderCodeVisualOverlay: (projectId: string, sceneId: string, options: {
+    rendererId: 'white_sketch' | 'silhouette' | 'pixel_rules' | 'mechanism_diagram'
+    themeMode: 'dark' | 'light'
+    overlayX: number
+    overlayY: number
+    overlayScale: number
+    overlayDurationPolicy: 'loop' | 'freeze_last_frame' | 'trim'
+  }) => request<any>(`/projects/${projectId}/visual-assets/code-visual/scenes/${encodeURIComponent(sceneId)}/regenerate`, {
+    method: 'POST',
+    body: JSON.stringify({
+      sourceMode: 'visual_plan', exportPng: true, exportVideo: true, videoFps: 12,
+      bindToProject: true, presentationMode: 'overlay', ...options,
+    }),
+  }),
   getStructuredCatalog: () => request<any[]>('/projects/structured/catalog'),
   parseStructuredMarkdown: (text: string) => request<any>('/structured/import/parse', { method: 'POST', body: JSON.stringify({ text, format: 'auto' }) }),
   createStructuredProject: (name: string, episode: any, ratio = '9:16') => request<any>('/projects/structured', { method: 'POST', body: JSON.stringify({ name, episode, canvas: { ratio } }) }),
