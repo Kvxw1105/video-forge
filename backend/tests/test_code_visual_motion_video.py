@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -146,3 +147,86 @@ def test_code_visual_render_bakes_motion_to_project_video_and_preview(monkeypatc
     assert content.is_file()
     serialized = content.read_text(encoding="utf-8")
     assert asset["name"] in serialized
+
+
+def test_code_visual_overlay_keeps_background_and_exports_second_video_track(monkeypatch, tmp_path):
+    client, project_id = _project_with_code_visual_plan(monkeypatch, tmp_path)
+    project_dir = tmp_path / project_id
+    background = project_dir / "assets" / "background.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=270x480:d=2", "-pix_fmt", "yuv420p", str(background)],
+        check=True,
+    )
+    project = client.get(f"/api/projects/{project_id}").json()
+    project["assets"].append({
+        "id": "background",
+        "type": "video",
+        "name": background.name,
+        "path": "assets/background.mp4",
+        "metadata": {"transform": {"x": 0.5, "y": 0.5, "scale": 1, "rotation": 0, "fit": "stretch"}},
+    })
+    project["segments"] = [{
+        "id": "background_segment",
+        "assetPath": "assets/background.mp4",
+        "type": "video",
+        "start": 0.0,
+        "end": 2.0,
+        "transform": {"x": 0.5, "y": 0.5, "scale": 1, "rotation": 0, "fit": "stretch"},
+    }]
+    scene = project["structuredContent"]["episode"]["visualPlan"]["scenes"][0]
+    scene["visualAssetIds"] = ["background"]
+    scene["primaryAssetId"] = "background"
+    assert client.put(
+        f"/api/projects/{project_id}",
+        json={"assets": project["assets"], "segments": project["segments"], "structuredContent": project["structuredContent"]},
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/projects/{project_id}/visual-assets/code-visual/render",
+        json={
+            "sourceMode": "visual_plan",
+            "exportPng": True,
+            "exportVideo": True,
+            "videoFps": 6,
+            "bindToProject": True,
+            "rendererId": "mechanism_diagram",
+            "themeMode": "light",
+            "presentationMode": "overlay",
+            "overlayX": 0.5,
+            "overlayY": 0.32,
+            "overlayScale": 0.36,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["bindings"] == [{
+        "sceneId": "scene_code",
+        "assetId": "visual_code_visual_overlay_scene_code",
+        "mode": "overlay",
+    }]
+
+    project = client.get(f"/api/projects/{project_id}").json()
+    scene = project["structuredContent"]["episode"]["visualPlan"]["scenes"][0]
+    assert scene["primaryAssetId"] == "background"
+    assert scene["metadata"]["videoOverlayIds"] == ["visual_code_visual_overlay_scene_code"]
+    assert [segment["id"] for segment in project["segments"]] == ["background_segment"]
+    overlay = project["overlays"]["videoOverlays"][0]
+    assert overlay["assetId"] == "visual_code_visual_overlay_scene_code"
+    assert overlay["start"] == 0.0 and overlay["end"] == 2.0
+
+    preview = client.post(f"/api/projects/{project_id}/preview")
+    assert preview.status_code == 200, preview.text
+    preview_path = project_dir / "preview.mp4"
+    frame = project_dir / "overlay-frame.png"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", "1", "-i", str(preview_path), "-frames:v", "1", str(frame)], check=True)
+    image = Image.open(frame).convert("RGB")
+    background_pixel = image.getpixel((10, 10))
+    pip_pixel = image.getpixel((135, 154))
+    assert background_pixel[2] > 200, background_pixel
+    assert pip_pixel[2] < 100, pip_pixel  # The PIP card is not the blue base video.
+
+    resolved = project_service.resolve_project_paths(project_dir, project_service.get_project(project_id).model_dump())
+    importlib.reload(jianying)
+    draft = jianying.generate_jianying_draft(resolved, output_dir=project_dir / "jianying_overlay", policy="create_new")
+    content = (draft.final_path / "draft_content.json").read_text(encoding="utf-8")
+    assert "code_visual_overlay" in content
+    assert "0001_scene-code_mechanism-diagram-evidence.mp4" in content

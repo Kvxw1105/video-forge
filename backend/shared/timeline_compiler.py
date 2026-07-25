@@ -86,6 +86,39 @@ class CompiledAudioClip:
 
 
 @dataclass(frozen=True)
+class CompiledVideoOverlay:
+    id: str
+    asset_id: str
+    asset_path: str
+    start: float
+    end: float
+    duration: float
+    x: float
+    y: float
+    scale: float
+    opacity: float
+    duration_policy: str
+    z_index: int
+
+    def to_overlay(self) -> dict:
+        return {
+            "id": self.id,
+            "assetId": self.asset_id,
+            "assetPath": self.asset_path,
+            "type": "video",
+            "start": self.start,
+            "end": self.end,
+            "duration": self.duration,
+            "x": self.x,
+            "y": self.y,
+            "scale": self.scale,
+            "opacity": self.opacity,
+            "durationPolicy": self.duration_policy,
+            "zIndex": self.z_index,
+        }
+
+
+@dataclass(frozen=True)
 class CompiledTimeline:
     canvas: dict
     fps: int
@@ -96,10 +129,14 @@ class CompiledTimeline:
     sfx_clips: tuple[CompiledAudioClip, ...]
     subtitles: tuple[dict, ...]
     overlays: dict
+    video_overlays: tuple[CompiledVideoOverlay, ...]
     warnings: tuple[str, ...]
 
     def visual_segments(self) -> list[dict]:
         return [clip.to_segment() for clip in self.visual_clips]
+
+    def video_overlay_segments(self) -> list[dict]:
+        return [overlay.to_overlay() for overlay in self.video_overlays]
 
 
 def compile_project_timeline(
@@ -150,6 +187,12 @@ def compile_project_timeline(
     tail_padding = 0.5
     total_duration = round(content_duration + tail_padding, 6)
     visual_clips = _expand_visuals(pattern, content_duration, warnings)
+    video_overlays = _compile_video_overlays(
+        project.get("overlays") or {},
+        project.get("assets") or [],
+        content_duration,
+        warnings,
+    )
     bgm_clips = _compile_audio_tracks(audio.get("bgm") or {}, total_duration, duration_resolver, warnings, "bgm")
     sfx_clips = _compile_audio_tracks(audio.get("sfx") or [], total_duration, duration_resolver, warnings, "sfx")
 
@@ -163,8 +206,66 @@ def compile_project_timeline(
         sfx_clips=tuple(sfx_clips),
         subtitles=tuple(subtitles),
         overlays=deepcopy(project.get("overlays") or {}),
+        video_overlays=tuple(video_overlays),
         warnings=tuple(warnings),
     )
+
+
+def _compile_video_overlays(
+    overlays: dict,
+    assets: list[dict],
+    content_duration: float,
+    warnings: list[str],
+) -> list[CompiledVideoOverlay]:
+    asset_by_id = {
+        str(asset.get("id") or ""): asset
+        for asset in assets
+        if isinstance(asset, dict) and asset.get("id")
+    }
+    compiled: list[CompiledVideoOverlay] = []
+    for index, raw in enumerate(overlays.get("videoOverlays") or []):
+        if not isinstance(raw, dict):
+            warnings.append(f"Invalid video overlay at index {index}")
+            continue
+        asset_id = str(raw.get("assetId") or "")
+        asset = asset_by_id.get(asset_id)
+        asset_path = str((asset or {}).get("path") or "")
+        if not asset or asset.get("type") != "video" or not asset_path or not Path(asset_path).is_file():
+            warnings.append(f"Video overlay asset is missing or not a video: {asset_id or index}")
+            continue
+        try:
+            start = max(0.0, float(raw.get("start", 0) or 0))
+            end = min(content_duration, float(raw.get("end", start) or start))
+            x = min(1.0, max(0.0, float(raw.get("x", 0.5) or 0.5)))
+            y = min(1.0, max(0.0, float(raw.get("y", 0.32) or 0.32)))
+            scale = min(1.0, max(0.01, float(raw.get("scale", 0.36) or 0.36)))
+            opacity = min(1.0, max(0.0, float(raw.get("opacity", 1.0) or 1.0)))
+            z_index = max(0, min(32, int(raw.get("zIndex", 0) or 0)))
+        except (TypeError, ValueError):
+            warnings.append(f"Video overlay has invalid timing or transform: {raw.get('id', index)}")
+            continue
+        if end <= start:
+            warnings.append(f"Video overlay has empty timing window: {raw.get('id', index)}")
+            continue
+        policy = str(raw.get("durationPolicy") or "loop")
+        if policy not in {"loop", "freeze_last_frame", "trim"}:
+            policy = "loop"
+            warnings.append(f"Video overlay has invalid duration policy: {raw.get('id', index)}")
+        compiled.append(CompiledVideoOverlay(
+            id=str(raw.get("id") or f"video_overlay_{index:03d}"),
+            asset_id=asset_id,
+            asset_path=asset_path,
+            start=round(start, 6),
+            end=round(end, 6),
+            duration=round(end - start, 6),
+            x=x,
+            y=y,
+            scale=scale,
+            opacity=opacity,
+            duration_policy=policy,
+            z_index=z_index,
+        ))
+    return sorted(compiled, key=lambda item: (item.z_index, item.start, item.id))
 
 
 def _duration(config: dict, path: str, resolver: DurationResolver | None, warnings: list[str], kind: str) -> float:

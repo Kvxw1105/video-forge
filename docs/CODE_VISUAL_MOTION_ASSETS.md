@@ -21,4 +21,51 @@ This keeps one main visual track, uses the existing FFmpeg Preview renderer, use
 
 ## Deferred Transparent Motion
 
-Transparent PNG sequences, WebM alpha, ProRes 4444 MOV, overlay tracks, and multi-visual-track composition remain second-stage work. They require separate Preview and JianYing compatibility decisions because the current first-stage Preview path expects a normal main visual asset and encodes H.264 MP4 without alpha.
+Transparent PNG sequences, WebM alpha, ProRes 4444 MOV, and alpha-capable multi-track composition remain second-stage work. They require separate Preview and JianYing compatibility decisions because the current Preview path encodes H.264 MP4 without alpha.
+
+## Picture-in-Picture V1
+
+Code Visual can also be generated as a normal MP4 overlay while preserving the
+scene's existing background asset. This is a small extension of the existing
+project overlay contract, not a second scene or timeline:
+
+```text
+POST /api/projects/{project_id}/visual-assets/code-visual/render
+{
+  "presentationMode": "overlay",
+  "overlayX": 0.5,
+  "overlayY": 0.32,
+  "overlayScale": 0.36,
+  "overlayOpacity": 1.0,
+  "overlayDurationPolicy": "loop"
+}
+```
+
+The generated video remains a normal `Project.assets` video record with an id
+such as `visual_code_visual_overlay_scene_code`. The scene preserves its
+`primaryAssetId`; its `metadata.videoOverlayIds` records the related asset.
+The project records placement and timing in `overlays.videoOverlays[]`, for
+example:
+
+```json
+{
+  "id": "code_visual_overlay_scene_code",
+  "assetId": "visual_code_visual_overlay_scene_code",
+  "start": 0,
+  "end": 2,
+  "x": 0.5,
+  "y": 0.32,
+  "scale": 0.36,
+  "opacity": 1,
+  "durationPolicy": "loop",
+  "zIndex": 0
+}
+```
+
+The shared timeline compiler resolves and validates this record. Preview feeds
+the overlay MP4 to FFmpeg as a second visual input and composites it over the
+main visual. JianYing export creates a second video track named
+`code_visual_overlay` with the same timing and transform. V1 is opaque MP4
+picture-in-picture: opacity is applied by Preview, but JianYing opacity parity
+is not implemented yet. Preview currently renders the PIP layer after subtitle
+filters, so the default upper-middle placement avoids the subtitle band.

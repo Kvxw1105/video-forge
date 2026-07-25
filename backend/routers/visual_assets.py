@@ -49,6 +49,13 @@ class CodeVisualRenderBody(StickmanRenderBody):
     ipPack: Literal["neutral", "xuanqi", "huicewolf", "ayin"] = "neutral"
     exportVideo: bool = True
     videoFps: int = Field(default=12, ge=6, le=30)
+    presentationMode: Literal["main", "overlay"] = "main"
+    overlayX: float = Field(default=0.5, ge=0, le=1)
+    overlayY: float = Field(default=0.32, ge=0, le=1)
+    overlayScale: float = Field(default=0.36, gt=0, le=1)
+    overlayOpacity: float = Field(default=1.0, ge=0, le=1)
+    overlayZIndex: int = Field(default=0, ge=0, le=32)
+    overlayDurationPolicy: Literal["loop", "freeze_last_frame", "trim"] = "loop"
 
 
 def _project_dir(project_id: str) -> Path:
@@ -198,13 +205,27 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
         asset_dir = _project_dir(project_id) / "assets"
         asset_dir.mkdir(parents=True, exist_ok=True)
         segment_updates: dict[str, dict] = {}
+        overlay_updates: dict[str, dict] = {}
         for item in result.items:
             scene = scenes.get(item.segmentId)
             has_png = item.pngPath is not None
             has_video = item.segmentId in video_exports
             if scene is None or (not has_png and not has_video) or item.status not in {"generated", "fallback", "needs_review", "skipped_unchanged"}:
                 continue
-            existing_ids = list(scene.get("visualAssetIds") or [])
+            asset_id = (
+                f"visual_code_visual_overlay_{item.segmentId}"
+                if provider_id == "code_visual_svg"
+                and isinstance(body, CodeVisualRenderBody)
+                and body.presentationMode == "overlay"
+                else f"visual_{provider_id.replace('_svg', '')}_{item.segmentId}"
+            )
+            existing_ids = (
+                [asset_id]
+                if provider_id == "code_visual_svg"
+                and isinstance(body, CodeVisualRenderBody)
+                and body.presentationMode == "overlay"
+                else list(scene.get("visualAssetIds") or [])
+            )
             existing = [asset for asset in assets if asset.get("id") in existing_ids]
             provider_assets = [asset for asset in existing if (asset.get("metadata") or {}).get("generatedBy") == "visual_asset_provider"]
             user_assets = [asset for asset in existing if asset not in provider_assets]
@@ -223,7 +244,6 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
                 if manually_changed:
                     conflicts.append({"sceneId": item.segmentId, "code": "manual_override_protected"})
                     continue
-            asset_id = f"visual_{provider_id.replace('_svg', '')}_{item.segmentId}"
             if has_video:
                 exported = video_exports[item.segmentId]
                 filename = Path(exported["videoPath"]).name
@@ -266,10 +286,35 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
             }
             assets = [asset for asset in assets if asset.get("id") != asset_id]
             assets.append(record)
-            scene["visualAssetIds"] = [asset_id]
-            scene["primaryAssetId"] = asset_id
-            bindings.append({"sceneId": item.segmentId, "assetId": asset_id})
-            if provider_id == "code_visual_svg":
+            is_code_overlay = (
+                provider_id == "code_visual_svg"
+                and isinstance(body, CodeVisualRenderBody)
+                and body.presentationMode == "overlay"
+            )
+            if is_code_overlay:
+                metadata = dict(scene.get("metadata") or {})
+                overlay_ids = [value for value in list(metadata.get("videoOverlayIds") or []) if value != asset_id]
+                metadata["videoOverlayIds"] = [*overlay_ids, asset_id]
+                scene["metadata"] = metadata
+                overlay_id = f"code_visual_overlay_{item.segmentId}"
+                overlay_updates[overlay_id] = {
+                    "id": overlay_id,
+                    "assetId": asset_id,
+                    "start": item.start,
+                    "end": item.end,
+                    "x": body.overlayX,
+                    "y": body.overlayY,
+                    "scale": body.overlayScale,
+                    "opacity": body.overlayOpacity,
+                    "durationPolicy": body.overlayDurationPolicy,
+                    "zIndex": body.overlayZIndex,
+                }
+                bindings.append({"sceneId": item.segmentId, "assetId": asset_id, "mode": "overlay"})
+            else:
+                scene["visualAssetIds"] = [asset_id]
+                scene["primaryAssetId"] = asset_id
+                bindings.append({"sceneId": item.segmentId, "assetId": asset_id, "mode": "main"})
+            if provider_id == "code_visual_svg" and not is_code_overlay:
                 segment_updates[item.segmentId] = {
                     "id": f"visual_code_visual_{item.segmentId}_segment",
                     "assetPath": f"assets/{filename}",
@@ -282,6 +327,17 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
                 }
         if bindings:
             payload = {"assets": assets, "structuredContent": project["structuredContent"]}
+            if overlay_updates:
+                overlays = dict(project.get("overlays") or {})
+                existing_overlays = [
+                    overlay for overlay in list(overlays.get("videoOverlays") or [])
+                    if str(overlay.get("id") or "") not in overlay_updates
+                ]
+                overlays["videoOverlays"] = [
+                    *existing_overlays,
+                    *sorted(overlay_updates.values(), key=lambda overlay: (overlay["zIndex"], overlay["start"], overlay["id"])),
+                ]
+                payload["overlays"] = overlays
             if provider_id == "code_visual_svg" and segment_updates:
                 replacement_segment_ids = {entry["id"] for entry in segment_updates.values()}
                 existing_segments = [
