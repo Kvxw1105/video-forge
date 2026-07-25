@@ -14,6 +14,28 @@ class PiRpcError(RuntimeError):
     """Raised when the Pi RPC sidecar cannot complete a JSONL request."""
 
 
+def normalize_pi_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Map Pi's stable session events to Director timeline event names."""
+    event_type = str(event.get("type") or "pi.event")
+    mapping = {
+        "turn_start": "agent.turn.started",
+        "agent_settled": "agent.settled",
+        "agent_end": "agent.turn.ended",
+        "tool_execution_start": "tool.call.started",
+        "tool_execution_update": "tool.call.updated",
+        "tool_execution_end": "tool.call.failed" if event.get("isError") else "tool.call.succeeded",
+        "message_update": "agent.message.updated",
+        "extension_error": "pi.extension.error",
+    }
+    normalized = {"type": mapping.get(event_type, "pi.event"), "piEventType": event_type, "piEvent": event}
+    if event_type.startswith("tool_execution_"):
+        normalized.update({key: event.get(key) for key in ("toolCallId", "toolName", "args", "result", "isError") if key in event})
+    if event_type == "message_update":
+        assistant_event = event.get("assistantMessageEvent") or {}
+        normalized["delta"] = assistant_event.get("delta") or assistant_event.get("text") or ""
+    return normalized
+
+
 class _PiRpcSidecar:
     """A single Pi RPC process with strict JSONL request correlation."""
 
@@ -129,18 +151,19 @@ class PiRpcTransport:
 
     name = "pi_rpc"
 
-    def __init__(self, command: Sequence[str], *, cwd: Path, run_dir: Callable[[str], Path]):
+    def __init__(self, command: Sequence[str], *, cwd: Path, run_dir: Callable[[str], Path], event_sink: Callable[[str, dict[str, Any]], None] | None = None):
         if not command:
             raise ValueError("Pi RPC command is required")
         self._command = tuple(command)
         self._cwd = cwd
         self._run_dir = run_dir
+        self._event_sink = event_sink
         self._sidecars: dict[str, _PiRpcSidecar] = {}
         self._events: dict[str, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     @classmethod
-    def from_environment(cls, *, run_dir: Callable[[str], Path], repo_root: Path) -> PiRpcTransport:
+    def from_environment(cls, *, run_dir: Callable[[str], Path], repo_root: Path, event_sink: Callable[[str, dict[str, Any]], None] | None = None) -> PiRpcTransport:
         raw_command = os.getenv("VIDEOFORGE_PI_RPC_COMMAND", "").strip()
         if raw_command:
             try:
@@ -161,7 +184,7 @@ class PiRpcTransport:
                 "--no-builtin-tools", "--no-extensions", "--extension", str(extension),
                 "--tools", "videoforge_recipe_contract", "--no-skills", "--no-prompt-templates", "--no-context-files",
             ]
-        return cls(command, cwd=repo_root, run_dir=run_dir)
+        return cls(command, cwd=repo_root, run_dir=run_dir, event_sink=event_sink)
 
     def create_session(self, run_id: str, task: str) -> dict[str, Any]:
         sidecar = self._get_or_start(run_id)
@@ -182,7 +205,7 @@ class PiRpcTransport:
         return [
             {"type": "pi.sidecar.ready", "runId": run_id, "transport": self.name, "taskQueued": False},
             {"type": "pi.session.created", "runId": run_id, "transport": self.name},
-            *streamed,
+            *([] if self._event_sink else streamed),
         ]
 
     def follow_up(self, run_id: str, message: str) -> None:
@@ -212,8 +235,11 @@ class PiRpcTransport:
             return sidecar
 
     def _record_event(self, run_id: str, event: dict[str, Any]) -> None:
+        normalized = normalize_pi_event(event)
+        if self._event_sink:
+            self._event_sink(run_id, normalized)
         with self._lock:
-            self._events.setdefault(run_id, []).append(event)
+            self._events.setdefault(run_id, []).append(normalized)
 
 
 class FakePiTransport:

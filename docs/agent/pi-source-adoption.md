@@ -70,6 +70,12 @@ npm --prefix packages/coding-agent run build
 ## Still Separate
 
 - Pi prompts are not yet the completion authority for the Lab recipe.
-- Pi event translation into Director planning/tool timeline is not yet wired.
+- Pi `tool_execution_*`, message, turn, and settlement events now map into the
+  Director SSE/replay timeline. A successful approval records the selected
+  recipe's `bind_assets` / `bind_scene_assets` Lab action before the existing
+  local candidate binding. When the Run explicitly supplies `factoryContext`
+  with `batchId`, `itemId`, and binding `data`, that same approval dispatches
+  the existing `vforge.client.bind_scene_assets` Factory API. It is not a claim
+  that the complete Factory recipe or renderer has run.
 - VideoForge's Factory preview/JianYing render chain remains separate; its
   known local ffmpeg preview stall is not masked by this adapter.

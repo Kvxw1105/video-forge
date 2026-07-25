@@ -6,20 +6,23 @@ from typing import Any
 from uuid import uuid4
 
 from .director_store import DirectorStore
+from .lab_actions import dispatch_factory_binding, record_binding_action
 from .pi_transport import FakePiTransport, PiRpcTransport
 from .plugin_tools import create_delivery_artifacts, generate_vector_card
 from agent.lab_runner.recipe_loader import RecipeValidationError, load_recipe_by_id
+from vforge.client import VForgeError, bind_scene_assets
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class DirectorService:
-    def __init__(self, store: DirectorStore | None = None, transport: Any | None = None):
+    def __init__(self, store: DirectorStore | None = None, transport: Any | None = None, factory_binder: Any | None = None):
         self.store = store or DirectorStore()
+        self.factory_binder = factory_binder or bind_scene_assets
         if transport is not None:
             self.transport = transport
         elif os.getenv("VIDEOFORGE_PI_TRANSPORT", "fake").lower() == "rpc":
-            self.transport = PiRpcTransport.from_environment(run_dir=self.store.run_dir, repo_root=REPO_ROOT)
+            self.transport = PiRpcTransport.from_environment(run_dir=self.store.run_dir, repo_root=REPO_ROOT, event_sink=self._on_pi_event)
         else:
             self.transport = FakePiTransport()
 
@@ -30,6 +33,10 @@ class DirectorService:
         except RecipeValidationError as exc:
             raise ValueError(str(exc)) from exc
         run = self.store.create({**payload, "recipeId": recipe.id, "recipeVersion": recipe.version})
+        factory_context = payload.get("factoryContext")
+        if isinstance(factory_context, dict):
+            run["factoryContext"] = factory_context
+            self.store.save(run)
         run_id = run["runId"]
         task = run["task"] or "Create a previewable and JianYing-importable video draft from this script."
         session = self.transport.create_session(run_id, task)
@@ -68,6 +75,8 @@ class DirectorService:
             "risk": "medium",
             "sceneId": "scene_001",
             "message": "Bind the local vector_card plugin output to Scene 001?",
+            "recipeStepId": "bind_assets",
+            "recipeTool": "bind_scene_assets",
         }
         run["approvals"].append(approval)
         run["currentApprovalId"] = approval_id
@@ -117,6 +126,23 @@ class DirectorService:
         if run.get("status") == "succeeded":
             return run
         self.store.append_event(run_id, {"type": "run.resumed"})
+        recipe = load_recipe_by_id(run["recipeId"], root=REPO_ROOT / "agent" / "recipes")
+        record_binding_action(self.store, run, recipe, artifact_id="artifact_scene_001_vector_card")
+        self.store.save(run)
+        factory_context = run.get("factoryContext")
+        if isinstance(factory_context, dict):
+            try:
+                self.store.append_event(run_id, {"type": "lab.action.dispatch_started", "stepId": "bind_assets", "toolName": "bind_scene_assets"})
+                factory_result = dispatch_factory_binding(factory_context, self.factory_binder)
+            except (ValueError, OSError, VForgeError) as exc:
+                run["status"] = "recoverable"
+                run["errors"].append({"code": str(exc), "recoverable": True})
+                self.store.save(run)
+                self.store.append_event(run_id, {"type": "lab.action.dispatch_failed", "stepId": "bind_assets", "errorCode": str(exc)})
+                return self.get_run(run_id)
+            run["labActions"][-1]["factoryResult"] = factory_result
+            self.store.save(run)
+            self.store.append_event(run_id, {"type": "lab.action.dispatched", "stepId": "bind_assets", "toolName": "bind_scene_assets"})
         self.store.append_event(run_id, {"type": "tool.call.started", "toolName": "visual_scene.bind_generated_asset", "sceneId": "scene_001"})
         run["toolCalls"].append({"toolName": "visual_scene.bind_generated_asset", "status": "succeeded", "sceneId": "scene_001"})
         self.store.append_event(run_id, {"type": "tool.call.succeeded", "toolName": "visual_scene.bind_generated_asset", "sceneId": "scene_001"})
@@ -130,6 +156,15 @@ class DirectorService:
         self.store.save(run)
         self.store.append_event(run_id, {"type": "run.completed", "status": "succeeded"})
         return self.get_run(run_id)
+
+    def _on_pi_event(self, run_id: str, event: dict[str, Any]) -> None:
+        """Persist asynchronous Pi events in the same ordered RunStore stream."""
+        try:
+            self.store.append_event(run_id, event)
+        except FileNotFoundError:
+            # A process can finish its final stdout flush after a failed create;
+            # never let that background callback crash the Pi reader thread.
+            return
 
     def cancel(self, run_id: str) -> dict[str, Any]:
         run = self.store.load(run_id)

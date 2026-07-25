@@ -31,6 +31,7 @@ def main() -> int:
     assert events[0]["sequence"] == 1
     assert any(item["type"] == "recipe.loaded" for item in events)
     assert any(item["type"] == "approval.requested" for item in events)
+    assert run["approvals"][0]["recipeStepId"] == "bind_assets"
     invalid = client.post("/api/director/runs", json={"task": "invalid recipe", "recipeId": "missing-recipe"})
     assert invalid.status_code == 422, invalid.text
     approval = run["approvals"][0]
@@ -38,6 +39,7 @@ def main() -> int:
     assert decided.status_code == 200, decided.text
     final = decided.json()
     assert final["status"] == "succeeded", final
+    assert final["labActions"][0]["tool"] == "bind_scene_assets", final
     artifacts = client.get(f"/api/director/runs/{run['runId']}/artifacts").json()["artifacts"]
     paths = [Path(item["path"]) for item in artifacts]
     assert all(".agent-runs" in path.parts for path in paths), paths
@@ -46,6 +48,7 @@ def main() -> int:
     assert any(path.name == "jianying-draft" and path.is_dir() for path in paths), paths
     replay = client.get(f"/api/director/runs/{run['runId']}/events?after=2").json()["events"]
     assert replay and all(item["sequence"] > 2 for item in replay)
+    assert any(item["type"] == "lab.action.succeeded" for item in replay)
     print({"runId": run["runId"], "status": final["status"], "artifacts": len(artifacts), "commit": version.json()["commit"][:8]})
     return 0
 

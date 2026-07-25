@@ -24,6 +24,10 @@ and creates preview and JianYing candidate artifacts.
 - Local SVG vector-card plugin artifact.
 - Audited and built Pi source at commit 8eef62ed3ea62d646a7fad92fa583fc8d71fec17.
 - Added PiRpcTransport JSONL sidecar, a restricted extension, and RPC/API smoke checks.
+- Mapped Pi stream events into ordered Director timeline records and linked the
+  existing binding approval to the recipe's `bind_assets` Lab action contract.
+- Dispatches the existing Factory `bind_scene_assets` API after approval only
+  when the Run supplies explicit batch/item/binding context.
 
 ## Not Implemented
 
@@ -108,10 +112,10 @@ not a passing verification result.
 
 ## Next Precise Task
 
-Translate Pi streamed events into the Director timeline and bind one
-approval-gated Lab recipe action through the existing Lab Runner/Factory API.
-Keep Pi restricted to explicit VideoForge extensions; do not enable raw Pi
-read, write, edit, bash, or filesystem tools.
+Use Pi's `agent_settled` event as a completion gate for an approved Lab action,
+without treating a successful RPC acknowledgement as a completed render. Keep
+Pi restricted to explicit VideoForge extensions; do not enable raw Pi read,
+write, edit, bash, or filesystem tools.
 
 ## Draft PR
 

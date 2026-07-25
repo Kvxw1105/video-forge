@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import threading
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ class DirectorStore:
 
     def __init__(self, store: RunStore | None = None):
         self.store = store or RunStore()
+        self._event_lock = threading.RLock()
 
     @property
     def root(self) -> Path:
@@ -45,6 +47,7 @@ class DirectorStore:
             "currentApprovalId": None,
             "messages": [],
             "artifacts": [],
+            "labActions": [],
             "metrics": {"mockTransport": True, "liveCallPerformed": False, "networkCalls": 0},
         })
         self.store.save(run)
@@ -61,7 +64,10 @@ class DirectorStore:
         return run
 
     def append_event(self, run_id: str, event: dict[str, Any]) -> dict[str, Any]:
-        return self.store.append_event(run_id, event)
+        # Pi stdout arrives on a background thread while HTTP handlers append
+        # lifecycle events. RunStore sequence allocation is read-then-write.
+        with self._event_lock:
+            return self.store.append_event(run_id, event)
 
     def last_sequence(self, run_id: str) -> int:
         rows = self.store.events(run_id)

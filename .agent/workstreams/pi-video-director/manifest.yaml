@@ -42,6 +42,8 @@ completed:
   - Audited and built Pi RPC source at 8eef62ed3ea62d646a7fad92fa583fc8d71fec17.
   - Added opt-in PiRpcTransport with JSONL correlation, session metadata, abort, and controlled shutdown.
   - Added restricted videoforge_recipe_contract extension and verified direct RPC plus Director API startup.
+  - Mapped Pi streaming events into Director event replay and tied the approval flow to the recipe bind_assets action contract.
+  - Added explicit-context Factory bind_scene_assets dispatch after approval, with a targeted injected-client verifier.
 remaining:
   - Connect actual Video Agent Lab recipe execution and VideoForge project operations to DirectorService.
   - Diagnose the Factory preview renderer stall before claiming full Lab closed-loop coverage.
@@ -51,7 +53,7 @@ tests:
   - npm run build (frontend)
 blockers:
   - Mock Factory closed-loop reaches rendering_preview but the local ffmpeg preview process can exceed the verifier 30 second request limit.
-next_action: Translate Pi events and connect one approval-gated Lab recipe action; keep FakePiTransport as CI fixture.
+next_action: Gate an approved Lab action on Pi agent_settled rather than RPC acknowledgement; keep FakePiTransport as CI fixture.
 
 delivery:
   type: local-production-entry
