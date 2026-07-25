@@ -21,7 +21,7 @@ from visual_assets.contracts import (
     VisualSemantic,
 )
 from visual_assets.hashing import file_sha256, hash_payload
-from visual_assets.code_visual.motion_export import render_motion_mp4
+from visual_assets.code_visual.motion_export import render_motion_mp4, render_motion_png_sequence
 from visual_assets.rasterizer import PillowSvgRasterizer, ResvgSvgRasterizer
 from visual_assets.service import render_visual_asset_project
 
@@ -48,6 +48,7 @@ class CodeVisualRenderBody(StickmanRenderBody):
     themeMode: Literal["dark", "light"] | None = None
     ipPack: Literal["neutral", "xuanqi", "huicewolf", "ayin"] = "neutral"
     exportVideo: bool = True
+    exportTransparentVideo: bool = False
     videoFps: int = Field(default=12, ge=6, le=30)
     presentationMode: Literal["main", "overlay"] = "main"
     overlayX: float = Field(default=0.5, ge=0, le=1)
@@ -56,6 +57,11 @@ class CodeVisualRenderBody(StickmanRenderBody):
     overlayOpacity: float = Field(default=1.0, ge=0, le=1)
     overlayZIndex: int = Field(default=0, ge=0, le=32)
     overlayDurationPolicy: Literal["loop", "freeze_last_frame", "trim"] = "loop"
+
+
+class CodeVisualRecommendationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sceneIds: list[str] = Field(default_factory=list)
 
 
 def _project_dir(project_id: str) -> Path:
@@ -122,7 +128,7 @@ def _provider_run_prefix(provider_id: str) -> str:
     return provider_id.replace("_svg", "") + "_run_"
 
 
-def _render_code_visual_videos(result, output_dir: Path, canvas: dict, fps: int) -> tuple[dict[str, dict], list[dict]]:
+def _render_code_visual_videos(result, output_dir: Path, canvas: dict, fps: int, transparent: bool = False) -> tuple[dict[str, dict], list[dict]]:
     manifest_path = output_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {"items": []}
     manifest_items = list(manifest.get("items") or [])
@@ -155,6 +161,7 @@ def _render_code_visual_videos(result, output_dir: Path, canvas: dict, fps: int)
             width=width,
             height=height,
             fps=fps,
+            transparent=False,
         )
         video_hash = file_sha256(video_path)
         manifest_item.update({"videoPath": video_rel, "videoSha256": video_hash})
@@ -164,6 +171,11 @@ def _render_code_visual_videos(result, output_dir: Path, canvas: dict, fps: int)
             "motionPlanPath": item.motionPlanPath,
             "duration": motion_plan.get("duration"),
         }
+        if transparent:
+            sequence_rel = f"assets/{Path(item.svgPath).stem}_alpha_frames"
+            render_motion_png_sequence(output_dir / item.svgPath, motion_plan, output_dir / sequence_rel, width=width, height=height, fps=fps)
+            video_exports[item.segmentId]["transparentPngSequencePath"] = sequence_rel
+            manifest_item["transparentPngSequencePath"] = sequence_rel
     if video_exports:
         manifest["items"] = manifest_items
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -198,7 +210,7 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
     result = render_visual_asset_project(request, output_dir, ResvgSvgRasterizer() if provider_id == "code_visual_svg" else PillowSvgRasterizer())
     video_exports, response_items = ({}, [item.model_dump(mode="json") for item in result.items])
     if provider_id == "code_visual_svg" and isinstance(body, CodeVisualRenderBody) and body.exportVideo:
-        video_exports, response_items = _render_code_visual_videos(result, output_dir, project.get("canvas") or {}, body.videoFps)
+        video_exports, response_items = _render_code_visual_videos(result, output_dir, project.get("canvas") or {}, body.videoFps, body.exportTransparentVideo)
     bindings, conflicts = [], []
     if bind:
         assets = list(project.get("assets") or [])
@@ -381,6 +393,29 @@ def regenerate_stickman_scene(project_id: str, scene_id: str, body: StickmanRend
 @code_visual_router.post("/render")
 def render_code_visual_assets(project_id: str, body: CodeVisualRenderBody):
     return _run(project_id, body, provider_id="code_visual_svg")
+
+
+@code_visual_router.post("/recommend")
+def recommend_code_visual_assets(project_id: str, body: CodeVisualRecommendationBody):
+    project = get_project(project_id)
+    if project is None:
+        raise HTTPException(404, "project_not_found")
+    items, scenes = _plan_items(project.model_dump(mode="python"), body.sceneIds)
+    recommendations = []
+    for item in items:
+        scene = scenes.get(item.id) or {}
+        semantic = ((scene.get("metadata") or {}).get("semantic") or {})
+        intent = str(semantic.get("visualIntent") or "").lower()
+        family = str((semantic.get("metadata") or {}).get("visualFamily") or "").lower()
+        renderer = "mechanism_diagram"
+        if any(value in f"{intent} {family}" for value in ("character", "actor", "silhouette")):
+            renderer = "silhouette"
+        elif any(value in f"{intent} {family}" for value in ("rule", "grid", "pixel")):
+            renderer = "pixel_rules"
+        elif any(value in f"{intent} {family}" for value in ("process", "sketch", "explain")):
+            renderer = "white_sketch"
+        recommendations.append({"sceneId": item.id, "rendererId": renderer, "themeMode": "light", "overlayX": 0.5, "overlayY": 0.32, "overlayScale": 0.36, "reason": f"语义 {intent or family or '通用证据'}"})
+    return {"recommendations": recommendations}
 
 
 @code_visual_router.post("/scenes/{scene_id}/regenerate")

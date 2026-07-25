@@ -178,6 +178,7 @@ export const api = {
     overlayY: number
     overlayScale: number
     overlayDurationPolicy: 'loop' | 'freeze_last_frame' | 'trim'
+    exportTransparentVideo?: boolean
   }) => request<any>(`/projects/${projectId}/visual-assets/code-visual/scenes/${encodeURIComponent(sceneId)}/regenerate`, {
     method: 'POST',
     body: JSON.stringify({
@@ -185,6 +186,7 @@ export const api = {
       bindToProject: true, presentationMode: 'overlay', ...options,
     }),
   }),
+  recommendCodeVisualOverlays: (projectId: string, sceneIds: string[] = []) => request<{ recommendations: any[] }>(`/projects/${projectId}/visual-assets/code-visual/recommend`, { method: 'POST', body: JSON.stringify({ sceneIds }) }),
   getStructuredCatalog: () => request<any[]>('/projects/structured/catalog'),
   parseStructuredMarkdown: (text: string) => request<any>('/structured/import/parse', { method: 'POST', body: JSON.stringify({ text, format: 'auto' }) }),
   createStructuredProject: (name: string, episode: any, ratio = '9:16') => request<any>('/projects/structured', { method: 'POST', body: JSON.stringify({ name, episode, canvas: { ratio } }) }),

@@ -58,13 +58,15 @@ def _theme_background(plan: dict) -> str:
     return "#f5f1e8" if plan.get("theme_mode") == "light" else "#090909"
 
 
-def frame_svg(svg_text: str, motion_plan: dict, t: float, *, width: int, height: int) -> str:
+def frame_svg(svg_text: str, motion_plan: dict, t: float, *, width: int, height: int, transparent: bool = False) -> str:
     root = ET.fromstring(svg_text)
-    background = ET.Element(
-        f"{{{SVG_NS}}}rect",
-        {"x": "0", "y": "0", "width": str(width), "height": str(height), "fill": _theme_background(motion_plan)},
-    )
-    root.insert(0, background)
+    background = None
+    if not transparent:
+        background = ET.Element(
+            f"{{{SVG_NS}}}rect",
+            {"x": "0", "y": "0", "width": str(width), "height": str(height), "fill": _theme_background(motion_plan)},
+        )
+        root.insert(0, background)
 
     by_id = {element.attrib.get("id"): element for element in root.iter() if element.attrib.get("id")}
     state: dict[str, dict[str, float | None]] = {}
@@ -122,6 +124,7 @@ def render_motion_mp4(
     width: int = 1080,
     height: int = 1920,
     fps: int = 12,
+    transparent: bool = False,
 ) -> Path:
     rasterizer = ResvgSvgRasterizer()
     if not rasterizer.is_available():
@@ -137,7 +140,7 @@ def render_motion_mp4(
     try:
         for index in range(frame_count):
             t = min(duration, index / fps)
-            frame_svg_text = frame_svg(svg_text, motion_plan, t, width=width, height=height)
+            frame_svg_text = frame_svg(svg_text, motion_plan, t, width=width, height=height, transparent=transparent)
             frame_svg_path = frame_dir / f"{index:04d}.svg"
             frame_png_path = frame_dir / f"{index:04d}.png"
             frame_svg_path.write_text(frame_svg_text, encoding="utf-8")
@@ -162,3 +165,32 @@ def render_motion_mp4(
     finally:
         tmp_mp4.unlink(missing_ok=True)
         shutil.rmtree(frame_dir, ignore_errors=True)
+
+
+def render_motion_png_sequence(
+    svg_path: Path,
+    motion_plan: dict,
+    sequence_dir: Path,
+    *,
+    width: int = 1080,
+    height: int = 1920,
+    fps: int = 12,
+) -> Path:
+    rasterizer = ResvgSvgRasterizer()
+    if not rasterizer.is_available():
+        raise RuntimeError("resvg-py is required to render code visual motion")
+    svg_text = svg_path.read_text(encoding="utf-8")
+    duration = max(0.1, float(motion_plan.get("duration", 0) or 0))
+    frame_count = max(2, int(math.ceil(duration * fps)))
+    shutil.rmtree(sequence_dir, ignore_errors=True)
+    sequence_dir.mkdir(parents=True, exist_ok=True)
+    for index in range(frame_count):
+        t = min(duration, index / fps)
+        frame_svg_path = sequence_dir / f"{index:04d}.svg"
+        frame_png_path = sequence_dir / f"{index:04d}.png"
+        frame_svg_path.write_text(frame_svg(svg_text, motion_plan, t, width=width, height=height, transparent=True), encoding="utf-8")
+        result = rasterizer.rasterize(frame_svg_path, frame_png_path, width, height)
+        frame_svg_path.unlink(missing_ok=True)
+        if not result.succeeded:
+            raise RuntimeError(result.message or result.error_code or "transparent frame rasterization failed")
+    return sequence_dir

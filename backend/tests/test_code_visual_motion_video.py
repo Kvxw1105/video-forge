@@ -230,3 +230,24 @@ def test_code_visual_overlay_keeps_background_and_exports_second_video_track(mon
     content = (draft.final_path / "draft_content.json").read_text(encoding="utf-8")
     assert "code_visual_overlay" in content
     assert "0001_scene-code_mechanism-diagram-evidence.mp4" in content
+
+
+def test_code_visual_overlay_can_export_transparent_png_sequence_and_recommend(monkeypatch, tmp_path):
+    client, project_id = _project_with_code_visual_plan(monkeypatch, tmp_path)
+    recommendation = client.post(
+        f"/api/projects/{project_id}/visual-assets/code-visual/recommend",
+        json={"sceneIds": ["scene_code"]},
+    )
+    assert recommendation.status_code == 200
+    assert recommendation.json()["recommendations"][0]["rendererId"] == "mechanism_diagram"
+    response = client.post(
+        f"/api/projects/{project_id}/visual-assets/code-visual/scenes/scene_code/regenerate",
+        json={"exportPng": True, "exportVideo": True, "exportTransparentVideo": True, "bindToProject": True, "presentationMode": "overlay", "rendererId": "mechanism_diagram", "themeMode": "light"},
+    )
+    assert response.status_code == 200, response.text
+    export = response.json()["videoExports"][0]
+    sequence = tmp_path / project_id / "visual-assets" / "code-visual" / response.json()["runId"] / export["transparentPngSequencePath"]
+    assert sequence.is_dir()
+    first = sequence / "0000.png"
+    assert first.is_file()
+    assert Image.open(first).getpixel((0, 0))[3] == 0
