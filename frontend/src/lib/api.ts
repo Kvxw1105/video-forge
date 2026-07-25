@@ -189,4 +189,10 @@ export const api = {
     return response.json()
   },
   unbindFactorySceneVisual: (batchId: string, itemId: string, sceneId: string, deleteProjectAsset = false) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/unbind`, { method: 'POST', body: JSON.stringify({ sceneId, deleteProjectAsset }) }),
+  getVersion: () => request<any>('/version'),
+  createDirectorRun: (data: any) => request<any>('/director/runs', { method: 'POST', body: JSON.stringify(data) }),
+  listDirectorRuns: () => request<any[]>('/director/runs'),
+  getDirectorRun: (runId: string) => request<any>('/director/runs/' + encodeURIComponent(runId)),
+  getDirectorRunEvents: (runId: string, after = 0) => request<any>('/director/runs/' + encodeURIComponent(runId) + '/events?after=' + after),
+  approveDirectorRun: (runId: string, approvalId: string, decision = 'replace') => request<any>('/director/runs/' + encodeURIComponent(runId) + '/approvals', { method: 'POST', body: JSON.stringify({ approvalId, decision }) }),
 }

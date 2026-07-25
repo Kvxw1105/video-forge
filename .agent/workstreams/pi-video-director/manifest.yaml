@@ -1,0 +1,61 @@
+id: pi-video-director
+status: initial-phase-in-progress
+branch: codex/pi-video-director
+worktree: D:/A-Project/video-forge-worktrees/pi-video-director
+parent_pr: 25
+base_ref: origin/codex/video-agent-lab
+expected_base_sha: ef5f760e47c7f0e62fda03d67dc7de9496e1f676
+latest_commit: ef5f760e47c7f0e62fda03d67dc7de9496e1f676
+draft_pr: null
+ci_status: not-run
+
+owned_paths:
+  - backend/agent_runtime/**
+  - backend/routers/director.py
+  - frontend/src/pages/DirectorDesk.tsx
+  - .agent/workstreams/pi-video-director/**
+  - docs/agent/pi-*
+  - scripts/verify_pi_director.py
+shared_paths:
+  - backend/main.py
+  - frontend/src/App.tsx
+  - frontend/src/lib/api.ts
+forbidden_paths:
+  - backend/visual_assets/**
+  - backend/shared/structured_content.py
+  - backend/adapters/jianying.py
+  - frontend/src/components/panels/ScriptPanel.tsx
+
+completed:
+  - Created isolated worktree on the current open parent PR head.
+  - Added Director Run API, event replay, SSE endpoint, approval, resume, cancel, artifacts, and version endpoint.
+  - Added FakePiTransport with zero live calls and zero network calls.
+  - Added local vector_card plugin artifact generation.
+  - Added Director Desk route backed by the real Director API.
+  - Verified API approval/resume/artifact flow with scripts/verify_pi_director.py.
+  - Verified frontend TypeScript and Vite production build.
+remaining:
+  - Inspect and adopt the user-provided Pi source/runtime version.
+  - Replace FakePiTransport with Pi RPC Sidecar behind the same transport interface.
+  - Connect actual Video Agent Lab recipes and VideoForge project operations to DirectorService.
+  - Add browser-level smoke and refresh verification against a running server.
+  - Commit, push, open Draft PR, run CI, and produce a candidate artifact.
+tests:
+  - python scripts/verify_pi_director.py
+  - npm run build (frontend)
+blockers:
+  - Pi source path/version has not been supplied in this worktree.
+next_action: Implement real Pi RPC adapter after source audit; keep FakePiTransport as CI fixture.
+
+delivery:
+  type: local-production-entry
+  url: http://127.0.0.1:8011/director
+  artifact: local Director Run artifacts under projects/.director-runs
+  build_sha: ef5f760e47c7f0e62fda03d67dc7de9496e1f676
+  verified_at: 2026-07-25T01:57:15Z
+  process:
+    pid: 37348
+    port: 8011
+    command: python -m uvicorn production_app:app --host 127.0.0.1 --port 8011
+
+safe_to_handoff: false
