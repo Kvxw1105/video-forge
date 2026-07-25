@@ -5,7 +5,7 @@ worktree: D:/A-Project/video-forge-worktrees/pi-video-director
 parent_pr: 25
 base_ref: origin/codex/video-agent-lab
 expected_base_sha: ef5f760e47c7f0e62fda03d67dc7de9496e1f676
-latest_commit: pending
+latest_commit: see_git_head
 draft_pr: https://github.com/Kvxw1105/video-forge/pull/29
 ci_status: passed
 
@@ -57,7 +57,7 @@ delivery:
   type: local-production-entry
   url: http://127.0.0.1:8012/director
   artifact: local Director Run artifacts under .agent-runs
-  build_sha: pending
+  build_sha: see_git_head
   verified_at: 2026-07-25T01:57:15Z
   process:
     pid: 9212
