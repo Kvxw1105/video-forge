@@ -7,7 +7,12 @@ serializable snapshot which can be persisted with a Director Run.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from agent.harness import ProductContextBuilder
 from services.project_service import get_project, list_projects
