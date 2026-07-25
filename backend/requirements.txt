@@ -12,3 +12,4 @@ librosa==0.11.0
 mcp==1.28.0
 sse-starlette==2.2.1
 Pillow==12.3.0
+resvg-py==0.3.3

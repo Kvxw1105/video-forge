@@ -35,6 +35,7 @@ def create_app(*, serve_frontend: bool | None = None, frontend_dist=None) -> Fas
     app.include_router(visual_scene.router)
     app.include_router(agent_factory.router)
     app.include_router(visual_assets.router)
+    app.include_router(visual_assets.code_visual_router)
 
     @app.get("/api/health")
     def health():

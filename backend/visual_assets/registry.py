@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from .stickman import StickmanSvgProvider
+from .code_visual import CodeVisualSvgProvider
 
 PROVIDERS = {
     "stickman_svg": StickmanSvgProvider(),
+    "code_visual_svg": CodeVisualSvgProvider(),
 }
 
 

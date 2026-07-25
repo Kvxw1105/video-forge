@@ -130,6 +130,37 @@ class PillowSvgRasterizer:
             return RasterizeResult(False, None, "png_render_failed", str(exc))
 
 
+class ResvgSvgRasterizer:
+    """Full SVG rasterizer for code_visual_svg; supports paths, fills, dashes, and groups."""
+
+    rasterizer_id = "resvg_py"
+    rasterizer_version = "0.3.3"
+
+    def is_available(self) -> bool:
+        try:
+            import resvg_py  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    def rasterize(self, svg_path: Path, png_path: Path, width: int, height: int) -> RasterizeResult:
+        if not self.is_available():
+            return RasterizeResult(False, None, "png_converter_unavailable", "resvg-py is not available")
+        tmp = png_path.with_name("." + png_path.stem + ".tmp.png")
+        tmp.unlink(missing_ok=True)
+        try:
+            import resvg_py
+
+            tmp.write_bytes(resvg_py.svg_to_bytes(svg_path=str(svg_path), width=width, height=height, skip_system_fonts=True))
+            if tmp.stat().st_size == 0:
+                raise RuntimeError("resvg emitted an empty PNG")
+            os.replace(tmp, png_path)
+            return RasterizeResult(True, png_path)
+        except Exception as exc:
+            tmp.unlink(missing_ok=True)
+            return RasterizeResult(False, None, "png_render_failed", str(exc))
+
+
 def parse_png(path: Path) -> dict:
     data = path.read_bytes()
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):

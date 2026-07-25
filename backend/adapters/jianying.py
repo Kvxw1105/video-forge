@@ -327,6 +327,46 @@ def _render_jianying_draft(
             script.add_material(v.material_instance)
             main_track.add_segment(v)
 
+    # 1.5 Picture-in-picture video overlays share the compiled project timeline
+    # but live on a second JianYing video track.
+    video_overlays = compiled.video_overlay_segments()
+    if video_overlays:
+        script.add_track(TrackType.video, "code_visual_overlay")
+        overlay_track = script.tracks["code_visual_overlay"]
+        for overlay in video_overlays:
+            asset_path = _resolve_path(overlay["assetPath"])
+            if not asset_path:
+                continue
+            duration = max(0.0, float(overlay["end"]) - float(overlay["start"]))
+            prepared, duration = _prepare_short_visual_video(
+                asset_path,
+                {
+                    "type": "video",
+                    "metadata": {"durationPolicy": overlay.get("durationPolicy", "loop")},
+                },
+                duration,
+                draft_dir,
+                adapter_warnings,
+            )
+            if duration <= 0:
+                continue
+            transform_x, transform_y = overlay_to_jianying_transform(
+                float(overlay["x"]), float(overlay["y"])
+            )
+            clip = ClipSettings(
+                scale_x=float(overlay["scale"]),
+                scale_y=float(overlay["scale"]),
+                transform_x=transform_x,
+                transform_y=transform_y,
+            )
+            v = VideoSegment(
+                str(prepared),
+                target_timerange=trange(f"{overlay['start']}s", f"{duration}s"),
+                clip_settings=clip,
+            )
+            script.add_material(v.material_instance)
+            overlay_track.add_segment(v)
+
     # 2. BGM tracks — each track has independent timeline startAt and source trim
     bgm_tracks = list(compiled.bgm_clips)
     if bgm_tracks:
@@ -592,9 +632,10 @@ def _rewrite_draft_media_paths(draft_dir: Path, old_root: Path, new_root: Path) 
     try:
         payload = json.loads(content_file.read_text(encoding="utf-8"))
         rewritten = rewrite(payload)
-        temp_file = content_file.with_name(
-            f".{content_file.name}.videoforge-rewrite-{uuid4().hex}.tmp"
-        )
+        # Keep this short. On Windows the staging root already includes a
+        # versioned draft folder, and a verbose temp name can exceed MAX_PATH
+        # even when draft_content.json itself is readable.
+        temp_file = content_file.with_name(f".vf-{uuid4().hex[:8]}.tmp")
         try:
             with temp_file.open("w", encoding="utf-8", newline="") as handle:
                 json.dump(rewritten, handle, ensure_ascii=False, indent=4)
