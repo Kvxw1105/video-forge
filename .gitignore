@@ -93,6 +93,7 @@ agent/evals/results/phase0_report.md
 .superpowers/
 
 # Local audit and temporary artifacts
+/tmp/
 codex_*.png
 codex_*.json
 CON
