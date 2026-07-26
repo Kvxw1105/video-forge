@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from .provider_settings import load_agent_provider
+from shared.presentation_templates import presentation_for_block
 
 BLOCK_TYPES = {
     "HOOK", "CTA_TAG", "PROBLEM", "STORY", "MECHANISM", "JUDGMENT",
@@ -83,7 +84,7 @@ def _validate(content: str) -> dict[str, Any]:
         if kind not in BLOCK_TYPES or not text:
             continue
         block_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(raw.get("id") or f"{kind.lower()}_{index:02d}")).strip("_")[:64] or f"{kind.lower()}_{index:02d}"
-        blocks.append({"id": block_id, "type": kind, "text": text, "enabled": True, "revision": 1, "metadata": {"semantic": raw.get("semantic") if isinstance(raw.get("semantic"), dict) else {}, "confidence": max(0, min(1, float(raw.get("confidence", 0.5) or 0.5))), "warnings": [str(item)[:160] for item in (raw.get("warnings") or []) if str(item).strip()]}})
+        blocks.append({"id": block_id, "type": kind, "text": text, "enabled": True, "revision": 1, "metadata": {"semantic": raw.get("semantic") if isinstance(raw.get("semantic"), dict) else {}, "confidence": max(0, min(1, float(raw.get("confidence", 0.5) or 0.5))), "presentation": presentation_for_block(kind, str(raw.get("presentationTemplateId") or "") or None)}, "warnings": [str(item)[:160] for item in (raw.get("warnings") or []) if str(item).strip()]})
     if not blocks:
         raise ValueError("no valid blocks")
     # IDs must be stable and unique before the user reaches the confirmation UI.
@@ -99,8 +100,8 @@ _SYSTEM = """You organize raw Chinese scripts for VideoForge. Return JSON only. 
 
 
 def _source_instruction(text: str) -> str:
-    return f"""Convert this raw script into a draft VideoForge episode. Preserve every important idea and original title if present. Split by narrative meaning, not arbitrary sentence count. Use only these block types: {', '.join(sorted(BLOCK_TYPES))}. Return JSON: {{\"title\":string,\"summary\":string,\"warnings\":[string],\"blocks\":[{{\"id\":string,\"type\":one allowed type,\"text\":string,\"semantic\":object,\"confidence\":0..1,\"warnings\":[string]}}]}}.\n\nRAW SCRIPT:\n{text}"""
+    return f"""Convert this raw script into a draft VideoForge episode. Preserve every important idea and original title if present. Split by narrative meaning, not arbitrary sentence count. Use only these block types: {', '.join(sorted(BLOCK_TYPES))}. You may suggest presentationTemplateId only when it matches the block type: HOOK=hook_impact, STORY=story_sequence, MECHANISM=mechanism_explainer, METHOD=method_steps, SHORT_OUTRO=outro_resolve; other allowed types use narrative_support. Return JSON: {{\"title\":string,\"summary\":string,\"warnings\":[string],\"blocks\":[{{\"id\":string,\"type\":one allowed type,\"text\":string,\"semantic\":object,\"presentationTemplateId\":string optional,\"confidence\":0..1,\"warnings\":[string]}}]}}.\n\nRAW SCRIPT:\n{text}"""
 
 
 def _block_instruction(text: str, current_type: str | None) -> str:
-    return f"""Reorganize exactly one editable VideoForge block. Keep its meaning, improve its type and semantic metadata, and return exactly one block in the same JSON shape. Current type: {current_type or 'unknown'}.\n\nBLOCK TEXT:\n{text}"""
+    return f"""Reorganize exactly one editable VideoForge block. Keep its meaning, improve its type, semantic metadata, and optional matching presentationTemplateId. Return exactly one block in the same JSON shape. Current type: {current_type or 'unknown'}.\n\nBLOCK TEXT:\n{text}"""

@@ -8,10 +8,16 @@ from services.project_service import create_project_from_payload, get_project, u
 from shared.structured_import import MAX_SOURCE_CHARS, parse_structured_markdown
 from shared.structured_presets import build_blocks, build_default_structured_variants
 from shared.structured_content import compile_structured_variant
+from shared.presentation_templates import list_presentation_templates
 from services.structured_audio_materializer import has_structured_alignment
 from agent_runtime.raw_script_organizer import OrganizerError, organize_block, organize_source
 
 router = APIRouter(prefix="/api", tags=["structured-authoring"])
+
+
+@router.get("/structured/presentation-templates")
+def get_presentation_templates():
+    return {"templates": list_presentation_templates()}
 
 
 def _suggested_id(block_type: str | None, index: int, blocks: list[dict]) -> str | None:

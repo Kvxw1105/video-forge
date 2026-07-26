@@ -12,6 +12,7 @@ from routers import structured_authoring
 from agent_runtime.raw_script_organizer import OrganizerError
 from shared.structured_import import detect_block_type, parse_structured_markdown
 from shared.structured_presets import build_blocks, build_default_structured_variants
+from agent_runtime.raw_script_organizer import _validate
 
 
 def test_parser_is_deterministic_and_preserves_paragraphs():
@@ -164,3 +165,22 @@ def test_raw_agent_failure_returns_clear_degradation_without_project(monkeypatch
     assert response.status_code == 409
     assert "手动分段" in response.json()["detail"]
     assert list(tmp_path.iterdir()) == []
+
+
+def test_presentation_template_catalog_and_agent_selection(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    response = client.get("/api/structured/presentation-templates")
+    assert response.status_code == 200
+    templates = {item["id"]: item for item in response.json()["templates"]}
+    assert {"hook_impact", "story_sequence", "mechanism_explainer", "method_steps", "outro_resolve"} <= set(templates)
+    assert templates["mechanism_explainer"]["presentationMode"] == "overlay"
+    assert templates["mechanism_explainer"]["visualPolicy"] == "diagram_first"
+    assert templates["mechanism_explainer"]["granularityOptions"] == ["coarse", "standard", "fine", "custom"]
+    assert "code_visual_svg" in templates["mechanism_explainer"]["providerPreferences"]
+
+    draft = _validate('{"title":"x","blocks":[{"id":"m","type":"MECHANISM","text":"explain","presentationTemplateId":"mechanism_explainer"},{"id":"h","type":"HOOK","text":"open","presentationTemplateId":"method_steps"}]}')
+    mechanism, hook = draft["blocks"]
+    assert mechanism["metadata"]["presentation"]["templateId"] == "mechanism_explainer"
+    assert mechanism["metadata"]["presentation"]["source"] == "agent"
+    assert hook["metadata"]["presentation"]["templateId"] == "hook_impact"
+    assert hook["metadata"]["presentation"]["source"] == "default"
