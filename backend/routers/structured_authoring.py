@@ -9,6 +9,7 @@ from shared.structured_import import MAX_SOURCE_CHARS, parse_structured_markdown
 from shared.structured_presets import build_blocks, build_default_structured_variants
 from shared.structured_content import compile_structured_variant
 from services.structured_audio_materializer import has_structured_alignment
+from agent_runtime.raw_script_organizer import OrganizerError, organize_block, organize_source
 
 router = APIRouter(prefix="/api", tags=["structured-authoring"])
 
@@ -23,7 +24,14 @@ def _suggested_id(block_type: str | None, index: int, blocks: list[dict]) -> str
 
 def _episode_from_payload(data: dict) -> dict:
     episode = data.get("episode") or {}
-    blocks = episode.get("blocks") or []
+    blocks = []
+    for raw in episode.get("blocks") or []:
+        if not isinstance(raw, dict):
+            continue
+        metadata = dict(raw.get("metadata") or {})
+        if raw.get("warnings"):
+            metadata["organizerWarnings"] = list(raw["warnings"])
+        blocks.append({key: raw[key] for key in ("id", "type", "text", "enabled", "revision") if key in raw} | {"metadata": metadata})
     variants = episode.get("variants") or []
     if not blocks or not variants:
         raise HTTPException(422, "episode requires blocks and variants")
@@ -55,6 +63,22 @@ def parse_import(data: dict):
     for index, section in enumerate(document.sections):
         sections.append({"index": index, "sourceHeading": section.source_heading, "detectedType": section.detected_type, "suggestedId": _suggested_id(section.detected_type, index, preview_blocks), "text": section.text, "sourceStartLine": section.source_start_line, "sourceEndLine": section.source_end_line, "warnings": list(section.warnings)})
     return {"title": document.title, "sections": sections, "unknownSectionCount": sum(s.detected_type is None for s in document.sections), "emptySectionCount": sum(not s.text.strip() for s in document.sections), "warnings": list(document.warnings)}
+
+
+@router.post("/structured/import/organize")
+def organize_raw_import(data: dict):
+    try:
+        return organize_source(str(data.get("text") or ""))
+    except OrganizerError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/structured/import/organize-block")
+def organize_single_block(data: dict):
+    try:
+        return organize_block(str(data.get("text") or ""), str(data.get("type") or "") or None)
+    except OrganizerError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/projects/structured")

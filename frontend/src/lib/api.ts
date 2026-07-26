@@ -189,6 +189,8 @@ export const api = {
   recommendCodeVisualOverlays: (projectId: string, sceneIds: string[] = []) => request<{ recommendations: any[] }>(`/projects/${projectId}/visual-assets/code-visual/recommend`, { method: 'POST', body: JSON.stringify({ sceneIds }) }),
   getStructuredCatalog: () => request<any[]>('/projects/structured/catalog'),
   parseStructuredMarkdown: (text: string) => request<any>('/structured/import/parse', { method: 'POST', body: JSON.stringify({ text, format: 'auto' }) }),
+  organizeRawScript: (text: string) => request<any>('/structured/import/organize', { method: 'POST', body: JSON.stringify({ text }) }),
+  organizeStructuredBlock: (text: string, type?: string) => request<any>('/structured/import/organize-block', { method: 'POST', body: JSON.stringify({ text, type }) }),
   createStructuredProject: (name: string, episode: any, ratio = '9:16') => request<any>('/projects/structured', { method: 'POST', body: JSON.stringify({ name, episode, canvas: { ratio } }) }),
   getStructuredEpisodeDraft: (projectId: string) => request<any>(`/projects/${projectId}/structured/draft`),
   updateStructuredEpisodeDraft: (projectId: string, data: any) => request<any>(`/projects/${projectId}/structured/draft`, { method: 'PATCH', body: JSON.stringify(data) }),
