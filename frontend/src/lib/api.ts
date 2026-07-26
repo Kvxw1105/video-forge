@@ -171,8 +171,26 @@ export const api = {
   saveVisualPlan: (projectId: string, plan: any) => request<any>(`/projects/${projectId}/visual-plan`, { method: 'PUT', body: JSON.stringify({ plan }) }),
   exportVisualPack: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan/generation-pack`, { method: 'POST' }),
   validateVisualPlan: (projectId: string) => request<any>(`/projects/${projectId}/visual-plan/validate`, { method: 'POST', body: JSON.stringify({}) }),
+  renderCodeVisualOverlay: (projectId: string, sceneId: string, options: {
+    rendererId: 'white_sketch' | 'silhouette' | 'pixel_rules' | 'mechanism_diagram'
+    themeMode: 'dark' | 'light'
+    overlayX: number
+    overlayY: number
+    overlayScale: number
+    overlayDurationPolicy: 'loop' | 'freeze_last_frame' | 'trim'
+    exportTransparentVideo?: boolean
+  }) => request<any>(`/projects/${projectId}/visual-assets/code-visual/scenes/${encodeURIComponent(sceneId)}/regenerate`, {
+    method: 'POST',
+    body: JSON.stringify({
+      sourceMode: 'visual_plan', exportPng: true, exportVideo: true, videoFps: 12,
+      bindToProject: true, presentationMode: 'overlay', ...options,
+    }),
+  }),
+  recommendCodeVisualOverlays: (projectId: string, sceneIds: string[] = []) => request<{ recommendations: any[] }>(`/projects/${projectId}/visual-assets/code-visual/recommend`, { method: 'POST', body: JSON.stringify({ sceneIds }) }),
   getStructuredCatalog: () => request<any[]>('/projects/structured/catalog'),
   parseStructuredMarkdown: (text: string) => request<any>('/structured/import/parse', { method: 'POST', body: JSON.stringify({ text, format: 'auto' }) }),
+  organizeRawScript: (text: string) => request<any>('/structured/import/organize', { method: 'POST', body: JSON.stringify({ text }) }),
+  organizeStructuredBlock: (text: string, type?: string) => request<any>('/structured/import/organize-block', { method: 'POST', body: JSON.stringify({ text, type }) }),
   createStructuredProject: (name: string, episode: any, ratio = '9:16') => request<any>('/projects/structured', { method: 'POST', body: JSON.stringify({ name, episode, canvas: { ratio } }) }),
   getStructuredEpisodeDraft: (projectId: string) => request<any>(`/projects/${projectId}/structured/draft`),
   updateStructuredEpisodeDraft: (projectId: string, data: any) => request<any>(`/projects/${projectId}/structured/draft`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -189,4 +207,30 @@ export const api = {
     return response.json()
   },
   unbindFactorySceneVisual: (batchId: string, itemId: string, sceneId: string, deleteProjectAsset = false) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/unbind`, { method: 'POST', body: JSON.stringify({ sceneId, deleteProjectAsset }) }),
+  getVersion: () => request<any>('/version'),
+  getAgentProviderSettings: () => request<any>('/settings/agent'),
+  saveAgentProviderSettings: (data: any) => request<any>('/settings/agent', { method: 'PUT', body: JSON.stringify(data) }),
+  testAgentProvider: (data: any) => request<any>('/settings/agent/test', { method: 'POST', body: JSON.stringify(data) }),
+  getAIImageProviderSettings: () => request<any>('/settings/ai-image'),
+  saveAIImageProviderSettings: (data: any) => request<any>('/settings/ai-image', { method: 'PUT', body: JSON.stringify(data) }),
+  fetchAIImageProviderModels: (data: any) => request<any>('/settings/ai-image/models', { method: 'POST', body: JSON.stringify(data) }),
+  testAIImageProvider: (data: any) => request<any>('/settings/ai-image/test', { method: 'POST', body: JSON.stringify(data) }),
+  startAIImageBatch: (projectId: string, data: any) => request<any>(`/projects/${projectId}/ai-image/batches`, { method: 'POST', body: JSON.stringify(data) }),
+  getAIImageBatch: (projectId: string, batchId: string) => request<any>(`/projects/${projectId}/ai-image/batches/${encodeURIComponent(batchId)}`),
+  approveAIImageBatch: (projectId: string, batchId: string, selections: any[]) => request<any>(`/projects/${projectId}/ai-image/batches/${encodeURIComponent(batchId)}/approve`, { method: 'POST', body: JSON.stringify({ selections }) }),
+  fetchAgentProviderModels: (data: any) => request<any>('/settings/agent/models', { method: 'POST', body: JSON.stringify(data) }),
+  uploadDirectorSrtIntake: async (file: File) => {
+    const fd = new FormData(); fd.append('file', file)
+    const response = await fetch(`${BASE}/director/intake/srt`, { method: 'POST', body: fd })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body?.detail?.message || body?.detail || body?.message || 'SRT import failed')
+    }
+    return response.json()
+  },
+  createDirectorRun: (data: any) => request<any>('/director/runs', { method: 'POST', body: JSON.stringify(data) }),
+  listDirectorRuns: () => request<any[]>('/director/runs'),
+  getDirectorRun: (runId: string) => request<any>('/director/runs/' + encodeURIComponent(runId)),
+  getDirectorRunEvents: (runId: string, after = 0) => request<any>('/director/runs/' + encodeURIComponent(runId) + '/events?after=' + after),
+  approveDirectorRun: (runId: string, approvalId: string, decision = 'replace') => request<any>('/director/runs/' + encodeURIComponent(runId) + '/approvals', { method: 'POST', body: JSON.stringify({ approvalId, decision }) }),
 }

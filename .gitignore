@@ -79,6 +79,7 @@ handoff/
 
 # Local runtime settings and credentials
 tts_settings.json
+config/agent_provider.json
 .agent-runs/
 agent/evals/results/latest-summary.json
 agent/evals/results/latest-summary.md
@@ -92,6 +93,7 @@ agent/evals/results/phase0_report.md
 .superpowers/
 
 # Local audit and temporary artifacts
+/tmp/
 codex_*.png
 codex_*.json
 CON

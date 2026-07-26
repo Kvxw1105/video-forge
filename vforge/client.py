@@ -114,6 +114,53 @@ def upload_asset(pid: str, file_path: str, base: str = DEFAULT_BASE) -> dict:
                     files={"file": file_path})
 
 
+def render_stickman_assets(
+    pid: str,
+    *,
+    source_mode: str = "visual_plan",
+    scene_ids: list[str] | None = None,
+    export_png: bool = True,
+    bind_to_project: bool = True,
+    replace_manual_edits: bool = False,
+    force_replace_user_asset: bool = False,
+    base: str = DEFAULT_BASE,
+) -> dict:
+    return _request("POST", f"/api/projects/{pid}/visual-assets/stickman/render", base=base, json_body={
+        "sourceMode": source_mode,
+        "sceneIds": scene_ids or [],
+        "exportSvg": True,
+        "exportPng": export_png,
+        "generateContactSheet": True,
+        "bindToProject": bind_to_project,
+        "replaceManualEdits": replace_manual_edits,
+        "forceReplaceUserAsset": force_replace_user_asset,
+        "routing": {"allowLlm": False, "minimumConfidence": 0.65, "lowConfidencePolicy": "fallback"},
+    })
+
+
+def regenerate_stickman_scene(
+    pid: str,
+    scene_id: str,
+    *,
+    export_png: bool = True,
+    replace_manual_edits: bool = False,
+    base: str = DEFAULT_BASE,
+) -> dict:
+    return _request("POST", f"/api/projects/{pid}/visual-assets/stickman/scenes/{scene_id}/regenerate", base=base, json_body={
+        "sourceMode": "visual_plan",
+        "exportSvg": True,
+        "exportPng": export_png,
+        "generateContactSheet": True,
+        "bindToProject": True,
+        "replaceManualEdits": replace_manual_edits,
+        "routing": {"allowLlm": False, "minimumConfidence": 0.65, "lowConfidencePolicy": "fallback"},
+    })
+
+
+def get_stickman_generation_run(pid: str, run_id: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", f"/api/projects/{pid}/visual-assets/stickman/runs/{run_id}", base=base)
+
+
 # ── Voiceover ────────────────────────────────────────────
 
 def generate_voiceover(pid: str, text: str, *, engine: str = "edge",

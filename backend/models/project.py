@@ -353,6 +353,25 @@ class DirectoryProgress(BaseModel):
     endX: float = 1.05
 
 
+class VideoOverlay(BaseModel):
+    id: str = Field(min_length=1, max_length=96)
+    assetId: str = Field(min_length=1, max_length=128)
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    x: float = Field(default=0.5, ge=0, le=1)
+    y: float = Field(default=0.32, ge=0, le=1)
+    scale: float = Field(default=0.36, gt=0, le=1)
+    opacity: float = Field(default=1.0, ge=0, le=1)
+    durationPolicy: Literal["loop", "freeze_last_frame", "trim"] = "loop"
+    zIndex: int = Field(default=0, ge=0, le=32)
+
+    @model_validator(mode="after")
+    def _valid_range(self):
+        if self.end <= self.start:
+            raise ValueError("video overlay end must be greater than start")
+        return self
+
+
 class Overlay(BaseModel):
     title: dict = Field(default_factory=lambda: {
         "text": "", "position": "top_center", "fontSize": 48,
@@ -367,6 +386,7 @@ class Overlay(BaseModel):
     adjustments: dict = Field(default_factory=lambda: {
         "brightness": 0.0, "contrast": 1.0  # brightness: -1~1, contrast: 0~2
     })
+    videoOverlays: list[VideoOverlay] = Field(default_factory=list)
     directoryProgress: DirectoryProgress = Field(default_factory=DirectoryProgress)
     subtitle_enabled: bool = True
 

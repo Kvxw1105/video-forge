@@ -60,6 +60,7 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     for warning in compiled.warnings:
         logger.warning("Timeline compiler: %s", warning)
     segments = compiled.visual_segments()
+    video_overlays = compiled.video_overlay_segments()
     subtitles = list(compiled.subtitles)
     overlays = compiled.overlays
     canvas = compiled.canvas
@@ -93,6 +94,10 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
     media_paths = []
     for seg in segments:
         mp = seg.get("assetPath", "")
+        if mp and Path(mp).exists() and mp not in media_paths:
+            media_paths.append(mp)
+    for overlay in video_overlays:
+        mp = overlay.get("assetPath", "")
         if mp and Path(mp).exists() and mp not in media_paths:
             media_paths.append(mp)
 
@@ -155,6 +160,10 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
             cmd.extend(["-loop", "1", "-t", str(seg_dur), "-i", input_path])
 
     total_inputs = len(render_segments)
+    for overlay in video_overlays:
+        input_path = clean_media.get(overlay["assetPath"], overlay["assetPath"])
+        cmd.extend(["-stream_loop", "-1", "-t", str(overlay["duration"]), "-i", input_path])
+    overlay_input_offset = total_inputs
 
     # Single pre-mixed audio input (avoids amix filter issues)
     if has_mixed_audio:
@@ -224,8 +233,36 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
         fc_parts.append(chain)
         cmd.extend(["-map", "[vout]"])
 
+    if video_overlays:
+        source_label = "vout"
+        for index, overlay in enumerate(video_overlays):
+            input_index = overlay_input_offset + index
+            overlay_label = f"pip{index}"
+            output_label = f"pipout{index}"
+            scale = float(overlay["scale"])
+            start = float(overlay["start"])
+            end = float(overlay["end"])
+            x = float(overlay["x"])
+            y = float(overlay["y"])
+            opacity = float(overlay["opacity"])
+            fc_parts.append(
+                f"[{input_index}:v]setpts=PTS-STARTPTS+{start}/TB,"
+                f"scale=trunc(iw*{scale}/2)*2:trunc(ih*{scale}/2)*2,"
+                f"format=rgba,colorchannelmixer=aa={opacity}[{overlay_label}]"
+            )
+            fc_parts.append(
+                f"[{source_label}][{overlay_label}]"
+                f"overlay=x='W*{x}-w/2':y='H*{y}-h/2':"
+                f"enable='between(t,{start},{end})':eof_action=pass[{output_label}]"
+            )
+            source_label = output_label
+        for index, value in enumerate(cmd):
+            if value == "[vout]" and index and cmd[index - 1] == "-map":
+                cmd[index] = f"[{source_label}]"
+                break
+
     # --- Audio filter chain ---
-    audio_offset = total_inputs
+    audio_offset = total_inputs + len(video_overlays)
     audio_out_label = None
 
     if has_mixed_audio:
@@ -238,8 +275,8 @@ def render_preview(project: dict, output_path: Path, cue_points: list = None) ->
         cmd.extend(["-filter_complex", ";".join(fc_parts)])
 
     if audio_out_label and has_mixed_audio:
-        # Pre-mixed audio is input at index total_inputs
-        cmd.extend(["-map", f"{total_inputs}:a", "-c:a", "aac", "-b:a", "128k"])
+        # Video overlays are inputs too; the audio follows both main and PIP inputs.
+        cmd.extend(["-map", f"{audio_offset}:a", "-c:a", "aac", "-b:a", "128k"])
 
     cmd.extend(["-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", "-r", "25", "-movflags", "+faststart"])
     cmd.extend(["-t", str(dur)])

@@ -1,0 +1,70 @@
+id: pi-video-director
+status: pi-rpc-sidecar-complete
+branch: codex/pi-video-director
+worktree: D:/A-Project/video-forge-worktrees/pi-video-director
+parent_pr: 25
+base_ref: origin/codex/video-agent-lab
+expected_base_sha: ef5f760e47c7f0e62fda03d67dc7de9496e1f676
+latest_commit: see_git_head
+draft_pr: https://github.com/Kvxw1105/video-forge/pull/29
+ci_status: passed
+
+owned_paths:
+  - backend/agent_runtime/**
+  - backend/routers/director.py
+  - frontend/src/pages/DirectorDesk.tsx
+  - .agent/workstreams/pi-video-director/**
+  - docs/agent/pi-*
+  - scripts/verify_pi_director.py
+shared_paths:
+  - backend/main.py
+  - frontend/src/App.tsx
+  - frontend/src/lib/api.ts
+forbidden_paths:
+  - backend/visual_assets/**
+  - backend/shared/structured_content.py
+  - backend/adapters/jianying.py
+  - frontend/src/components/panels/ScriptPanel.tsx
+
+completed:
+  - Created isolated worktree on the current open parent PR head.
+  - Added Director Run API, event replay, SSE endpoint, approval, resume, cancel, artifacts, and version endpoint.
+  - Added FakePiTransport with zero live calls and zero network calls.
+  - Moved Director Run persistence onto the Lab RunStore under .agent-runs.
+  - Director validates and records the selected Lab Recipe before creating a Run.
+  - Added local vector_card plugin artifact generation.
+  - Added Director Desk route backed by the real Director API.
+  - Verified API approval/resume/artifact flow with scripts/verify_pi_director.py.
+  - Verified frontend TypeScript and Vite production build.
+  - Committed and pushed the initial Director implementation.
+  - Opened Draft PR #29 against the parent PR branch.
+  - PR #29 verify CI passed.
+  - Audited and built Pi RPC source at 8eef62ed3ea62d646a7fad92fa583fc8d71fec17.
+  - Added opt-in PiRpcTransport with JSONL correlation, session metadata, abort, and controlled shutdown.
+  - Added restricted videoforge_recipe_contract extension and verified direct RPC plus Director API startup.
+  - Mapped Pi streaming events into Director event replay and tied the approval flow to the recipe bind_assets action contract.
+  - Added explicit-context Factory bind_scene_assets dispatch after approval, with a targeted injected-client verifier.
+  - Added real Pi prompt lifecycle gate: approval waits for agent_settled, then explicit Factory binding dispatches.
+remaining:
+  - Connect actual Video Agent Lab recipe execution and VideoForge project operations to DirectorService.
+  - Diagnose the Factory preview renderer stall before claiming full Lab closed-loop coverage.
+  - Produce an uploaded candidate artifact after real Pi and renderer integration.
+tests:
+  - python scripts/verify_pi_director.py
+  - npm run build (frontend)
+blockers:
+  - Mock Factory closed-loop reaches rendering_preview but the local ffmpeg preview process can exceed the verifier 30 second request limit.
+next_action: Rebind persisted Pi sessions after backend restart, then surface Pi planned tool-call proposals as new Director approvals; keep FakePiTransport as CI fixture.
+
+delivery:
+  type: local-production-entry
+  url: http://127.0.0.1:8012/director
+  artifact: local Director Run artifacts under .agent-runs
+  build_sha: see_git_head
+  verified_at: 2026-07-25T01:57:15Z
+  process:
+    pid: 9212
+    port: 8012
+    command: python -m uvicorn production_app:app --host 127.0.0.1 --port 8012
+
+safe_to_handoff: true

@@ -155,6 +155,20 @@ def cmd_factory_validate(args): _print(client.factory_validate_visuals(args.batc
 def cmd_factory_resume_item(args): _print(client.factory_resume_item(args.batch_id,args.item_id,args.base))
 def cmd_factory_resume(args): _print(client.factory_resume_batch(args.batch_id,args.base))
 def cmd_factory_continue(args): _print(client.factory_continue(args.batch_id,args.base))
+def cmd_stickman_render(args):
+    _print(client.render_stickman_assets(
+        args.pid,
+        source_mode=args.source.replace("-", "_"),
+        scene_ids=args.scene_id or [],
+        export_png=args.png,
+        bind_to_project=args.bind,
+        replace_manual_edits=args.replace_manual_edits,
+        force_replace_user_asset=args.force_replace_user_asset,
+        base=args.base,
+    ))
+def cmd_stickman_regenerate(args):
+    _print(client.regenerate_stickman_scene(args.pid, args.scene_id, export_png=args.png, replace_manual_edits=args.replace_manual_edits, base=args.base))
+def cmd_stickman_inspect(args): _print(client.get_stickman_generation_run(args.pid, args.run_id, args.base))
 
 
 def cmd_tts_get(args):
@@ -330,6 +344,28 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("mcp", help="启动 MCP server (stdio)")\
         .set_defaults(func=lambda args: None)
     sp = sub.add_parser("mcp-http", help="启动 MCP server (HTTP transport)")
+    stickman = sub.add_parser("stickman", help="Generate deterministic Stickman visual assets")
+    stickman_sub = stickman.add_subparsers(dest="stickman_cmd", required=True)
+    stickman_render = stickman_sub.add_parser("render", help="Render assets from a Visual Plan")
+    stickman_render.add_argument("--project", "--pid", dest="pid", required=True)
+    stickman_render.add_argument("--source", choices=["visual-plan", "subtitles"], default="visual-plan")
+    stickman_render.add_argument("--scene-id", action="append", default=[])
+    stickman_render.add_argument("--png", action="store_true")
+    stickman_render.add_argument("--bind", action="store_true")
+    stickman_render.add_argument("--replace-manual-edits", action="store_true")
+    stickman_render.add_argument("--force-replace-user-asset", action="store_true")
+    stickman_render.set_defaults(func=cmd_stickman_render)
+    stickman_regenerate = stickman_sub.add_parser("regenerate", help="Regenerate one Visual Scene")
+    stickman_regenerate.add_argument("--project", "--pid", dest="pid", required=True)
+    stickman_regenerate.add_argument("--scene", "--scene-id", dest="scene_id", required=True)
+    stickman_regenerate.add_argument("--png", action="store_true")
+    stickman_regenerate.add_argument("--replace-manual-edits", action="store_true")
+    stickman_regenerate.set_defaults(func=cmd_stickman_regenerate)
+    stickman_inspect = stickman_sub.add_parser("inspect", help="Inspect a Stickman run")
+    stickman_inspect.add_argument("--project", "--pid", dest="pid", required=True)
+    stickman_inspect.add_argument("--run", "--run-id", dest="run_id", required=True)
+    stickman_inspect.set_defaults(func=cmd_stickman_inspect)
+
     sp.add_argument("--port", type=int, default=8765)
     sp.set_defaults(func=lambda args: None)
     sub.add_parser("serve", help="启动 MCP server (stdio, alias for mcp)")\

@@ -1104,7 +1104,7 @@ export default function Editor() {
                 </div>
               )}
               {activeTab === 'structured' && project.structuredContent && (
-                <StructuredPanel projectId={id!} structuredContent={project.structuredContent} onToast={showToast} />
+                <StructuredPanel projectId={id!} structuredContent={project.structuredContent} onToast={showToast} onRefresh={reload} />
               )}
             </div>
           </div>
