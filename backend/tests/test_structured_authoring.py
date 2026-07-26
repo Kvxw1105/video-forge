@@ -174,13 +174,33 @@ def test_presentation_template_catalog_and_agent_selection(monkeypatch, tmp_path
     templates = {item["id"]: item for item in response.json()["templates"]}
     assert {"hook_impact", "story_sequence", "mechanism_explainer", "method_steps", "outro_resolve"} <= set(templates)
     assert templates["mechanism_explainer"]["presentationMode"] == "overlay"
-    assert templates["mechanism_explainer"]["visualPolicy"] == "diagram_first"
+    assert templates["mechanism_explainer"]["presentationStyle"] == "diagram_first"
     assert templates["mechanism_explainer"]["granularityOptions"] == ["coarse", "standard", "fine", "custom"]
     assert "code_visual_svg" in templates["mechanism_explainer"]["providerPreferences"]
 
     draft = _validate('{"title":"x","blocks":[{"id":"m","type":"MECHANISM","text":"explain","presentationTemplateId":"mechanism_explainer"},{"id":"h","type":"HOOK","text":"open","presentationTemplateId":"method_steps"}]}')
     mechanism, hook = draft["blocks"]
     assert mechanism["metadata"]["presentation"]["templateId"] == "mechanism_explainer"
+    assert mechanism["metadata"]["presentation"]["presentationStyle"] == "diagram_first"
+    assert mechanism["metadata"]["presentation"]["visualPolicy"] == {}
     assert mechanism["metadata"]["presentation"]["source"] == "agent"
     assert hook["metadata"]["presentation"]["templateId"] == "hook_impact"
     assert hook["metadata"]["presentation"]["source"] == "default"
+
+
+def test_structured_project_persists_presentation_and_custom_visual_policy(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    episode = _episode()
+    episode["blocks"][0]["metadata"] = {"presentation": {
+        "templateId": "story_sequence",
+        "presentationStyle": "narrative_sequence",
+        "providerPreferences": ["ai_image"],
+        "presentationMode": "main",
+        "granularity": "custom",
+        "visualPolicy": {"mode": "fixed_units", "unitsPerScene": 2, "targetDuration": 8},
+    }}
+    created = client.post("/api/projects/structured", json={"name": "presentation", "episode": episode})
+    assert created.status_code == 200
+    stored = created.json()["structuredContent"]["episode"]["blocks"][0]["metadata"]["presentation"]
+    assert stored["templateId"] == "story_sequence"
+    assert stored["visualPolicy"] == {"mode": "fixed_units", "unitsPerScene": 2, "targetDuration": 8}

@@ -38,7 +38,7 @@ def visual_source_hash(project: dict) -> str:
     episode = ((project.get("structuredContent") or {}).get("episode") or {})
     blocks = episode.get("blocks") or []; bindings = {item.get("blockId"): item for item in episode.get("bindings") or []}
     subtitles = {item.get("id"): item for item in project.get("subtitles") or []}
-    payload = {"episodeId": episode.get("episodeId"), "alignmentGenerationId": (episode.get("alignment") or {}).get("generationId"), "blocks": [{"id": block.get("id"), "revision": block.get("revision", 1)} for block in blocks], "bindings": [{"blockId": block.get("id"), "audioSlice": (bindings.get(block.get("id")) or {}).get("audioSlice"), "subtitles": [{"id": sid, "text": (subtitles.get(sid) or {}).get("text"), "start": (subtitles.get(sid) or {}).get("start"), "end": (subtitles.get(sid) or {}).get("end")} for sid in (bindings.get(block.get("id")) or {}).get("subtitleIds") or []] } for block in blocks]}
+    payload = {"episodeId": episode.get("episodeId"), "alignmentGenerationId": (episode.get("alignment") or {}).get("generationId"), "blocks": [{"id": block.get("id"), "revision": block.get("revision", 1), "presentation": _presentation(block)} for block in blocks], "bindings": [{"blockId": block.get("id"), "audioSlice": (bindings.get(block.get("id")) or {}).get("audioSlice"), "subtitles": [{"id": sid, "text": (subtitles.get(sid) or {}).get("text"), "start": (subtitles.get(sid) or {}).get("start"), "end": (subtitles.get(sid) or {}).get("end")} for sid in (bindings.get(block.get("id")) or {}).get("subtitleIds") or []] } for block in blocks]}
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -50,18 +50,65 @@ def planning_context(project: dict) -> dict:
         selected = [subtitles[item] for item in ids if item in subtitles]
         units = build_narration_units(selected)
         slice_ = binding.get("audioSlice") or {}
-        blocks.append({"blockId": block["id"], "blockType": block.get("type"), "text": block.get("text", ""), "sourceStart": slice_.get("sourceStart"), "sourceEnd": slice_.get("sourceEnd"), "narrationUnits": [{"id": unit.id, "subtitleIds": list(unit.subtitle_ids), "text": unit.text, "start": unit.start, "end": unit.end} for unit in units]})
+        blocks.append({"blockId": block["id"], "blockType": block.get("type"), "text": block.get("text", ""), "sourceStart": slice_.get("sourceStart"), "sourceEnd": slice_.get("sourceEnd"), "presentation": _presentation(block), "narrationUnits": [{"id": unit.id, "subtitleIds": list(unit.subtitle_ids), "text": unit.text, "start": unit.start, "end": unit.end} for unit in units]})
     return {"projectId": project.get("id"), "episodeId": episode.get("episodeId"), "alignmentGenerationId": (episode.get("alignment") or {}).get("generationId"), "sourceHash": visual_source_hash(project), "blocks": blocks}
 
 
 def propose_scenes(project: dict, settings: dict) -> list[dict]:
-    context = planning_context(project); scenes = []; mode = settings.get("mode", "hybrid")
+    context = planning_context(project); scenes = []
     for block in context["blocks"]:
         units = block["narrationUnits"]
-        groups = _groups(units, settings, mode)
+        effective = _effective_settings(settings, block["presentation"])
+        groups = _groups(units, effective, effective["mode"])
         for index, group in enumerate(groups, 1):
-            scenes.append({"id": f"scene_{block['blockId']}_{index:03d}", "blockId": block["blockId"], "subtitleIds": [sid for unit in group for sid in unit["subtitleIds"]], "summary": "", "prompt": "", "negativePrompt": "", "requestedMediaType": "image", "visualAssetIds": [], "primaryAssetId": None, "durationPolicy": "fit_scene", "locked": False, "metadata": {}})
+            metadata = _scene_presentation_metadata(block["presentation"], effective)
+            scenes.append({"id": f"scene_{block['blockId']}_{index:03d}", "blockId": block["blockId"], "subtitleIds": [sid for unit in group for sid in unit["subtitleIds"]], "summary": "", "prompt": "", "negativePrompt": "", "requestedMediaType": "image", "visualAssetIds": [], "primaryAssetId": None, "durationPolicy": "fit_scene", "locked": False, "metadata": metadata})
     return scenes
+
+
+_GRANULARITY_PRESETS = {
+    "coarse": {"mode": "hybrid", "targetDuration": 12, "minDuration": 5, "maxDuration": 18},
+    "standard": {"mode": "hybrid", "targetDuration": 7, "minDuration": 3, "maxDuration": 12},
+    "fine": {"mode": "fixed_units", "unitsPerScene": 1},
+}
+_POLICY_KEYS = {"mode", "unitsPerScene", "targetDuration", "minDuration", "maxDuration"}
+
+
+def _presentation(block: dict) -> dict:
+    """Return the supported block-level presentation contract without mutating it."""
+    metadata = block.get("metadata") or {}
+    presentation = metadata.get("presentation") if isinstance(metadata, dict) else None
+    return deepcopy(presentation) if isinstance(presentation, dict) else {}
+
+
+def _effective_settings(settings: dict, presentation: dict) -> dict:
+    effective = dict(settings or {})
+    granularity = presentation.get("granularity")
+    if granularity in _GRANULARITY_PRESETS:
+        effective.update(_GRANULARITY_PRESETS[granularity])
+    policy = presentation.get("visualPolicy") or {}
+    if isinstance(policy, dict):
+        effective.update({key: value for key, value in policy.items() if key in _POLICY_KEYS and value is not None})
+    effective["mode"] = effective.get("mode", "hybrid")
+    return effective
+
+
+def _scene_presentation_metadata(presentation: dict, effective: dict) -> dict:
+    metadata = {}
+    if presentation.get("templateId"):
+        metadata["presentationTemplateId"] = presentation["templateId"]
+    if presentation.get("presentationStyle"):
+        metadata["presentationStyle"] = presentation["presentationStyle"]
+    granularity = presentation.get("granularity")
+    if granularity in {*_GRANULARITY_PRESETS, "custom"}:
+        metadata["granularity"] = granularity
+    provider_preferences = presentation.get("providerPreferences")
+    if provider_preferences is None and isinstance(presentation.get("visualPolicy"), dict):
+        provider_preferences = presentation["visualPolicy"].get("providerPreferences")
+    if provider_preferences is not None:
+        metadata["providerPreferences"] = deepcopy(provider_preferences)
+    metadata["visualPolicy"] = {key: effective[key] for key in _POLICY_KEYS if key in effective}
+    return metadata
 
 
 def _groups(units: list[dict], settings: dict, mode: str) -> list[list[dict]]:

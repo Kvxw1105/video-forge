@@ -46,6 +46,68 @@ def test_proposal_fixed_units_keeps_block_boundaries(tmp_path):
     assert [scene["blockId"] for scene in scenes] == ["a","b"]
 
 
+def test_block_presentation_controls_granularity_metadata_and_source_hash(tmp_path):
+    project = _project(tmp_path)
+    for subtitle in project["subtitles"]:
+        subtitle["text"] += "!"
+    blocks = project["structuredContent"]["episode"]["blocks"]
+    before = visual_source_hash(project)
+    blocks[0]["metadata"] = {"presentation": {
+        "templateId": "story_gallery",
+        "granularity": "coarse",
+        "providerPreferences": ["ai_image", "stock_video"],
+    }}
+    blocks[1]["metadata"] = {"presentation": {
+        "templateId": "mechanism_explainer",
+        "granularity": "fine",
+        "visualPolicy": {"providerPreferences": ["code_visual_svg"]},
+    }}
+
+    scenes = propose_scenes(project, {"mode": "fixed_units", "unitsPerScene": 2})
+    coarse = [scene for scene in scenes if scene["blockId"] == "a"]
+    fine = [scene for scene in scenes if scene["blockId"] == "b"]
+
+    assert len(coarse) == 1
+    assert len(fine) == 3
+    assert coarse[0]["metadata"] == {
+        "presentationTemplateId": "story_gallery",
+        "granularity": "coarse",
+        "providerPreferences": ["ai_image", "stock_video"],
+        "visualPolicy": {"mode": "hybrid", "targetDuration": 12, "minDuration": 5, "maxDuration": 18, "unitsPerScene": 2},
+    }
+    assert fine[0]["metadata"]["presentationTemplateId"] == "mechanism_explainer"
+    assert fine[0]["metadata"]["providerPreferences"] == ["code_visual_svg"]
+    assert visual_source_hash(project) != before
+    plan = {"sourceHash": visual_source_hash(project), "scenes": scenes}
+    assert validate_plan(project, plan) == []
+    assert {sid for scene in scenes for sid in scene["subtitleIds"]} == {"s1", "s2", "s3", "s4", "s5", "s6"}
+
+
+def test_custom_block_presentation_uses_its_own_sentence_grouping(tmp_path):
+    project = _project(tmp_path)
+    for subtitle in project["subtitles"]:
+        subtitle["text"] = f"{subtitle['text'].rstrip('。')}。"
+    block = project["structuredContent"]["episode"]["blocks"][0]
+    block["metadata"] = {"presentation": {
+        "templateId": "story_sequence",
+        "presentationStyle": "narrative_sequence",
+        "granularity": "custom",
+        "providerPreferences": ["ai_image"],
+        "visualPolicy": {"mode": "fixed_units", "unitsPerScene": 2, "targetDuration": 9},
+    }}
+    scenes = propose_scenes(project, {"mode": "fixed_units", "unitsPerScene": 1})
+    block_scenes = [scene for scene in scenes if scene["blockId"] == "a"]
+    assert len(block_scenes) == 2
+    assert block_scenes[0]["subtitleIds"] == ["s1", "s2"]
+    assert block_scenes[0]["metadata"] == {
+        "presentationTemplateId": "story_sequence",
+        "presentationStyle": "narrative_sequence",
+        "granularity": "custom",
+        "providerPreferences": ["ai_image"],
+        "visualPolicy": {"mode": "fixed_units", "unitsPerScene": 2, "targetDuration": 9},
+    }
+
+
 def test_fifteen_subtitles_three_scenes_cover_without_gaps(tmp_path):
     project = _project(tmp_path)
     project["subtitles"] = [{"id": f"s{i:02d}", "text": f"line {i}", "start": float(i - 1), "end": float(i), "style": {}, "metadata": {}} for i in range(1, 16)]

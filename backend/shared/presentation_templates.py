@@ -10,12 +10,12 @@ from typing import Any
 
 
 PRESENTATION_TEMPLATES: tuple[dict[str, Any], ...] = (
-    {"id": "hook_impact", "name": "Strong opening", "blockTypes": ("HOOK",), "providerPreferences": ("ai_image", "code_visual_svg", "stickman_svg"), "presentationMode": "main", "granularity": "coarse", "visualPolicy": "impact_opening", "description": "One or two high-contrast opening visuals."},
-    {"id": "story_sequence", "name": "Narrative sequence", "blockTypes": ("STORY",), "providerPreferences": ("ai_image", "library_video", "stickman_svg"), "presentationMode": "main", "granularity": "standard", "visualPolicy": "narrative_sequence", "description": "Sequence visuals that follow story beats."},
-    {"id": "mechanism_explainer", "name": "Mechanism explainer", "blockTypes": ("MECHANISM",), "providerPreferences": ("code_visual_svg", "stickman_svg", "ai_image"), "presentationMode": "overlay", "granularity": "fine", "visualPolicy": "diagram_first", "description": "Diagram-first explanation with optional picture-in-picture."},
-    {"id": "method_steps", "name": "Method steps", "blockTypes": ("METHOD",), "providerPreferences": ("ai_image", "code_visual_svg", "stickman_svg"), "presentationMode": "main", "granularity": "standard", "visualPolicy": "stepwise_explainer", "description": "Clear step-by-step explanatory visuals."},
-    {"id": "outro_resolve", "name": "Closing resolution", "blockTypes": ("SHORT_OUTRO",), "providerPreferences": ("ai_image", "library_video"), "presentationMode": "main", "granularity": "coarse", "visualPolicy": "closing_resolution", "description": "A restrained closing visual and call to action."},
-    {"id": "narrative_support", "name": "Narrative support", "blockTypes": ("CTA_TAG", "PROBLEM", "JUDGMENT", "BRIDGE_IN", "BRIDGE_OUT", "COMMENT_CTA"), "providerPreferences": ("ai_image", "library_video", "stickman_svg"), "presentationMode": "main", "granularity": "standard", "visualPolicy": "supporting_narrative", "description": "A flexible default for supporting narrative blocks."},
+    {"id": "hook_impact", "name": "Strong opening", "blockTypes": ("HOOK",), "providerPreferences": ("ai_image", "code_visual_svg", "stickman_svg"), "presentationMode": "main", "granularity": "coarse", "presentationStyle": "impact_opening", "description": "One or two high-contrast opening visuals."},
+    {"id": "story_sequence", "name": "Narrative sequence", "blockTypes": ("STORY",), "providerPreferences": ("ai_image", "library_video", "stickman_svg"), "presentationMode": "main", "granularity": "standard", "presentationStyle": "narrative_sequence", "description": "Sequence visuals that follow story beats."},
+    {"id": "mechanism_explainer", "name": "Mechanism explainer", "blockTypes": ("MECHANISM",), "providerPreferences": ("code_visual_svg", "stickman_svg", "ai_image"), "presentationMode": "overlay", "granularity": "fine", "presentationStyle": "diagram_first", "description": "Diagram-first explanation with optional picture-in-picture."},
+    {"id": "method_steps", "name": "Method steps", "blockTypes": ("METHOD",), "providerPreferences": ("ai_image", "code_visual_svg", "stickman_svg"), "presentationMode": "main", "granularity": "standard", "presentationStyle": "stepwise_explainer", "description": "Clear step-by-step explanatory visuals."},
+    {"id": "outro_resolve", "name": "Closing resolution", "blockTypes": ("SHORT_OUTRO",), "providerPreferences": ("ai_image", "library_video"), "presentationMode": "main", "granularity": "coarse", "presentationStyle": "closing_resolution", "description": "A restrained closing visual and call to action."},
+    {"id": "narrative_support", "name": "Narrative support", "blockTypes": ("CTA_TAG", "PROBLEM", "JUDGMENT", "BRIDGE_IN", "BRIDGE_OUT", "COMMENT_CTA"), "providerPreferences": ("ai_image", "library_video", "stickman_svg"), "presentationMode": "main", "granularity": "standard", "presentationStyle": "supporting_narrative", "description": "A flexible default for supporting narrative blocks."},
 )
 GRANULARITY_OPTIONS = ("coarse", "standard", "fine", "custom")
 
@@ -46,5 +46,6 @@ def presentation_for_block(block_type: str, suggested_template_id: str | None = 
         "providerPreferences": list(selected["providerPreferences"]),
         "presentationMode": selected["presentationMode"],
         "granularity": selected["granularity"],
-        "visualPolicy": selected["visualPolicy"],
+        "presentationStyle": selected["presentationStyle"],
+        "visualPolicy": {},
     }
