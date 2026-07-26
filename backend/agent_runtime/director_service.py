@@ -13,6 +13,7 @@ from .pi_transport import FakePiTransport, PiRpcError, PiRpcTransport
 from .plugin_tools import create_delivery_artifacts, generate_vector_card
 from agent.lab_runner.recipe_loader import RecipeValidationError, load_recipe_by_id
 from vforge.client import VForgeError, bind_scene_assets
+from routers.visual_assets import CodeVisualRenderBody, regenerate_code_visual_scene
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,6 +40,9 @@ class DirectorService:
         except RecipeValidationError as exc:
             raise ValueError(str(exc)) from exc
         run = self.store.create({**payload, "recipeId": recipe.id, "recipeVersion": recipe.version})
+        if isinstance(payload.get("intake"), dict):
+            run["intake"] = payload["intake"]
+            self.store.save(run)
         factory_context = payload.get("factoryContext")
         if isinstance(factory_context, dict):
             run["factoryContext"] = factory_context
@@ -76,13 +80,14 @@ class DirectorService:
         self.store.append_event(run_id, {"type": "tool.call.succeeded", "toolName": "vector_card.generate_scene_asset", "sceneId": "scene_001"})
         self.store.append_event(run_id, {"type": "artifact.created", "artifact": artifact})
         approval_id = f"approval_{uuid4().hex[:10]}"
+        target_scene_id = self._target_scene_id(payload)
         approval = {
             "approvalId": approval_id,
             "operation": "replace_scene_asset",
             "status": "pending",
             "risk": "medium",
-            "sceneId": "scene_001",
-            "message": "Bind the local vector_card plugin output to Scene 001?",
+            "sceneId": target_scene_id,
+            "message": f"Generate and bind the approved Code Visual picture-in-picture to {target_scene_id}?",
             "recipeStepId": "bind_assets",
             "recipeTool": "bind_scene_assets",
         }
@@ -122,6 +127,17 @@ class DirectorService:
             if is_settled:
                 self.store.append_event(run_id, {"type": "agent.settled", "transport": self.transport.name})
         return self.get_run(run_id)
+
+    @staticmethod
+    def _target_scene_id(payload: dict[str, Any]) -> str:
+        intake = payload.get("intake") if isinstance(payload.get("intake"), dict) else {}
+        structured = intake.get("structuredContent") if isinstance(intake, dict) else None
+        episode = structured.get("episode") if isinstance(structured, dict) else None
+        plan = episode.get("visualPlan") if isinstance(episode, dict) else None
+        scenes = plan.get("scenes") if isinstance(plan, dict) else None
+        if isinstance(scenes, list) and scenes and isinstance(scenes[0], dict) and scenes[0].get("id"):
+            return str(scenes[0]["id"])
+        return "scene_001"
 
     def list_runs(self) -> list[dict[str, Any]]:
         return self.store.list()
@@ -184,6 +200,33 @@ class DirectorService:
             self.store.append_event(run_id, {"type": "lab.action.waiting_for_pi", "stepId": "bind_assets", "piState": run.get("piState")})
             return self.get_run(run_id)
         self.store.append_event(run_id, {"type": "run.resumed"})
+        project_id, scene_id = self._project_target(run)
+        if project_id:
+            try:
+                self.store.append_event(run_id, {"type": "code_visual.overlay.started", "projectId": project_id, "sceneId": scene_id})
+                result = regenerate_code_visual_scene(
+                    project_id,
+                    scene_id,
+                    CodeVisualRenderBody(
+                        sourceMode="visual_plan",
+                        sceneIds=[scene_id],
+                        exportPng=True,
+                        exportVideo=True,
+                        bindToProject=True,
+                        rendererId="mechanism_diagram",
+                        themeMode="light",
+                        presentationMode="overlay",
+                    ),
+                )
+                run["artifacts"].extend({"artifactId": f"code_visual_{row.get('segmentId', scene_id)}", "artifactType": "code_visual_overlay", "path": row.get("videoPath"), "sceneId": scene_id} for row in result.get("videoExports", []))
+                run["toolCalls"].append({"toolName": "code_visual.render_overlay", "status": "succeeded", "projectId": project_id, "sceneId": scene_id, "bindings": result.get("bindings", [])})
+                self.store.append_event(run_id, {"type": "code_visual.overlay.completed", "projectId": project_id, "sceneId": scene_id, "bindings": result.get("bindings", []), "videoExports": result.get("videoExports", [])})
+            except Exception as exc:
+                run["status"] = "recoverable"
+                run["errors"].append({"code": "code_visual_overlay_failed", "message": str(exc), "recoverable": True})
+                self.store.save(run)
+                self.store.append_event(run_id, {"type": "code_visual.overlay.failed", "projectId": project_id, "sceneId": scene_id, "errorCode": "code_visual_overlay_failed"})
+                return self.get_run(run_id)
         recipe = load_recipe_by_id(run["recipeId"], root=REPO_ROOT / "agent" / "recipes")
         record_binding_action(self.store, run, recipe, artifact_id="artifact_scene_001_vector_card")
         self.store.save(run)
@@ -217,6 +260,14 @@ class DirectorService:
         self.store.save(run)
         self.store.append_event(run_id, {"type": "run.completed", "status": "succeeded"})
         return self.get_run(run_id)
+
+    @staticmethod
+    def _project_target(run: dict[str, Any]) -> tuple[str | None, str]:
+        intake = run.get("intake") if isinstance(run.get("intake"), dict) else {}
+        source = intake.get("source") if isinstance(intake, dict) else {}
+        project_id = str(source.get("projectId") or "").strip() if isinstance(source, dict) else ""
+        approval = next((item for item in run.get("approvals", []) if item.get("status") == "approved"), None)
+        return (project_id or None, str((approval or {}).get("sceneId") or "scene_001"))
 
     def _on_pi_event(self, run_id: str, event: dict[str, Any]) -> None:
         """Persist asynchronous Pi events in the same ordered RunStore stream."""
