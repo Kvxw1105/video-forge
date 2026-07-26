@@ -11,9 +11,11 @@ import {
   Export,
   FilmSlate,
   FolderOpen,
+  GearSix,
   Microphone,
   Moon,
   Plus,
+  Robot,
   Sun,
   Trash,
 } from '@phosphor-icons/react'
@@ -134,6 +136,13 @@ export default function Home() {
           <button className="btn-gold home-action-button" onClick={() => navigate('/structured/new')}>
             <ClipboardText size={15} weight="bold" />
             <span>创建结构化内容</span>
+          </button>
+          <button className="btn-cinematic home-action-button" onClick={() => navigate('/director')}>
+            <Robot size={15} weight="bold" />
+            <span>智能助手</span>
+          </button>
+          <button className="icon-button" onClick={() => navigate('/settings/agent')} title="Agent 模型设置" aria-label="Agent 模型设置">
+            <GearSix size={17} weight="duotone" />
           </button>
           <button className="btn-cinematic home-action-button" onClick={() => navigate('/factory/new')}>
             <FilmSlate size={15} weight="bold" />

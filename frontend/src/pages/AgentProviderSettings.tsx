@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Check, CheckCircle, Copy, FloppyDisk, Plug, Robot, WarningCircle } from '@phosphor-icons/react'
+import { ArrowLeft, Check, CheckCircle, Copy, FloppyDisk, House, Plug, Robot, WarningCircle } from '@phosphor-icons/react'
 import { api } from '../lib/api'
 
 const blank = { enabled: false, providerId: 'custom', baseUrl: '', apiType: 'openai-completions', apiKey: '', model: '', timeoutSeconds: 30 }
@@ -16,7 +16,7 @@ export default function AgentProviderSettings() {
   const allModels = [...models, ...manualModels.split(/[\n,]/).map(id => ({ id: id.trim(), name: id.trim() })).filter(item => item.id)].filter((item, index, list) => list.findIndex(other => other.id === item.id) === index)
   const selectModel = async (id: string) => { change('model', id); try { await navigator.clipboard.writeText(id); setFeedback({ tone: 'warn', title: '模型已选中并复制', detail: id }) } catch { setFeedback({ tone: 'warn', title: '模型已选中', detail: id }) } }
   return <main className="min-h-[100dvh] workbench-shell p-4 md:p-6"><div className="max-w-4xl mx-auto space-y-4">
-    <header className="card-cinematic p-5 flex items-center gap-4"><button className="btn-cinematic" title="返回" onClick={() => window.history.length > 1 ? navigate(-1) : navigate('/director')}><ArrowLeft size={18} /></button><div className="home-brand-mark"><Robot size={20} weight="fill" /></div><div><p className="section-index">PI DIRECTOR / MODEL ROUTING</p><h1 className="text-2xl font-heading">Agent 模型服务</h1><p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>兼容 OpenAI 协议的中转站、官方服务与本地模型均可接入。</p></div></header>
+    <header className="card-cinematic p-5 flex items-center gap-4"><button className="icon-button" title="返回" onClick={() => window.history.length > 1 ? navigate(-1) : navigate('/director')}><ArrowLeft size={18} /></button><div className="home-brand-mark"><Robot size={20} weight="fill" /></div><div className="flex-1"><p className="section-index">PI DIRECTOR / MODEL ROUTING</p><h1 className="text-2xl font-heading">Agent 模型服务</h1><p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>兼容 OpenAI 协议的中转站、官方服务与本地模型均可接入。</p></div><button className="icon-button" title="打开智能助手" aria-label="打开智能助手" onClick={() => navigate('/director')}><Robot size={18}/></button><button className="icon-button" title="返回首页" aria-label="返回首页" onClick={() => navigate('/')}><House size={18}/></button></header>
     <section className="card-cinematic p-5 grid md:grid-cols-2 gap-4">
       <label className="text-sm flex items-center gap-2 md:col-span-2"><input type="checkbox" checked={!!form.enabled} onChange={e => change('enabled', e.target.checked)} /> 启用此 Provider 供 Pi Director 使用</label>
       <label className="label-cinematic">Provider ID<input className="input-cinematic w-full mt-2" value={form.providerId} onChange={e => change('providerId', e.target.value)} placeholder="custom / openrouter / local" /></label>
