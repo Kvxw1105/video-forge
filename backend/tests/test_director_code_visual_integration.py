@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import sys
+import shutil
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -11,6 +14,9 @@ from agent_runtime.director_store import DirectorStore
 from agent_runtime.pi_transport import FakePiTransport
 from services import project_service
 from routers import visual_assets
+
+
+pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="Director Code Visual integration requires FFmpeg")
 
 
 def test_approved_director_run_renders_code_visual_overlay(monkeypatch, tmp_path):
