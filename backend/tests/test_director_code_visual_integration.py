@@ -31,10 +31,9 @@ def test_approved_director_run_renders_code_visual_overlay(monkeypatch, tmp_path
     service = DirectorService(store=DirectorStore(RunStore(tmp_path / "runs")), transport=FakePiTransport())
     run = service.create_run({"recipeId": "structured-knowledge-video", "task": "render", "intake": intake})
     approved = service.decide_approval(run["runId"], {"approvalId": run["currentApprovalId"], "decision": "approve"})
-    assert approved["status"] == "succeeded"
+    assert approved["status"] == "succeeded", approved.get("errors")
     assert any(call.get("toolName") == "code_visual.render_overlay" for call in approved["toolCalls"])
     final = project_service.get_project(project.id).model_dump(mode="python")
     scene = final["structuredContent"]["episode"]["visualPlan"]["scenes"][0]
     assert scene["metadata"]["videoOverlayIds"]
     assert final["overlays"]["videoOverlays"][0]["assetId"] in scene["metadata"]["videoOverlayIds"]
-
