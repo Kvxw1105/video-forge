@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Check, ClipboardText, FileText, FilmSlate, GearSix, GitBranch, Package, Play, Robot, UploadSimple, WarningCircle, X } from '@phosphor-icons/react'
 import { api } from '../lib/api'
 
@@ -17,12 +18,14 @@ function shortPath(value: string) {
 }
 
 export default function DirectorDesk() {
+  const [searchParams] = useSearchParams()
   const [task, setTask] = useState(DEFAULT_TASK)
   const [run, setRun] = useState<any>(null)
   const [events, setEvents] = useState<any[]>([])
   const [version, setVersion] = useState<any>(null)
   const [projects, setProjects] = useState<any[]>([])
   const [provider, setProvider] = useState<any>(null)
+  const [setupLoading, setSetupLoading] = useState(true)
   const [packs, setPacks] = useState<any[]>([])
   const [selectedPackId, setSelectedPackId] = useState('')
   const [inputMode, setInputMode] = useState<'srt' | 'project'>('srt')
@@ -34,6 +37,7 @@ export default function DirectorDesk() {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const approval = useMemo(() => (run?.approvals || []).find((item: any) => item.status === 'pending'), [run])
+  const selectedPack = useMemo(() => packs.find(pack => pack.packId === selectedPackId) || null, [packs, selectedPackId])
   const providerReady = Boolean(provider?.enabled && provider?.baseUrl && provider?.model)
   const inputReady = inputMode === 'srt' ? Boolean(standaloneSrtIntake) : Boolean(selectedProject?.id)
   const subtitleCount = Array.isArray(selectedProject?.subtitles) ? selectedProject.subtitles.length : 0
@@ -48,12 +52,25 @@ export default function DirectorDesk() {
   useEffect(() => {
     api.getVersion().then(setVersion).catch(() => undefined)
     api.listProjects().then(setProjects).catch(() => undefined)
-    api.getAgentProviderSettings().then(setProvider).catch(() => undefined)
-    api.listDirectorPacks().then((result: any) => setPacks(result.packs || [])).catch(() => undefined)
+    Promise.allSettled([api.getAgentProviderSettings(), api.listDirectorPacks()]).then(([providerResult, packResult]) => {
+      if (providerResult.status === 'fulfilled') setProvider(providerResult.value)
+      if (packResult.status === 'fulfilled') setPacks(packResult.value.packs || [])
+    }).finally(() => setSetupLoading(false))
     api.listDirectorRuns().then((runs: any[]) => {
       if (runs[0]?.runId) load(runs[0].runId).catch(() => undefined)
     }).catch(() => undefined)
   }, [])
+
+  useEffect(() => {
+    const requestedPack = searchParams.get('pack')
+    if (requestedPack) setSelectedPackId(requestedPack)
+  }, [searchParams])
+
+  useEffect(() => {
+    if (!run?.runId || (run.piState === 'settled' && run.status === 'waiting_approval') || ['succeeded', 'cancelled', 'rejected'].includes(run.status)) return
+    const timer = window.setInterval(() => load(run.runId).catch(() => undefined), 1500)
+    return () => window.clearInterval(timer)
+  }, [run?.runId, run?.piState, run?.status])
 
   const selectProject = async (projectId: string) => {
     setSelectedProjectId(projectId)
@@ -199,7 +216,7 @@ export default function DirectorDesk() {
         <section className="grid sm:grid-cols-2 xl:grid-cols-4 gap-2 text-xs" aria-label="Director 操作步骤">
           {[
             ['1', '选择输入', inputReady ? '已就绪' : '选择 SRT 或项目'],
-            ['2', '确认模型', providerReady ? `已启用：${provider.model}` : '当前使用本地模拟流程'],
+            ['2', '确认模型', setupLoading ? '正在读取设置' : providerReady ? `已启用：${provider.model}` : '当前使用本地模拟流程'],
             ['3', '创建任务', run ? `Run ${run.status}` : '写入制作要求'],
             ['4', '处理审批', approval ? '等待你的决定' : '有建议时再确认'],
           ].map(([step, title, detail]) => <div key={step} className="flex items-center gap-3 px-3 py-2 border rounded" style={{ borderColor: 'var(--border)', background: 'var(--bg-surface)' }}>
@@ -246,21 +263,21 @@ export default function DirectorDesk() {
               </>}
             </div>
             <div>
-              <div className="flex items-center justify-between gap-2"><p className="label-cinematic">第二步：选择导演包</p><a className="btn-cinematic text-xs py-1.5" href="/director/studio"><Package size={14}/> 管理我的包</a></div>
-              <select className="input-cinematic w-full text-sm mt-2" value={selectedPackId} onChange={event => setSelectedPackId(event.target.value)}>
-                <option value="">使用默认制作方式</option>
-                {packs.map(pack => <option key={pack.packId} value={pack.packId}>{pack.name} · {pack.skillPins?.length || 0} 个固定 Skill</option>)}
+              <div className="flex items-center justify-between gap-2"><p className="label-cinematic">第二步：选择视频制作方案</p><a className="btn-cinematic text-xs py-1.5" href="/director/studio"><Package size={14}/> 创建我的方案</a></div>
+              <select className="input-cinematic w-full text-sm mt-2" value={selectedPackId} onChange={event => setSelectedPackId(event.target.value)} disabled={setupLoading}>
+                <option value="">{setupLoading ? '正在读取我的方案...' : '基础方式：不使用自定义方案'}</option>
+                {packs.map(pack => <option key={pack.packId} value={pack.packId}>{pack.name} · 固定 {pack.skillPins?.length || 0} 个导演方法</option>)}
               </select>
-              {selectedPackId ? <p className="text-xs mt-2" style={{ color: 'var(--accent)' }}>本次 Run 会固定所选导演包和其中 Skill 的当前版本，并生成可审阅的 Scene Plan。</p> : <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>没有合适的包？先去“我的导演方法”导入 GPT 讨论成果。</p>}
+              {selectedPack ? <div className="border-l-2 pl-3 text-xs mt-3 space-y-1" style={{ borderColor: 'var(--accent)' }}><b>{selectedPack.name}</b><p style={{ color: 'var(--text-muted)' }}>{selectedPack.description || '这套方案会固定其导演方法和风格参数。'}</p><p style={{ color: 'var(--accent)' }}>本次会生成可审阅的场景计划，不会改动原项目。</p></div> : <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>还没有自己的方案？先去“创建我的方案”，把 GPT 讨论转成导演方法。</p>}
             </div>
             <div>
               <div className="flex items-center justify-between gap-2"><p className="label-cinematic">第三步：告诉 Director 要做什么</p><button className="btn-cinematic text-xs py-1.5" onClick={() => setTask(TEST_TASK)}><ClipboardText size={14} /> 填入测试指令</button></div>
               <textarea className="input-cinematic w-full min-h-[180px] mt-2 text-sm" value={task} onChange={event => setTask(event.target.value)} />
             </div>
             <div className="border-l-2 pl-3 text-xs space-y-2" style={{ borderColor: providerReady ? 'var(--accent)' : 'var(--warning)' }}>
-              <b>{providerReady ? `模型已启用：${provider.model}` : '尚未启用真实模型'}</b>
-              <p style={{ color: 'var(--text-muted)' }}>{providerReady ? '本次新 Run 会尝试调用该模型；事件区会显示实际运行状态。' : '现在仍可演示完整流程，但不会发起模型调用。配置好后，新 Run 才会使用真实 Pi。'}</p>
-              {!providerReady && <a className="btn-cinematic inline-flex text-xs" href="/settings/agent"><GearSix size={14} /> 去配置模型</a>}
+              <b>{setupLoading ? '正在读取模型设置' : providerReady ? `模型已启用：${provider.model}` : '尚未启用真实模型'}</b>
+              <p style={{ color: 'var(--text-muted)' }}>{setupLoading ? '正在检查本机已保存的模型服务。' : providerReady ? '本次新 Run 会尝试调用该模型；事件区会显示实际运行状态。' : '现在仍可演示完整流程，但不会发起模型调用。配置好后，新 Run 才会使用真实 Pi。'}</p>
+              {setupLoading ? <p style={{ color: 'var(--text-muted)' }}>正在读取本机模型设置...</p> : !providerReady && <a className="btn-cinematic inline-flex text-xs" href="/settings/agent"><GearSix size={14} /> 去配置模型</a>}
             </div>
             {error && <div className="operation-error">{error}</div>}
             <button className="btn-gold w-full justify-center" disabled={!task.trim() || !inputReady || busy === 'create'} title={!inputReady ? '请先上传 SRT 或选择项目' : ''} onClick={createRun}>
@@ -268,8 +285,8 @@ export default function DirectorDesk() {
             </button>
             {run && <div className="rounded-lg p-3 text-xs space-y-2" style={{ background: 'var(--bg-elevated)' }}>
               <div>Run: <b>{run.runId}</b></div>
-              <div>状态：<b>{run.status}</b></div>
-              <div>{run.mockTransport ? '当前为本地模拟流程，未调用模型。' : run.liveCallPerformed ? '已发起真实模型调用。' : '等待 Pi 返回。'}</div>
+              <div>状态：<b>{({ waiting_approval: '等待你的确认', waiting_pi: '正在等待模型完成', succeeded: '已完成', rejected: '已拒绝', recoverable: '需要处理', running: '正在执行' } as any)[run.status] || run.status}</b></div>
+              <div>{run.mockTransport ? '当前为本地模拟流程，未调用模型。' : run.liveCallPerformed ? (run.piState === 'settled' ? '模型已返回，等待你确认下一步。' : '正在等待模型返回，页面会自动更新。') : '正在建立 Pi 会话。'}</div>
               {run.directorPack && <div style={{ color: 'var(--accent)' }}>导演包：{run.directorPack.name} · 固定 {run.skills?.length || 0} 个 Skill</div>}
             </div>}
             {approval && <div className="rounded-lg border p-4 space-y-3" style={{ borderColor: 'var(--accent)', background: 'var(--bg-surface)' }}>

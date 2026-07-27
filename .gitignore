@@ -84,6 +84,7 @@ config/director_studio/
 .browser-smoke/
 director-studio-smoke.png
 director-desk-smoke.png
+director-*-review.png
 .agent-runs/
 agent/evals/results/latest-summary.json
 agent/evals/results/latest-summary.md
