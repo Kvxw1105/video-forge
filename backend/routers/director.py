@@ -8,9 +8,11 @@ from fastapi.responses import StreamingResponse
 
 from agent_runtime.director_intake import build_project_intake, build_srt_intake, list_project_intakes, normalize_srt_intake, prompt_context
 from agent_runtime.director_service import DirectorService
+from agent_runtime.director_studio import DirectorStudioRegistry, StudioValidationError
 
 router = APIRouter(prefix="/api/director", tags=["director"])
 service = DirectorService()
+studio = DirectorStudioRegistry()
 
 
 def _run_or_404(run_id: str):
@@ -49,6 +51,15 @@ async def upload_srt_intake(file: UploadFile = File(...)):
 @router.post("/runs")
 def create_run(payload: dict):
     payload = dict(payload)
+    pack_context = None
+    pack_id = str(payload.get("packId") or "").strip()
+    if pack_id:
+        try:
+            pack_context = studio.resolve_pack(pack_id)
+        except (StudioValidationError, KeyError) as exc:
+            raise HTTPException(422, {"code": "director_pack_invalid", "message": str(exc)}) from exc
+        payload["directorPack"] = pack_context["pack"]
+        payload["skills"] = pack_context["skills"]
     intake = payload.get("intake")
     if intake is None and payload.get("projectId"):
         intake = build_project_intake(str(payload["projectId"]))
@@ -66,6 +77,11 @@ def create_run(payload: dict):
         payload["intake"] = intake
         task = str(payload.get("task") or "Create a structured, previewable video draft.").strip()
         payload["task"] = f"{task}\n\n{prompt_context(intake)}"
+    if pack_context:
+        timeline = intake.get("subtitleTimeline") if isinstance(intake, dict) and isinstance(intake.get("subtitleTimeline"), list) else []
+        scene_plan = studio.build_scene_plan(timeline, pack_context["skills"], pack_context["pack"])
+        payload["scenePlan"] = scene_plan
+        payload["task"] = f"{payload.get('task') or ''}\n\nDirector Pack (version-pinned, read-only):\n{json.dumps({'pack': pack_context['pack'], 'skills': [{'skillId': item['skillId'], 'version': item['version'], 'name': item['name'], 'directives': item['directives']} for item in pack_context['skills']], 'scenePlan': scene_plan}, ensure_ascii=False, separators=(',', ':'))}"
     try:
         run = service.create_run(payload)
     except ValueError as exc:
