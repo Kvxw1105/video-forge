@@ -43,6 +43,13 @@ class DirectorService:
         if isinstance(payload.get("intake"), dict):
             run["intake"] = payload["intake"]
             self.store.save(run)
+        if isinstance(payload.get("directorPack"), dict):
+            run["directorPack"] = payload["directorPack"]
+            run["skills"] = payload.get("skills") if isinstance(payload.get("skills"), list) else []
+            self.store.save(run)
+        if isinstance(payload.get("scenePlan"), dict):
+            run["scenePlan"] = payload["scenePlan"]
+            self.store.save(run)
         factory_context = payload.get("factoryContext")
         if isinstance(factory_context, dict):
             run["factoryContext"] = factory_context
@@ -71,6 +78,8 @@ class DirectorService:
         run["messages"].append({"role": "user", "content": task})
         self.store.save(run)
         self.store.append_event(run_id, {"type": "run.created", "status": run["status"], "recipeId": run["recipeId"]})
+        if isinstance(run.get("scenePlan"), dict):
+            self.store.append_event(run_id, {"type": "scene_plan.proposed", "packId": (run.get("directorPack") or {}).get("packId"), "sceneCount": len(run["scenePlan"].get("scenes") or []), "styleSignature": run["scenePlan"].get("styleSignature")})
         self.store.append_event(run_id, {"type": "recipe.loaded", "recipeId": recipe.id, "recipeVersion": recipe.version, "stepCount": len(recipe.steps)})
         for event in self.transport.initial_events(run_id, task):
             self.store.append_event(run_id, event)
@@ -130,6 +139,10 @@ class DirectorService:
 
     @staticmethod
     def _target_scene_id(payload: dict[str, Any]) -> str:
+        scene_plan = payload.get("scenePlan") if isinstance(payload.get("scenePlan"), dict) else {}
+        proposed = scene_plan.get("scenes") if isinstance(scene_plan, dict) else None
+        if isinstance(proposed, list) and proposed and isinstance(proposed[0], dict) and proposed[0].get("sceneId"):
+            return str(proposed[0]["sceneId"])
         intake = payload.get("intake") if isinstance(payload.get("intake"), dict) else {}
         structured = intake.get("structuredContent") if isinstance(intake, dict) else None
         episode = structured.get("episode") if isinstance(structured, dict) else None

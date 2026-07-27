@@ -80,6 +80,7 @@ handoff/
 # Local runtime settings and credentials
 tts_settings.json
 config/agent_provider.json
+config/director_studio/
 .agent-runs/
 agent/evals/results/latest-summary.json
 agent/evals/results/latest-summary.md
