@@ -21,8 +21,14 @@ from agent_runtime.pi_transport import PiRpcTransport
 
 
 class MockOpenAIHandler(BaseHTTPRequestHandler):
+    requests: list[str] = []
+
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler contract
-        assert self.path == "/v1/chat/completions", self.path
+        self.requests.append(f"POST {self.path}")
+        if self.path != "/v1/chat/completions":
+            self.send_response(404)
+            self.end_headers()
+            return
         _ = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         time.sleep(0.25)  # Keep the approval observably ahead of agent_settled.
         payloads = [
@@ -50,6 +56,12 @@ def main() -> int:
     server = ThreadingHTTPServer(("127.0.0.1", 0), MockOpenAIHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     old_agent_dir = os.environ.get("PI_CODING_AGENT_DIR")
+    old_no_proxy = os.environ.get("NO_PROXY")
+    old_no_proxy_lower = os.environ.get("no_proxy")
+    # Node sidecars inherit desktop proxy settings. Keep this deterministic
+    # local mock out of a configured upstream proxy.
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+    os.environ["no_proxy"] = "127.0.0.1,localhost"
     calls: list[dict[str, Any]] = []
     try:
         with tempfile.TemporaryDirectory(prefix="videoforge-real-pi-") as temp:
@@ -75,7 +87,7 @@ def main() -> int:
                     break
                 time.sleep(0.05)
             if final["status"] != "succeeded":
-                raise AssertionError({"run": final, "events": service.events(run["runId"])})
+                raise AssertionError({"run": final, "events": service.events(run["runId"]), "mockRequests": MockOpenAIHandler.requests})
             assert len(calls) == 1, calls
             events = service.events(run["runId"])
             assert any(event["type"] == "agent.message.updated" and "Pi reviewed" in event.get("delta", "") for event in events), events
@@ -89,6 +101,14 @@ def main() -> int:
             os.environ.pop("PI_CODING_AGENT_DIR", None)
         else:
             os.environ["PI_CODING_AGENT_DIR"] = old_agent_dir
+        if old_no_proxy is None:
+            os.environ.pop("NO_PROXY", None)
+        else:
+            os.environ["NO_PROXY"] = old_no_proxy
+        if old_no_proxy_lower is None:
+            os.environ.pop("no_proxy", None)
+        else:
+            os.environ["no_proxy"] = old_no_proxy_lower
         server.shutdown()
         server.server_close()
     return 0
