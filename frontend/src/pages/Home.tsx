@@ -14,6 +14,7 @@ import {
   GearSix,
   Microphone,
   Moon,
+  Package,
   Plus,
   Robot,
   Sun,
@@ -140,6 +141,10 @@ export default function Home() {
           <button className="btn-cinematic home-action-button" onClick={() => navigate('/director')}>
             <Robot size={15} weight="bold" />
             <span>智能助手</span>
+          </button>
+          <button className="btn-cinematic home-action-button" onClick={() => navigate('/director/studio')}>
+            <Package size={15} weight="bold" />
+            <span>我的导演包</span>
           </button>
           <button className="icon-button" onClick={() => navigate('/settings/agent')} title="Agent 模型设置" aria-label="Agent 模型设置">
             <GearSix size={17} weight="duotone" />

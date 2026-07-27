@@ -9,6 +9,7 @@ import FactoryVisualPairing from './pages/FactoryVisualPairing'
 import FactoryQuickStart from './pages/FactoryQuickStart'
 import DirectorDesk from './pages/DirectorDesk'
 import AgentProviderSettings from './pages/AgentProviderSettings'
+import DirectorStudio from './pages/DirectorStudio'
 import ImageStudio from './pages/ImageStudio'
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/factory/batches/:batchId/items/:itemId/visuals" element={<FactoryVisualPairing />} />
           <Route path="/director" element={<DirectorDesk />} />
           <Route path="/settings/agent" element={<AgentProviderSettings />} />
+          <Route path="/director/studio" element={<DirectorStudio />} />
           <Route path="/image-studio" element={<ImageStudio />} />
         </Routes>
       </BrowserRouter>
