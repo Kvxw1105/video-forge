@@ -13,21 +13,20 @@ from uuid import uuid4
 
 PROPOSAL_ENVELOPE = "videoforgeActionProposals"
 _ALLOWED_OPERATION = "replace_scene_asset"
-_ALLOWED_SCENE_ID = "scene_001"
 
 
-def proposal_instruction() -> str:
+def proposal_instruction(scene_id: str = "scene_001") -> str:
     """Tell Pi how to propose a reviewable operation without granting tools."""
-    return """
+    example = json.dumps({PROPOSAL_ENVELOPE: [{"operation": _ALLOWED_OPERATION, "sceneId": scene_id, "reason": "short evidence-based reason"}]}, ensure_ascii=False)
+    return (
+        "VideoForge action-proposal output contract:\n"
+        "You cannot execute or write anything. If, and only if, your plan needs user\n"
+        "approval to replace the generated asset, finish with one JSON object in a fenced\n"
+        f"json block: {example}. Do not propose any other operation."
+    )
 
-VideoForge action-proposal output contract:
-You cannot execute or write anything. If, and only if, your plan needs user
-approval to replace the generated asset, finish with one JSON object in a fenced
-json block: {\"videoforgeActionProposals\":[{\"operation\":\"replace_scene_asset\",\"sceneId\":\"scene_001\",\"reason\":\"short evidence-based reason\"}]}. Do not propose any other operation.
-""".strip()
 
-
-def proposals_from_agent_end(event: dict[str, Any]) -> list[dict[str, Any]]:
+def proposals_from_agent_end(event: dict[str, Any], *, scene_id: str = "scene_001") -> list[dict[str, Any]]:
     """Extract valid proposals from a normalized Pi ``agent_end`` event."""
     raw = event.get("piEvent") if isinstance(event.get("piEvent"), dict) else {}
     messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
@@ -40,7 +39,7 @@ def proposals_from_agent_end(event: dict[str, Any]) -> list[dict[str, Any]]:
             if not isinstance(candidate_rows, list):
                 continue
             for candidate in candidate_rows:
-                proposal = _normalize_candidate(candidate)
+                proposal = _normalize_candidate(candidate, scene_id=scene_id)
                 if proposal:
                     proposals.append(proposal)
     return proposals
@@ -71,17 +70,17 @@ def merge_action_proposals(run: dict[str, Any], proposals: Iterable[dict[str, An
     return added
 
 
-def _normalize_candidate(candidate: Any) -> dict[str, Any] | None:
+def _normalize_candidate(candidate: Any, *, scene_id: str) -> dict[str, Any] | None:
     if not isinstance(candidate, dict):
         return None
-    if candidate.get("operation") != _ALLOWED_OPERATION or candidate.get("sceneId") != _ALLOWED_SCENE_ID:
+    if candidate.get("operation") != _ALLOWED_OPERATION or candidate.get("sceneId") != scene_id:
         return None
     reason = str(candidate.get("reason") or "").strip()
     if not reason:
         return None
     return {
         "operation": _ALLOWED_OPERATION,
-        "sceneId": _ALLOWED_SCENE_ID,
+        "sceneId": scene_id,
         "reason": reason[:400],
         "risk": "medium",
         "recipeStepId": "bind_assets",
