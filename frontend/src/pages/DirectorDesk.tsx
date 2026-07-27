@@ -288,6 +288,7 @@ export default function DirectorDesk() {
               <div>状态：<b>{({ waiting_approval: '等待你的确认', waiting_pi: '正在等待模型完成', succeeded: '已完成', rejected: '已拒绝', recoverable: '需要处理', running: '正在执行' } as any)[run.status] || run.status}</b></div>
               <div>{run.mockTransport ? '当前为本地模拟流程，未调用模型。' : run.liveCallPerformed ? (run.piState === 'settled' ? '模型已返回，等待你确认下一步。' : '正在等待模型返回，页面会自动更新。') : '正在建立 Pi 会话。'}</div>
               {run.directorPack && <div style={{ color: 'var(--accent)' }}>导演包：{run.directorPack.name} · 固定 {run.skills?.length || 0} 个 Skill</div>}
+              {selectedPack && run.directorPack?.packId !== selectedPack.packId && <div style={{ color: 'var(--warning)' }}>当前显示的是历史 Run。点击“创建 Director Run”后，才会使用刚选的“{selectedPack.name}”。</div>}
             </div>}
             {approval && <div className="rounded-lg border p-4 space-y-3" style={{ borderColor: 'var(--accent)', background: 'var(--bg-surface)' }}>
               <div className="flex items-center gap-2 text-sm"><WarningCircle size={16} />审批：{approval.operation}</div>
