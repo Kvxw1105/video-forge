@@ -17,6 +17,7 @@ from agent_runtime.director_store import DirectorStore
 from agent_runtime.director_studio import DirectorStudioRegistry
 from agent_runtime.pi_transport import FakePiTransport
 from routers import director, director_studio
+from services import project_service
 
 
 def main() -> int:
@@ -25,9 +26,11 @@ def main() -> int:
     old_registry = director_studio.registry
     old_studio = director.studio
     old_service = director.service
+    old_projects_dir = project_service.PROJECTS_DIR
     with tempfile.TemporaryDirectory(prefix="videoforge-director-studio-api-") as temp:
         root = Path(temp)
         registry = DirectorStudioRegistry(root=root / "studio", recipes_root=ROOT / "agent" / "recipes")
+        project_service.PROJECTS_DIR = root / "projects"
         director_studio.registry = registry
         director.studio = registry
         director.service = DirectorService(store=DirectorStore(RunStore(root / "runs")), transport=FakePiTransport())
@@ -57,6 +60,31 @@ def main() -> int:
             exported = client.get(f"/api/director-studio/packs/{pack['packId']}/export")
             assert exported.status_code == 200 and exported.json()["pack"]["skillPins"][0]["version"] == 1, exported.text
 
+            second_pack_response = client.post("/api/director-studio/packs", json={
+                "name": "API 验收拼贴包",
+                "recipeId": "structured-knowledge-video",
+                "skillPins": [{"skillId": "subtitle_scene_director", "version": 1}],
+                "style": {"name": "报纸拼贴", "palette": "黑白红", "mood": "锐利"},
+                "capabilityIds": ["review_visual_scene_plan", "bind_scene_assets"],
+            })
+            assert second_pack_response.status_code == 200, second_pack_response.text
+            second_pack = second_pack_response.json()["pack"]
+
+            # This is a durable synthetic VideoForge project, not only an
+            # in-memory SRT payload.  Both packs must make a visible plan diff.
+            project = project_service.create_project("Skill Pack synthetic project")
+            project_service.update_project(project.id, {"script": "先看清问题。再给出解决路径。", "subtitles": [
+                {"id": "synthetic_scene_a", "start": 0, "end": 2, "text": "先看清问题。", "style": {}},
+                {"id": "synthetic_scene_b", "start": 2, "end": 5, "text": "再给出解决路径。", "style": {}},
+            ]})
+            first_project_run = client.post("/api/director/runs", json={"task": "Plan the synthetic project.", "projectId": project.id, "packId": pack["packId"]})
+            second_project_run = client.post("/api/director/runs", json={"task": "Plan the synthetic project.", "projectId": project.id, "packId": second_pack["packId"]})
+            assert first_project_run.status_code == 200 and second_project_run.status_code == 200
+            first_plan = first_project_run.json()["scenePlan"]
+            second_plan = second_project_run.json()["scenePlan"]
+            assert first_plan["scenes"][0]["sceneId"] == "synthetic_scene_a"
+            assert first_plan["styleSignature"] != second_plan["styleSignature"]
+
             intake = {
                 "source": {"type": "srt_upload", "filename": "acceptance.srt"},
                 "subtitleTimeline": [
@@ -76,6 +104,7 @@ def main() -> int:
             director_studio.registry = old_registry
             director.studio = old_studio
             director.service = old_service
+            project_service.PROJECTS_DIR = old_projects_dir
     return 0
 
 
