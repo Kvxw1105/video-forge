@@ -56,7 +56,8 @@ class DirectorService:
             self.store.save(run)
         run_id = run["runId"]
         task = run["task"] or "Create a previewable and JianYing-importable video draft from this script."
-        pi_prompt = f"{task}\n\n{proposal_instruction()}"
+        target_scene_id = self._target_scene_id(payload)
+        pi_prompt = f"{task}\n\n{proposal_instruction(target_scene_id)}"
         session = self.transport.create_session(run_id, pi_prompt)
         run["piSession"] = session
         run["piState"] = "starting"
@@ -89,7 +90,6 @@ class DirectorService:
         self.store.append_event(run_id, {"type": "tool.call.succeeded", "toolName": "vector_card.generate_scene_asset", "sceneId": "scene_001"})
         self.store.append_event(run_id, {"type": "artifact.created", "artifact": artifact})
         approval_id = f"approval_{uuid4().hex[:10]}"
-        target_scene_id = self._target_scene_id(payload)
         approval = {
             "approvalId": approval_id,
             "operation": "replace_scene_asset",
@@ -295,7 +295,9 @@ class DirectorService:
                     self.store.save(run)
                     should_resume = run.get("status") == "waiting_pi" and not run.get("currentApprovalId")
                 elif event.get("piEventType") == "agent_end":
-                    proposals = merge_action_proposals(run, proposals_from_agent_end(event))
+                    approval = next((item for item in run.get("approvals", []) if item.get("status") == "pending"), {})
+                    scene_id = str(approval.get("sceneId") or "scene_001")
+                    proposals = merge_action_proposals(run, proposals_from_agent_end(event, scene_id=scene_id))
                     if proposals:
                         self.store.save(run)
                         for proposal in proposals:

@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from agent.lab_runner.run_store import RunStore
 from agent_runtime.director_service import DirectorService
 from agent_runtime.director_store import DirectorStore
+from agent_runtime.director_proposals import proposal_instruction, proposals_from_agent_end
 
 
 class PlannedPiTransport:
@@ -42,6 +43,9 @@ class PlannedPiTransport:
 
 
 def main() -> int:
+    dynamic = proposals_from_agent_end({"piEvent": {"messages": [{"role": "assistant", "content": "{\"videoforgeActionProposals\":[{\"operation\":\"replace_scene_asset\",\"sceneId\":\"srt_0001\",\"reason\":\"subtitle aligned\"}]}"}]}}, scene_id="srt_0001")
+    assert dynamic and dynamic[0]["sceneId"] == "srt_0001"
+    assert '"sceneId": "srt_0001"' in proposal_instruction("srt_0001")
     with tempfile.TemporaryDirectory(prefix="videoforge-action-proposals-") as temp:
         service = DirectorService(store=DirectorStore(RunStore(Path(temp))), transport=PlannedPiTransport())
         run = service.create_run({"task": "Review the current scene asset."})
