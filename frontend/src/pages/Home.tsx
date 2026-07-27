@@ -13,6 +13,7 @@ import {
   FolderOpen,
   Microphone,
   Moon,
+  Package,
   Plus,
   Sun,
   Trash,
@@ -134,6 +135,10 @@ export default function Home() {
           <button className="btn-gold home-action-button" onClick={() => navigate('/structured/new')}>
             <ClipboardText size={15} weight="bold" />
             <span>创建结构化内容</span>
+          </button>
+          <button className="btn-cinematic home-action-button" onClick={() => navigate('/director/studio')}>
+            <Package size={15} weight="bold" />
+            <span>我的导演包</span>
           </button>
           <button className="btn-cinematic home-action-button" onClick={() => navigate('/factory/new')}>
             <FilmSlate size={15} weight="bold" />

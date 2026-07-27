@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useState } from 'react'
-import { Check, ClipboardText, FileText, FilmSlate, GearSix, GitBranch, Play, Robot, UploadSimple, WarningCircle, X } from '@phosphor-icons/react'
+import { Check, ClipboardText, FileText, FilmSlate, GearSix, GitBranch, Package, Play, Robot, UploadSimple, WarningCircle, X } from '@phosphor-icons/react'
 import { api } from '../lib/api'
 
 const DEFAULT_TASK = '把这篇文案生成一个可预览、可导入剪映的视频草稿。'
@@ -23,6 +23,8 @@ export default function DirectorDesk() {
   const [version, setVersion] = useState<any>(null)
   const [projects, setProjects] = useState<any[]>([])
   const [provider, setProvider] = useState<any>(null)
+  const [packs, setPacks] = useState<any[]>([])
+  const [selectedPackId, setSelectedPackId] = useState('')
   const [inputMode, setInputMode] = useState<'srt' | 'project'>('srt')
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [selectedProject, setSelectedProject] = useState<any>(null)
@@ -47,6 +49,7 @@ export default function DirectorDesk() {
     api.getVersion().then(setVersion).catch(() => undefined)
     api.listProjects().then(setProjects).catch(() => undefined)
     api.getAgentProviderSettings().then(setProvider).catch(() => undefined)
+    api.listDirectorPacks().then((result: any) => setPacks(result.packs || [])).catch(() => undefined)
     api.listDirectorRuns().then((runs: any[]) => {
       if (runs[0]?.runId) load(runs[0].runId).catch(() => undefined)
     }).catch(() => undefined)
@@ -131,6 +134,7 @@ export default function DirectorDesk() {
       const created = await api.createDirectorRun({
         task,
         recipeId: 'structured-knowledge-video',
+        packId: selectedPackId || undefined,
         projectId: selectedProject?.id || undefined,
         intake: standaloneSrtIntake || undefined,
       })
@@ -187,6 +191,9 @@ export default function DirectorDesk() {
           <a className="btn-cinematic icon-button" href="/settings/agent" title="模型与上游服务设置" aria-label="模型与上游服务设置">
             <GearSix size={18} />
           </a>
+          <a className="btn-cinematic icon-button" href="/director/studio" title="我的 Skill 与导演包" aria-label="我的 Skill 与导演包">
+            <Package size={18} />
+          </a>
         </header>
 
         <section className="grid sm:grid-cols-2 xl:grid-cols-4 gap-2 text-xs" aria-label="Director 操作步骤">
@@ -239,7 +246,15 @@ export default function DirectorDesk() {
               </>}
             </div>
             <div>
-              <div className="flex items-center justify-between gap-2"><p className="label-cinematic">第二步：告诉 Director 要做什么</p><button className="btn-cinematic text-xs py-1.5" onClick={() => setTask(TEST_TASK)}><ClipboardText size={14} /> 填入测试指令</button></div>
+              <div className="flex items-center justify-between gap-2"><p className="label-cinematic">第二步：选择导演包</p><a className="btn-cinematic text-xs py-1.5" href="/director/studio"><Package size={14}/> 管理我的包</a></div>
+              <select className="input-cinematic w-full text-sm mt-2" value={selectedPackId} onChange={event => setSelectedPackId(event.target.value)}>
+                <option value="">使用默认制作方式</option>
+                {packs.map(pack => <option key={pack.packId} value={pack.packId}>{pack.name} · {pack.skillPins?.length || 0} 个固定 Skill</option>)}
+              </select>
+              {selectedPackId ? <p className="text-xs mt-2" style={{ color: 'var(--accent)' }}>本次 Run 会固定所选导演包和其中 Skill 的当前版本，并生成可审阅的 Scene Plan。</p> : <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>没有合适的包？先去“我的导演方法”导入 GPT 讨论成果。</p>}
+            </div>
+            <div>
+              <div className="flex items-center justify-between gap-2"><p className="label-cinematic">第三步：告诉 Director 要做什么</p><button className="btn-cinematic text-xs py-1.5" onClick={() => setTask(TEST_TASK)}><ClipboardText size={14} /> 填入测试指令</button></div>
               <textarea className="input-cinematic w-full min-h-[180px] mt-2 text-sm" value={task} onChange={event => setTask(event.target.value)} />
             </div>
             <div className="border-l-2 pl-3 text-xs space-y-2" style={{ borderColor: providerReady ? 'var(--accent)' : 'var(--warning)' }}>
@@ -249,12 +264,13 @@ export default function DirectorDesk() {
             </div>
             {error && <div className="operation-error">{error}</div>}
             <button className="btn-gold w-full justify-center" disabled={!task.trim() || !inputReady || busy === 'create'} title={!inputReady ? '请先上传 SRT 或选择项目' : ''} onClick={createRun}>
-              <Play size={16} /> {busy === 'create' ? '正在创建...' : inputReady ? '第三步：创建 Director Run' : '请先完成第一步'}
+              <Play size={16} /> {busy === 'create' ? '正在创建...' : inputReady ? '第四步：创建 Director Run' : '请先完成第一步'}
             </button>
             {run && <div className="rounded-lg p-3 text-xs space-y-2" style={{ background: 'var(--bg-elevated)' }}>
               <div>Run: <b>{run.runId}</b></div>
               <div>状态：<b>{run.status}</b></div>
               <div>{run.mockTransport ? '当前为本地模拟流程，未调用模型。' : run.liveCallPerformed ? '已发起真实模型调用。' : '等待 Pi 返回。'}</div>
+              {run.directorPack && <div style={{ color: 'var(--accent)' }}>导演包：{run.directorPack.name} · 固定 {run.skills?.length || 0} 个 Skill</div>}
             </div>}
             {approval && <div className="rounded-lg border p-4 space-y-3" style={{ borderColor: 'var(--accent)', background: 'var(--bg-surface)' }}>
               <div className="flex items-center gap-2 text-sm"><WarningCircle size={16} />审批：{approval.operation}</div>
@@ -278,6 +294,10 @@ export default function DirectorDesk() {
                 </div>)}
                 {!events.length && <div className="empty-state"><FilmSlate size={28} /><span>暂无事件</span></div>}
               </div>
+            </section>
+            <section className="card-cinematic p-5 space-y-3 xl:col-span-2">
+              <p className="label-cinematic">Pack Scene Plan</p>
+              {run?.scenePlan?.scenes?.length ? <div className="grid md:grid-cols-2 gap-2">{run.scenePlan.scenes.map((scene: any) => <div key={scene.sceneId} className="rounded p-3 text-xs" style={{ background: 'var(--bg-elevated)' }}><div className="flex justify-between gap-2"><b>{scene.sceneId}</b><span>{scene.start}s → {scene.end}s</span></div><p className="mt-1">{scene.text}</p><p className="mt-1" style={{ color: 'var(--text-muted)' }}>{scene.direction}</p></div>)}</div> : <div className="empty-state"><Package size={28}/><span>选择导演包后，新 Run 的 Scene Plan 会显示在这里。</span></div>}
             </section>
             <section className="card-cinematic p-5 space-y-3">
               <p className="label-cinematic">Artifacts</p>
