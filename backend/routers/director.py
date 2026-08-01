@@ -22,6 +22,15 @@ def _run_or_404(run_id: str):
         raise HTTPException(404, {"code": "run_not_found", "message": f"Director run not found: {run_id}"}) from exc
 
 
+def _visual_plan_scenes(intake: dict | None) -> list[dict]:
+    """Use the established Project VisualScene IDs when a Director Run has a project."""
+    structured = (intake or {}).get("structuredContent") if isinstance(intake, dict) else {}
+    episode = structured.get("episode") if isinstance(structured, dict) else {}
+    plan = episode.get("visualPlan") if isinstance(episode, dict) else {}
+    scenes = plan.get("scenes") if isinstance(plan, dict) else []
+    return [dict(scene) for scene in scenes if isinstance(scene, dict) and scene.get("id")]
+
+
 @router.get("/intake/projects")
 def list_intake_projects():
     """List projects that can be attached to a Director run."""
@@ -79,8 +88,9 @@ def create_run(payload: dict):
         payload["task"] = f"{task}\n\n{prompt_context(intake)}"
     if pack_context:
         timeline = intake.get("subtitleTimeline") if isinstance(intake, dict) and isinstance(intake.get("subtitleTimeline"), list) else []
-        scene_plan = studio.build_scene_plan(timeline, pack_context["skills"], pack_context["pack"])
+        scene_plan = studio.build_scene_plan(timeline, pack_context["skills"], pack_context["pack"], visual_scenes=_visual_plan_scenes(intake))
         payload["scenePlan"] = scene_plan
+        payload["productionPack"] = {"packId": pack_context["pack"]["packId"], "packVersion": pack_context["pack"]["version"], "packFingerprint": pack_context["pack"]["fingerprint"], "skillPins": pack_context["pack"]["skillPins"]}
         payload["task"] = f"{payload.get('task') or ''}\n\nDirector Pack (version-pinned, read-only):\n{json.dumps({'pack': pack_context['pack'], 'skills': [{'skillId': item['skillId'], 'version': item['version'], 'name': item['name'], 'directives': item['directives']} for item in pack_context['skills']], 'scenePlan': scene_plan}, ensure_ascii=False, separators=(',', ':'))}"
     try:
         run = service.create_run(payload)
