@@ -212,7 +212,9 @@ class DirectorStudioRegistry:
         pack_id = requested_id or f"pack_{_slug(str(payload.get('name') or 'production-pack'), 'production-pack')}_{uuid4().hex[:6]}"
         existing = self._read(self.packs_root / f"{pack_id}.json", default=None)
         base = deepcopy(existing) if isinstance(existing, dict) else deepcopy(builtin_packs().get(pack_id) or {})
-        candidate = {**base, **deepcopy(payload), "packId": pack_id, "schemaVersion": 2}
+        candidate = {**base, **deepcopy(payload), "packId": pack_id}
+        # A V1-form payload is migrated in memory, then written back as V2 only on this explicit save.
+        candidate["schemaVersion"] = 2 if candidate.get("rendererBindings") and candidate.get("sceneArchetypes") else int(candidate.get("schemaVersion") or 1)
         if not candidate.get("createdAt"):
             candidate["createdAt"] = now
         candidate["updatedAt"] = now
