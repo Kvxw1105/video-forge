@@ -254,6 +254,15 @@ class DirectorService:
             for row in visual_rows:
                 spec = dict(row["visualSpec"])
                 scene_id = str(spec.get("sceneId") or row.get("sceneId") or fallback_scene_id)
+                pinned_pack = run.get("productionPack") if isinstance(run.get("productionPack"), dict) else run.get("directorPack") if isinstance(run.get("directorPack"), dict) else {}
+                expected_fingerprint = str(pinned_pack.get("packFingerprint") or pinned_pack.get("fingerprint") or "")
+                if expected_fingerprint and str(spec.get("packFingerprint") or "") != expected_fingerprint:
+                    run["status"] = "recoverable"
+                    error = {"code": "pack_fingerprint_mismatch", "message": "VisualSpec does not match the pinned Production Pack fingerprint.", "recoverable": True, "details": {"sceneId": scene_id, "expectedFingerprint": expected_fingerprint, "actualFingerprint": spec.get("packFingerprint"), "recovery": "Recompile the Pack and create a new Director Run."}}
+                    run["errors"].append(error)
+                    self.store.save(run)
+                    self.store.append_event(run_id, {"type": "renderer.dispatch.failed", **error})
+                    return self.get_run(run_id)
                 renderer_entry = registry_index.get((str(spec.get("providerId")), str(spec.get("rendererId"))))
                 if not renderer_entry:
                     run["status"] = "recoverable"
