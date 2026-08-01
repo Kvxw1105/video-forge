@@ -199,6 +199,8 @@ def builtin_packs() -> dict[str, dict[str, Any]]:
             {"caseId": "comparison", "name": "两类对比", "text": "一种人反复比较，另一种人把评价拆成事实、解释和下一步。", "ratio": "9:16"},
             {"caseId": "process", "name": "多步骤流程", "text": "第一步记录评价，然后区分事实，最后形成一个可执行动作。", "ratio": "16:9"},
             {"caseId": "network", "name": "层级关系", "text": "一个体系由中心判断、外部评价、情绪反应和行动反馈组成。", "ratio": "9:16"},
+            {"caseId": "long-text-pressure", "name": "长文本压力", "text": "长期内耗往往不是一次评价造成的，而是外部评价进入自我判断之后，比较不断放大期待与现实的落差，注意力被反复拉回无法控制的标准，最后既消耗精力，也没有形成任何可验证的下一步行动。", "ratio": "9:16"},
+            {"caseId": "short-text", "name": "短文本", "text": "先停一下。", "ratio": "9:16"},
         ],
         "capabilityIds": ["review_visual_scene_plan", "prepare_visual_generation_pack", "bind_scene_assets"],
         "providerPolicy": {"routes": ["local_free"], "allowNetwork": False, "allowPaid": False},
@@ -516,13 +518,20 @@ class ProductionPackCompiler:
         return {"pack": normalized, "packFingerprint": normalized["fingerprint"], "scenePlan": {"version": 2, "packId": normalized["packId"], "packVersion": normalized["version"], "packFingerprint": normalized["fingerprint"], "scenes": compiled}, "warnings": checked["warnings"], "errors": []}
 
 
-def render_eval_artifact(visual_spec: dict[str, Any], scene: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+def _eval_canvas(ratio: str | None) -> tuple[int, int, str]:
+    if str(ratio or "").strip() == "16:9":
+        return 1920, 1080, "16:9"
+    return 1080, 1920, "9:16"
+
+
+def render_eval_artifact(visual_spec: dict[str, Any], scene: dict[str, Any], output_dir: Path, *, ratio: str | None = None) -> dict[str, Any]:
     """Run the existing renderer in an isolated directory and keep reproducible evidence."""
     from visual_assets.code_visual.motion_export import frame_svg, render_motion_mp4
-    from visual_assets.contracts import RenderConfig, RoutingOptions, VisualAssetSourceItem, VisualSemantic
+    from visual_assets.contracts import RenderCanvas, RenderConfig, RoutingOptions, VisualAssetSourceItem, VisualSemantic
     from visual_assets.registry import get_provider
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    width, height, resolved_ratio = _eval_canvas(ratio)
     provider = get_provider(str(visual_spec["providerId"]))
     params = dict(visual_spec.get("parameters") or {})
     visual_family = str(params.get("visualFamily") or "evidence")
@@ -533,21 +542,21 @@ def render_eval_artifact(visual_spec: dict[str, Any], scene: dict[str, Any], out
         semantic=VisualSemantic(topic="production-pack-eval", visualIntent=visual_family, metadata={"rendererId": visual_spec["rendererId"], "themeMode": visual_spec["themeMode"], "ipPack": str(params.get("ipPack") or "neutral"), "visualFamily": visual_family}),
     )
     route = provider.route(item, RoutingOptions())
-    rendered = provider.render_svg(item, route, RenderConfig(provider=str(visual_spec["providerId"]), providerVersion=getattr(provider, "provider_version", "0"), providerOptions={"rendererId": visual_spec["rendererId"], "themeMode": visual_spec["themeMode"], "ipPack": str(params.get("ipPack") or "neutral")}))
+    rendered = provider.render_svg(item, route, RenderConfig(provider=str(visual_spec["providerId"]), providerVersion=getattr(provider, "provider_version", "0"), canvas=RenderCanvas(width=width, height=height), providerOptions={"rendererId": visual_spec["rendererId"], "themeMode": visual_spec["themeMode"], "ipPack": str(params.get("ipPack") or "neutral")}))
     svg_path = output_dir / "artifact.svg"
     svg_path.write_text(rendered.svg, encoding="utf-8")
     motion = dict((rendered.motionHint or {}).get("motionPlan") or {})
     frame_path = output_dir / "representative-frame.svg"
-    frame_path.write_text(frame_svg(rendered.svg, motion, min(0.4, float(motion.get("duration") or duration) * 0.4), width=1080, height=1920), encoding="utf-8")
+    frame_path.write_text(frame_svg(rendered.svg, motion, min(0.4, float(motion.get("duration") or duration) * 0.4), width=width, height=height), encoding="utf-8")
     result = {
-        "rendererId": visual_spec["rendererId"], "templateId": rendered.templateId, "svgPath": str(svg_path), "svgSha256": hashlib.sha256(svg_path.read_bytes()).hexdigest(),
+        "sceneId": visual_spec["sceneId"], "packFingerprint": visual_spec["packFingerprint"], "rendererId": visual_spec["rendererId"], "templateId": rendered.templateId, "svgPath": str(svg_path), "svgSha256": hashlib.sha256(svg_path.read_bytes()).hexdigest(),
         "representativeFramePath": str(frame_path), "representativeFrameSha256": hashlib.sha256(frame_path.read_bytes()).hexdigest(),
-        "duration": float(motion.get("duration") or duration), "outputMode": visual_spec["outputMode"], "warnings": [],
+        "duration": float(motion.get("duration") or duration), "outputMode": visual_spec["outputMode"], "canvas": {"width": width, "height": height, "ratio": resolved_ratio}, "warnings": [],
     }
     if visual_spec["outputMode"] == "video":
         video_path = output_dir / "artifact.mp4"
         try:
-            render_motion_mp4(svg_path, motion, video_path, width=1080, height=1920, fps=int(params.get("videoFps") or 12))
+            render_motion_mp4(svg_path, motion, video_path, width=width, height=height, fps=int(params.get("videoFps") or 12))
             result.update({"artifactPath": str(video_path), "artifactSha256": hashlib.sha256(video_path.read_bytes()).hexdigest(), "artifactType": "video", "byteSize": video_path.stat().st_size})
         except Exception as exc:
             result["warnings"].append(f"video_export_unavailable:{exc}")
