@@ -344,12 +344,13 @@ class DirectorService:
                     artifacts.append(artifact)
                 if not artifacts:
                     for item in result.get("items", []):
-                        if str(item.get("segmentId") or "") == scene_id and item.get("svgPath"):
+                        if str(item.get("segmentId") or "") == scene_id and (item.get("pngPath") or item.get("svgPath")):
+                            use_png = spec.get("outputMode") == "png" and bool(item.get("pngPath"))
                             artifacts.append({
-                                "artifactId": f"production_pack_{scene_id}_svg",
-                                "artifactType": "production_pack_svg",
-                                "path": item.get("svgPath"),
-                                "sha256": item.get("svgSha256"),
+                                "artifactId": f"production_pack_{scene_id}_{'png' if use_png else 'svg'}",
+                                "artifactType": "production_pack_png" if use_png else "production_pack_svg",
+                                "path": item.get("pngPath") if use_png else item.get("svgPath"),
+                                "sha256": item.get("pngSha256") if use_png else item.get("svgSha256"),
                                 "sceneId": scene_id,
                                 "packId": spec.get("packId"),
                                 "packFingerprint": spec.get("packFingerprint"),
