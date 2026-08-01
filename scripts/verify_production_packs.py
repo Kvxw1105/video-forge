@@ -45,6 +45,9 @@ def main() -> None:
     editorial = builtin_packs()["minimal-editorial"]
     assert compiler.validate(knowledge, capabilities=CAPABILITIES, skill_lookup=published, require_eval_cases=True)["ok"]
     assert compiler.validate(editorial, capabilities=CAPABILITIES, skill_lookup=published, require_eval_cases=True)["ok"]
+    required_eval_cases = {"abstract-view", "causal-explanation", "comparison", "process", "network", "long-text-pressure", "short-text"}
+    assert required_eval_cases.issubset({item["caseId"] for item in knowledge["evalCases"]})
+    assert {item["ratio"] for item in knowledge["evalCases"]} == {"9:16", "16:9"}
 
     legacy, warnings = migrate_v1_pack({
         "schemaVersion": 1, "packId": "legacy-documentary", "name": "旧版导演包", "recipeId": "structured-knowledge-video",
@@ -83,6 +86,8 @@ def main() -> None:
     expect_rejected(compiler, missing_binding, "binding_missing")
     cycle = deepcopy(knowledge); cycle["sceneArchetypes"][0]["fallbackArchetypeId"] = "comparative-judgment"; cycle["sceneArchetypes"][1]["fallbackArchetypeId"] = "causal-mechanism"
     expect_rejected(compiler, cycle, "fallback_cycle")
+    unpublished = compiler.validate(knowledge, capabilities=CAPABILITIES, skill_lookup=lambda _id, _version: {"status": "draft"})
+    assert "skill_not_published" in {item["code"] for item in unpublished["errors"]}
     unsafe = deepcopy(knowledge); unsafe["providerPolicy"]["command"] = "echo insecure"
     result = compiler.validate(unsafe, capabilities=CAPABILITIES, skill_lookup=published)
     assert result["errors"][0]["code"] == "unsafe_executable_field", result
