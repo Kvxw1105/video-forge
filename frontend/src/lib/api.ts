@@ -243,8 +243,15 @@ export const api = {
   disableDirectorStudioSkill: (skillId: string) => request<any>(`/director-studio/skills/${encodeURIComponent(skillId)}/disable`, { method: 'POST' }),
   rollbackDirectorStudioSkill: (skillId: string, version: number) => request<any>(`/director-studio/skills/${encodeURIComponent(skillId)}/rollback`, { method: 'POST', body: JSON.stringify({ version }) }),
   listDirectorPacks: () => request<any>('/director-studio/packs'),
+  getProductionRendererRegistry: () => request<any>('/director-studio/renderer-registry'),
+  getProductionPackHealth: (packId: string) => request<any>(`/director-studio/packs/${encodeURIComponent(packId)}/health`),
+  getProductionPackMigrationPreview: (packId: string) => request<any>(`/director-studio/packs/${encodeURIComponent(packId)}/migration-preview`),
+  compileProductionPack: (packId: string, data: any) => request<any>(`/director-studio/packs/${encodeURIComponent(packId)}/compile`, { method: 'POST', body: JSON.stringify(data) }),
+  runProductionPackEval: (packId: string, data: any = {}) => request<any>(`/director-studio/packs/${encodeURIComponent(packId)}/eval`, { method: 'POST', body: JSON.stringify(data) }),
+  getProductionPackEval: (packId: string, runId: string) => request<any>(`/director-studio/packs/${encodeURIComponent(packId)}/eval-runs/${encodeURIComponent(runId)}`),
   saveDirectorPack: (data: any) => request<any>('/director-studio/packs', { method: 'POST', body: JSON.stringify(data) }),
   exportDirectorPack: (packId: string) => request<any>(`/director-studio/packs/${encodeURIComponent(packId)}/export`),
   importDirectorPack: (document: any) => request<any>('/director-studio/packs/import', { method: 'POST', body: JSON.stringify({ document }) }),
   uninstallDirectorPack: (packId: string) => request<any>(`/director-studio/packs/${encodeURIComponent(packId)}`, { method: 'DELETE' }),
 }
+
