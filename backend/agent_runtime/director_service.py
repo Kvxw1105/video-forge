@@ -11,6 +11,7 @@ from .director_proposals import merge_action_proposals, proposal_instruction, pr
 from .lab_actions import dispatch_factory_binding, record_binding_action
 from .pi_transport import FakePiTransport, PiRpcError, PiRpcTransport
 from .plugin_tools import create_delivery_artifacts, generate_vector_card
+from .production_packs import renderer_registry
 from agent.lab_runner.recipe_loader import RecipeValidationError, load_recipe_by_id
 from vforge.client import VForgeError, bind_scene_assets
 from routers.visual_assets import CodeVisualRenderBody, regenerate_code_visual_scene
@@ -50,6 +51,10 @@ class DirectorService:
         if isinstance(payload.get("scenePlan"), dict):
             run["scenePlan"] = payload["scenePlan"]
             self.store.save(run)
+        if isinstance(payload.get("productionPack"), dict):
+            run["productionPack"] = payload["productionPack"]
+            run["rendererDispatches"] = []
+            self.store.save(run)
         factory_context = payload.get("factoryContext")
         if isinstance(factory_context, dict):
             run["factoryContext"] = factory_context
@@ -84,11 +89,21 @@ class DirectorService:
         self.store.append_event(run_id, {"type": "recipe.loaded", "recipeId": recipe.id, "recipeVersion": recipe.version, "stepCount": len(recipe.steps)})
         for event in self.transport.initial_events(run_id, task):
             self.store.append_event(run_id, event)
-        artifact = generate_vector_card(self.store.run_dir(run_id), scene_id="scene_001", title="Director Draft", body=task)
-        run["toolCalls"].append({"toolName": "vector_card.generate_scene_asset", "status": "succeeded", "sceneId": "scene_001", "artifactId": artifact["artifactId"]})
-        run["artifacts"].append(artifact)
-        self.store.append_event(run_id, {"type": "tool.call.succeeded", "toolName": "vector_card.generate_scene_asset", "sceneId": "scene_001"})
-        self.store.append_event(run_id, {"type": "artifact.created", "artifact": artifact})
+        has_compiled_visual_specs = any(
+            isinstance(scene, dict) and isinstance(scene.get("visualSpec"), dict)
+            for scene in (run.get("scenePlan") or {}).get("scenes") or []
+        )
+        if has_compiled_visual_specs:
+            # A V2 Production Pack must not be shadowed by the legacy sample
+            # vector card.  Its only render artifacts are produced after the
+            # approval gate by the selected real Renderer.
+            self.store.append_event(run_id, {"type": "visual_spec.compile.ready", "sceneCount": len((run.get("scenePlan") or {}).get("scenes") or [])})
+        else:
+            artifact = generate_vector_card(self.store.run_dir(run_id), scene_id="scene_001", title="Director Draft", body=task)
+            run["toolCalls"].append({"toolName": "vector_card.generate_scene_asset", "status": "succeeded", "sceneId": "scene_001", "artifactId": artifact["artifactId"]})
+            run["artifacts"].append(artifact)
+            self.store.append_event(run_id, {"type": "tool.call.succeeded", "toolName": "vector_card.generate_scene_asset", "sceneId": "scene_001"})
+            self.store.append_event(run_id, {"type": "artifact.created", "artifact": artifact})
         approval_id = f"approval_{uuid4().hex[:10]}"
         approval = {
             "approvalId": approval_id,
@@ -213,35 +228,159 @@ class DirectorService:
             self.store.append_event(run_id, {"type": "lab.action.waiting_for_pi", "stepId": "bind_assets", "piState": run.get("piState")})
             return self.get_run(run_id)
         self.store.append_event(run_id, {"type": "run.resumed"})
-        project_id, scene_id = self._project_target(run)
-        if project_id:
-            try:
-                self.store.append_event(run_id, {"type": "code_visual.overlay.started", "projectId": project_id, "sceneId": scene_id})
-                result = regenerate_code_visual_scene(
-                    project_id,
-                    scene_id,
-                    CodeVisualRenderBody(
-                        sourceMode="visual_plan",
-                        sceneIds=[scene_id],
-                        exportPng=True,
-                        exportVideo=True,
-                        bindToProject=True,
-                        rendererId="mechanism_diagram",
-                        themeMode="light",
-                        presentationMode="overlay",
-                    ),
-                )
-                run["artifacts"].extend({"artifactId": f"code_visual_{row.get('segmentId', scene_id)}", "artifactType": "code_visual_overlay", "path": row.get("videoPath"), "sceneId": scene_id} for row in result.get("videoExports", []))
-                run["toolCalls"].append({"toolName": "code_visual.render_overlay", "status": "succeeded", "projectId": project_id, "sceneId": scene_id, "bindings": result.get("bindings", [])})
-                self.store.append_event(run_id, {"type": "code_visual.overlay.completed", "projectId": project_id, "sceneId": scene_id, "bindings": result.get("bindings", []), "videoExports": result.get("videoExports", [])})
-            except Exception as exc:
-                run["status"] = "recoverable"
-                run["errors"].append({"code": "code_visual_overlay_failed", "message": str(exc), "recoverable": True})
+        project_id, fallback_scene_id = self._project_target(run)
+        scene_rows = list((run.get("scenePlan") or {}).get("scenes") or [])
+        visual_rows = [row for row in scene_rows if isinstance(row, dict) and isinstance(row.get("visualSpec"), dict)]
+        if visual_rows and not project_id:
+            run["status"] = "recoverable"
+            error = {
+                "code": "production_pack_project_required",
+                "message": "Production Pack renders require an existing VideoForge project target.",
+                "recoverable": True,
+                "details": {"recovery": "Select an existing project, then create a new Director Run so generated assets can be bound into Preview."},
+            }
+            run["errors"].append(error)
+            self.store.save(run)
+            self.store.append_event(run_id, {"type": "renderer.dispatch.failed", **error})
+            return self.get_run(run_id)
+        production_dispatch = bool(project_id and visual_rows)
+        bound_asset_ids: list[str] = []
+        if project_id and visual_rows:
+            registry_index = {
+                (str(entry.get("providerId")), str(entry.get("rendererId"))): entry
+                for entry in renderer_registry().get("renderers") or []
+                if isinstance(entry, dict)
+            }
+            for row in visual_rows:
+                spec = dict(row["visualSpec"])
+                scene_id = str(spec.get("sceneId") or row.get("sceneId") or fallback_scene_id)
+                pinned_pack = run.get("productionPack") if isinstance(run.get("productionPack"), dict) else run.get("directorPack") if isinstance(run.get("directorPack"), dict) else {}
+                expected_fingerprint = str(pinned_pack.get("packFingerprint") or pinned_pack.get("fingerprint") or "")
+                if expected_fingerprint and str(spec.get("packFingerprint") or "") != expected_fingerprint:
+                    run["status"] = "recoverable"
+                    error = {"code": "pack_fingerprint_mismatch", "message": "VisualSpec does not match the pinned Production Pack fingerprint.", "recoverable": True, "details": {"sceneId": scene_id, "expectedFingerprint": expected_fingerprint, "actualFingerprint": spec.get("packFingerprint"), "recovery": "Recompile the Pack and create a new Director Run."}}
+                    run["errors"].append(error)
+                    self.store.save(run)
+                    self.store.append_event(run_id, {"type": "renderer.dispatch.failed", **error})
+                    return self.get_run(run_id)
+                renderer_entry = registry_index.get((str(spec.get("providerId")), str(spec.get("rendererId"))))
+                if not renderer_entry:
+                    run["status"] = "recoverable"
+                    error = {"code": "renderer_not_registered", "message": f"Renderer unavailable: {spec.get('providerId')}/{spec.get('rendererId')}", "recoverable": True, "details": {"sceneId": scene_id}}
+                    run["errors"].append(error)
+                    self.store.save(run)
+                    self.store.append_event(run_id, {"type": "renderer.dispatch.failed", **error})
+                    return self.get_run(run_id)
+                missing = list(renderer_entry.get("missingDependencies") or [])
+                if renderer_entry.get("availability") != "available":
+                    run["status"] = "recoverable"
+                    error = {"code": "renderer_dependency_missing", "message": "Renderer dependency is unavailable.", "recoverable": True, "details": {"sceneId": scene_id, "missingDependencies": missing, "recovery": "Install the listed local dependency and resume this run."}}
+                    run["errors"].append(error)
+                    self.store.save(run)
+                    self.store.append_event(run_id, {"type": "renderer.dispatch.failed", **error})
+                    return self.get_run(run_id)
+                dispatch = {
+                    "sceneId": scene_id,
+                    "packId": spec.get("packId"),
+                    "packVersion": spec.get("packVersion"),
+                    "packFingerprint": spec.get("packFingerprint"),
+                    "providerId": spec.get("providerId"),
+                    "rendererId": spec.get("rendererId"),
+                    "templateId": spec.get("templateId"),
+                    "visualSpec": spec,
+                    "status": "started",
+                }
+                run.setdefault("rendererDispatches", []).append(dispatch)
                 self.store.save(run)
-                self.store.append_event(run_id, {"type": "code_visual.overlay.failed", "projectId": project_id, "sceneId": scene_id, "errorCode": "code_visual_overlay_failed"})
-                return self.get_run(run_id)
+                self.store.append_event(run_id, {"type": "visual_spec.selected", "sceneId": scene_id, "visualSpec": spec})
+                self.store.append_event(run_id, {"type": "renderer.dispatch.started", "sceneId": scene_id, "providerId": spec.get("providerId"), "rendererId": spec.get("rendererId"), "templateId": spec.get("templateId")})
+                try:
+                    params = spec.get("parameters") if isinstance(spec.get("parameters"), dict) else {}
+                    result = regenerate_code_visual_scene(
+                        project_id,
+                        scene_id,
+                        CodeVisualRenderBody(
+                            sourceMode="visual_plan",
+                            sceneIds=[scene_id],
+                            exportPng=spec.get("outputMode") in {"png", "video", "transparent_sequence"},
+                            exportVideo=spec.get("outputMode") in {"video", "transparent_sequence"},
+                            exportTransparentVideo=spec.get("outputMode") == "transparent_sequence",
+                            bindToProject=True,
+                            rendererId=str(spec["rendererId"]),
+                            themeMode=str(spec["themeMode"]),
+                            presentationMode=str(spec["presentationMode"]),
+                            visualFamily=str(params.get("visualFamily") or "evidence"),
+                            ipPack=str(params.get("ipPack") or "neutral"),
+                            videoFps=int(params.get("videoFps") or 12),
+                            overlayX=float(params.get("overlayX") or 0.5),
+                            overlayY=float(params.get("overlayY") or 0.32),
+                            overlayScale=float(params.get("overlayScale") or 0.36),
+                            overlayOpacity=float(params.get("overlayOpacity") or 1),
+                            overlayZIndex=int(params.get("overlayZIndex") or 0),
+                            productionPack={"packId": spec.get("packId"), "packVersion": spec.get("packVersion"), "packFingerprint": spec.get("packFingerprint"), "archetypeId": spec.get("archetypeId"), "rendererBindingId": spec.get("rendererBindingId"), "visualSpec": spec},
+                        ),
+                    )
+                except Exception as exc:
+                    dispatch.update({"status": "failed", "error": str(exc)})
+                    run["status"] = "recoverable"
+                    error = {"code": "renderer_dispatch_failed", "message": str(exc), "recoverable": True, "details": {"sceneId": scene_id, "rendererId": spec.get("rendererId"), "recovery": "Resolve the renderer error and resume this Director Run."}}
+                    run["errors"].append(error)
+                    self.store.save(run)
+                    self.store.append_event(run_id, {"type": "renderer.dispatch.failed", **error})
+                    return self.get_run(run_id)
+                artifacts = []
+                for exported in result.get("videoExports", []):
+                    artifact = {
+                        "artifactId": f"production_pack_{scene_id}_{Path(str(exported.get('videoPath') or '')).stem}",
+                        "artifactType": "production_pack_video",
+                        "path": exported.get("videoPath"),
+                        "sha256": exported.get("videoSha256"),
+                        "sceneId": scene_id,
+                        "packId": spec.get("packId"),
+                        "packFingerprint": spec.get("packFingerprint"),
+                        "rendererId": spec.get("rendererId"),
+                        "templateId": spec.get("templateId"),
+                    }
+                    artifacts.append(artifact)
+                if not artifacts:
+                    for item in result.get("items", []):
+                        if str(item.get("segmentId") or "") == scene_id and (item.get("pngPath") or item.get("svgPath")):
+                            use_png = spec.get("outputMode") == "png" and bool(item.get("pngPath"))
+                            artifacts.append({
+                                "artifactId": f"production_pack_{scene_id}_{'png' if use_png else 'svg'}",
+                                "artifactType": "production_pack_png" if use_png else "production_pack_svg",
+                                "path": item.get("pngPath") if use_png else item.get("svgPath"),
+                                "sha256": item.get("pngSha256") if use_png else item.get("svgSha256"),
+                                "sceneId": scene_id,
+                                "packId": spec.get("packId"),
+                                "packFingerprint": spec.get("packFingerprint"),
+                                "rendererId": spec.get("rendererId"),
+                                "templateId": spec.get("templateId"),
+                            })
+                run["artifacts"].extend(artifacts)
+                binding_rows = result.get("bindings", [])
+                bound_asset_ids.extend(str(binding.get("assetId")) for binding in binding_rows if isinstance(binding, dict) and binding.get("assetId"))
+                dispatch.update({"status": "succeeded", "artifacts": artifacts, "bindings": binding_rows})
+                self.store.save(run)
+                self.store.append_event(run_id, {"type": "artifact.bound", "sceneId": scene_id, "artifacts": artifacts, "bindings": binding_rows})
+                self.store.append_event(run_id, {"type": "renderer.dispatch.completed", "sceneId": scene_id, "providerId": spec.get("providerId"), "rendererId": spec.get("rendererId"), "artifacts": artifacts})
+        elif project_id and (run.get("productionPack") or run.get("directorPack")):
+            run["status"] = "recoverable"
+            error = {"code": "visual_spec_missing", "message": "Production Pack Run has no compiled VisualSpec.", "recoverable": True, "details": {"recovery": "Recompile the Pack and create a new Director Run."}}
+            run["errors"].append(error)
+            self.store.save(run)
+            self.store.append_event(run_id, {"type": "renderer.dispatch.failed", **error})
+            return self.get_run(run_id)
+
         recipe = load_recipe_by_id(run["recipeId"], root=REPO_ROOT / "agent" / "recipes")
-        record_binding_action(self.store, run, recipe, artifact_id="artifact_scene_001_vector_card")
+        if production_dispatch:
+            actual_artifact_id = bound_asset_ids[0] if bound_asset_ids else next(
+                (str(item.get("artifactId")) for item in run.get("artifacts", []) if isinstance(item, dict) and str(item.get("artifactId") or "").startswith("production_pack_")),
+                "production_pack_project_binding",
+            )
+            record_binding_action(self.store, run, recipe, artifact_id=actual_artifact_id)
+        else:
+            record_binding_action(self.store, run, recipe, artifact_id="artifact_scene_001_vector_card")
         self.store.save(run)
         factory_context = run.get("factoryContext")
         if isinstance(factory_context, dict):
@@ -257,13 +396,17 @@ class DirectorService:
             run["labActions"][-1]["factoryResult"] = factory_result
             self.store.save(run)
             self.store.append_event(run_id, {"type": "lab.action.dispatched", "stepId": "bind_assets", "toolName": "bind_scene_assets"})
-        self.store.append_event(run_id, {"type": "tool.call.started", "toolName": "visual_scene.bind_generated_asset", "sceneId": "scene_001"})
-        run["toolCalls"].append({"toolName": "visual_scene.bind_generated_asset", "status": "succeeded", "sceneId": "scene_001"})
-        self.store.append_event(run_id, {"type": "tool.call.succeeded", "toolName": "visual_scene.bind_generated_asset", "sceneId": "scene_001"})
-        delivery = create_delivery_artifacts(self.store.run_dir(run_id), run_id)
-        run["artifacts"].extend([delivery["preview"], delivery["jianying"]])
-        self.store.append_event(run_id, {"type": "artifact.created", "artifact": delivery["preview"]})
-        self.store.append_event(run_id, {"type": "artifact.created", "artifact": delivery["jianying"]})
+        bound_scene_id = str((visual_rows[0].get("sceneId") if production_dispatch and visual_rows else None) or "scene_001")
+        self.store.append_event(run_id, {"type": "tool.call.started", "toolName": "visual_scene.bind_generated_asset", "sceneId": bound_scene_id})
+        run["toolCalls"].append({"toolName": "visual_scene.bind_generated_asset", "status": "succeeded", "sceneId": bound_scene_id, "assetIds": bound_asset_ids if production_dispatch else []})
+        self.store.append_event(run_id, {"type": "tool.call.succeeded", "toolName": "visual_scene.bind_generated_asset", "sceneId": bound_scene_id})
+        if production_dispatch:
+            self.store.append_event(run_id, {"type": "project.preview.updated", "projectId": project_id, "assetIds": bound_asset_ids, "source": "production_pack"})
+        else:
+            delivery = create_delivery_artifacts(self.store.run_dir(run_id), run_id)
+            run["artifacts"].extend([delivery["preview"], delivery["jianying"]])
+            self.store.append_event(run_id, {"type": "artifact.created", "artifact": delivery["preview"]})
+            self.store.append_event(run_id, {"type": "artifact.created", "artifact": delivery["jianying"]})
         run["status"] = "succeeded"
         for proposal in run.get("actionProposals", []):
             if proposal.get("status") == "approved":

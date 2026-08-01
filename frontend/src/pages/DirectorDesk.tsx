@@ -40,6 +40,13 @@ export default function DirectorDesk() {
   const selectedPack = useMemo(() => packs.find(pack => pack.packId === selectedPackId) || null, [packs, selectedPackId])
   const providerReady = Boolean(provider?.enabled && provider?.baseUrl && provider?.model)
   const inputReady = inputMode === 'srt' ? Boolean(standaloneSrtIntake) : Boolean(selectedProject?.id)
+  const requiresProjectTarget = Boolean(selectedPack && Number(selectedPack.schemaVersion || 1) >= 2)
+  const executionReady = inputReady && (!requiresProjectTarget || (inputMode === 'project' && Boolean(selectedProject?.id)))
+  const executionHint = !inputReady
+    ? '请先上传 SRT 或选择项目'
+    : requiresProjectTarget && inputMode !== 'project'
+      ? 'Production Pack 需要已有项目，才能绑定真实 Renderer 输出到 Preview'
+      : ''
   const subtitleCount = Array.isArray(selectedProject?.subtitles) ? selectedProject.subtitles.length : 0
   const projectScript = String(selectedProject?.script || '').trim()
 
@@ -145,6 +152,10 @@ export default function DirectorDesk() {
   }
 
   const createRun = async () => {
+    if (!executionReady) {
+      setError(executionHint || '请先完成输入配置')
+      return
+    }
     setBusy('create')
     setError('')
     try {
@@ -268,7 +279,7 @@ export default function DirectorDesk() {
                 <option value="">{setupLoading ? '正在读取我的方案...' : '基础方式：不使用自定义方案'}</option>
                 {packs.map(pack => <option key={pack.packId} value={pack.packId}>{pack.name} · 固定 {pack.skillPins?.length || 0} 个导演方法</option>)}
               </select>
-              {selectedPack ? <div className="border-l-2 pl-3 text-xs mt-3 space-y-1" style={{ borderColor: 'var(--accent)' }}><b>{selectedPack.name}</b><p style={{ color: 'var(--text-muted)' }}>{selectedPack.description || '这套方案会固定其导演方法和风格参数。'}</p><p style={{ color: 'var(--accent)' }}>本次会生成可审阅的场景计划，不会改动原项目。</p></div> : <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>还没有自己的方案？先去“创建我的方案”，把 GPT 讨论转成导演方法。</p>}
+              {selectedPack ? <div className="border-l-2 pl-3 text-xs mt-3 space-y-1" style={{ borderColor: 'var(--accent)' }}><b>{selectedPack.name}</b><p style={{ color: 'var(--text-muted)' }}>{selectedPack.description || '这套方案会固定其导演方法和风格参数。'}</p><p style={{ color: 'var(--accent)' }}>V{selectedPack.version} · {selectedPack.sceneArchetypes?.length || 0} 个 Scene 原型 · {selectedPack.rendererBindings?.length || 0} 条真实 Renderer Binding</p><p style={{ color: 'var(--text-muted)' }}>创建 Run 时会固定 Pack Fingerprint，并为每一幕持久化 VisualSpec。</p>{requiresProjectTarget && inputMode !== 'project' && <p style={{ color: 'var(--warning)' }}>这套 V2 Production Pack 会实际写入项目资产并进入 Preview；请切换到“使用已有项目”。</p>}</div> : <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>还没有自己的方案？先去“创建我的方案”，把 GPT 讨论转成导演方法。</p>}
             </div>
             <div>
               <div className="flex items-center justify-between gap-2"><p className="label-cinematic">第三步：告诉 Director 要做什么</p><button className="btn-cinematic text-xs py-1.5" onClick={() => setTask(TEST_TASK)}><ClipboardText size={14} /> 填入测试指令</button></div>
@@ -280,14 +291,15 @@ export default function DirectorDesk() {
               {setupLoading ? <p style={{ color: 'var(--text-muted)' }}>正在读取本机模型设置...</p> : !providerReady && <a className="btn-cinematic inline-flex text-xs" href="/settings/agent"><GearSix size={14} /> 去配置模型</a>}
             </div>
             {error && <div className="operation-error">{error}</div>}
-            <button className="btn-gold w-full justify-center" disabled={!task.trim() || !inputReady || busy === 'create'} title={!inputReady ? '请先上传 SRT 或选择项目' : ''} onClick={createRun}>
-              <Play size={16} /> {busy === 'create' ? '正在创建...' : inputReady ? '第四步：创建 Director Run' : '请先完成第一步'}
+            <button className="btn-gold w-full justify-center" disabled={!task.trim() || !executionReady || busy === 'create'} title={executionHint} onClick={createRun}>
+              <Play size={16} /> {busy === 'create' ? '正在创建...' : executionReady ? '第四步：创建 Director Run' : requiresProjectTarget && inputReady ? '请切换到已有项目' : '请先完成第一步'}
             </button>
             {run && <div className="rounded-lg p-3 text-xs space-y-2" style={{ background: 'var(--bg-elevated)' }}>
               <div>Run: <b>{run.runId}</b></div>
               <div>状态：<b>{({ waiting_approval: '等待你的确认', waiting_pi: '正在等待模型完成', succeeded: '已完成', rejected: '已拒绝', recoverable: '需要处理', running: '正在执行' } as any)[run.status] || run.status}</b></div>
               <div>{run.mockTransport ? '当前为本地模拟流程，未调用模型。' : run.liveCallPerformed ? (run.piState === 'settled' ? '模型已返回，等待你确认下一步。' : '正在等待模型返回，页面会自动更新。') : '正在建立 Pi 会话。'}</div>
-              {run.directorPack && <div style={{ color: 'var(--accent)' }}>导演包：{run.directorPack.name} · 固定 {run.skills?.length || 0} 个 Skill</div>}
+              {run.directorPack && <div style={{ color: 'var(--accent)' }}>Production Pack：{run.directorPack.name} · 固定 {run.skills?.length || 0} 个 Skill · V{run.productionPack?.packVersion || run.directorPack.version}</div>}
+               {run.productionPack?.packFingerprint && <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>Fingerprint: {String(run.productionPack.packFingerprint).slice(0, 16)}</div>}
               {selectedPack && run.directorPack?.packId !== selectedPack.packId && <div style={{ color: 'var(--warning)' }}>当前显示的是历史 Run。点击“创建 Director Run”后，才会使用刚选的“{selectedPack.name}”。</div>}
             </div>}
             {approval && <div className="rounded-lg border p-4 space-y-3" style={{ borderColor: 'var(--accent)', background: 'var(--bg-surface)' }}>
@@ -315,7 +327,7 @@ export default function DirectorDesk() {
             </section>
             <section className="card-cinematic p-5 space-y-3 xl:col-span-2">
               <p className="label-cinematic">Pack Scene Plan</p>
-              {run?.scenePlan?.scenes?.length ? <div className="grid md:grid-cols-2 gap-2">{run.scenePlan.scenes.map((scene: any) => <div key={scene.sceneId} className="rounded p-3 text-xs" style={{ background: 'var(--bg-elevated)' }}><div className="flex justify-between gap-2"><b>{scene.sceneId}</b><span>{scene.start}s → {scene.end}s</span></div><p className="mt-1">{scene.text}</p><p className="mt-1" style={{ color: 'var(--text-muted)' }}>{scene.direction}</p></div>)}</div> : <div className="empty-state"><Package size={28}/><span>选择导演包后，新 Run 的 Scene Plan 会显示在这里。</span></div>}
+              {run?.scenePlan?.scenes?.length ? <div className="grid md:grid-cols-2 gap-2">{run.scenePlan.scenes.map((scene: any) => <div key={scene.sceneId} className="rounded p-3 text-xs" style={{ background: 'var(--bg-elevated)' }}><div className="flex justify-between gap-2"><b>{scene.sceneId}</b><span>{scene.start}s → {scene.end}s</span></div><p className="mt-1">{scene.text}</p><p className="mt-1" style={{ color: 'var(--text-muted)' }}>{scene.direction}</p>{scene.visualSpec && <div className="mt-3 pt-2 border-t" style={{ borderColor: 'var(--border)' }}><div className="flex justify-between gap-2"><b>VisualSpec · {scene.visualSpec.archetypeId}</b><span className="font-mono">{scene.visualSpec.rendererId}</span></div><p className="mt-1" style={{ color: 'var(--text-muted)' }}>{scene.visualSpec.templateId || '无 Template'} · {scene.visualSpec.presentationMode} · {scene.visualSpec.themeMode}</p><p className="mt-1" style={{ color: 'var(--text-muted)' }}>匹配：{(scene.visualSpec.selectionEvidence?.matchedTags || []).join('、') || scene.visualSpec.selectionEvidence?.matchedSceneIntent || 'fallback'}</p></div>}</div>)}</div> : <div className="empty-state"><Package size={28}/><span>选择 Production Pack 后，新 Run 的 Scene Plan 与 VisualSpec 会显示在这里。</span></div>}
             </section>
             <section className="card-cinematic p-5 space-y-3">
               <p className="label-cinematic">Artifacts</p>
@@ -324,6 +336,7 @@ export default function DirectorDesk() {
                   <b>{artifact.artifactType}</b>
                   <div className="break-all mt-1">{shortPath(artifact.path || '')}</div>
                   <div className="mt-1" style={{ color: 'var(--text-muted)' }}>{artifact.source?.plugin || artifact.artifactId}</div>
+                   {artifact.rendererId && <div className="mt-1" style={{ color: 'var(--text-muted)' }}>{artifact.rendererId} · SHA {String(artifact.sha256 || '').slice(0, 12)}</div>}
                 </div>)}
                 {!run?.artifacts?.length && <div className="empty-state"><FilmSlate size={28} /><span>暂无工件</span></div>}
               </div>

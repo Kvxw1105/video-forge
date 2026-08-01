@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from agent_runtime.director_studio import DirectorStudioRegistry, StudioValidationError
+from agent_runtime.production_packs import ProductionPackError
 
 router = APIRouter(prefix="/api/director-studio", tags=["director-studio"])
 registry = DirectorStudioRegistry()
@@ -11,8 +12,10 @@ registry = DirectorStudioRegistry()
 
 def _error(exc: Exception) -> HTTPException:
     if isinstance(exc, KeyError):
-        return HTTPException(404, {"code": str(exc), "message": "未找到请求的私有 Skill 或导演包。"})
-    return HTTPException(422, {"code": "director_studio_invalid", "message": str(exc)})
+        return HTTPException(404, {"code": str(exc), "message": "未找到请求的私有 Skill、Production Pack 或 Eval Run。", "recoverable": True, "details": {}})
+    if isinstance(exc, ProductionPackError):
+        return HTTPException(422, exc.as_dict())
+    return HTTPException(422, {"code": "director_studio_invalid", "message": str(exc), "recoverable": True, "details": {}})
 
 
 @router.get("/capabilities")
@@ -135,4 +138,50 @@ def uninstall_pack(pack_id: str):
         registry.uninstall_pack(pack_id)
         return {"ok": True, "packId": pack_id}
     except (StudioValidationError, KeyError) as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/renderer-registry")
+def get_renderer_registry():
+    return registry.renderer_registry()
+
+
+@router.get("/packs/{pack_id}/health")
+def pack_health(pack_id: str):
+    try:
+        resolved = registry.resolve_pack(pack_id)
+        return {"packId": pack_id, "health": resolved["health"], "fingerprint": resolved["pack"]["fingerprint"]}
+    except (StudioValidationError, ProductionPackError, KeyError) as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/packs/{pack_id}/migration-preview")
+def pack_migration_preview(pack_id: str):
+    try:
+        return registry.migration_preview(pack_id)
+    except (StudioValidationError, ProductionPackError, KeyError) as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/packs/{pack_id}/compile")
+def compile_pack(pack_id: str, payload: dict | None = None):
+    try:
+        return registry.compile_pack(pack_id, payload or {})
+    except (StudioValidationError, ProductionPackError, KeyError, TypeError, ValueError) as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/packs/{pack_id}/eval")
+def run_pack_eval(pack_id: str, payload: dict | None = None):
+    try:
+        return registry.run_pack_eval(pack_id, payload or {})
+    except (StudioValidationError, ProductionPackError, KeyError, TypeError, ValueError) as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/packs/{pack_id}/eval-runs/{run_id}")
+def get_pack_eval(pack_id: str, run_id: str):
+    try:
+        return registry.get_pack_eval(pack_id, run_id)
+    except (StudioValidationError, ProductionPackError, KeyError) as exc:
         raise _error(exc) from exc

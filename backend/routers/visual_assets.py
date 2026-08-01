@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import shutil
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -47,6 +48,8 @@ class CodeVisualRenderBody(StickmanRenderBody):
     rendererId: Literal["auto", "white_sketch", "silhouette", "pixel_rules", "mechanism_diagram"] = "auto"
     themeMode: Literal["dark", "light"] | None = None
     ipPack: Literal["neutral", "xuanqi", "huicewolf", "ayin"] = "neutral"
+    visualFamily: Literal["control", "anxiety", "people_pleasing", "evidence", "awakening", "hidden_path", "trap_detection"] | None = None
+    productionPack: dict[str, Any] | None = None
     exportVideo: bool = True
     exportTransparentVideo: bool = False
     videoFps: int = Field(default=12, ge=6, le=30)
@@ -194,13 +197,16 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
     else:
         items, scenes = _subtitle_items(project), {}
         bind = False if body.bindToProject is None else bind
+    if provider_id == "code_visual_svg" and isinstance(body, CodeVisualRenderBody) and body.visualFamily:
+        for item in items:
+            item.semantic.metadata = {**dict(item.semantic.metadata), "visualFamily": body.visualFamily}
     source = VisualAssetSource(mode="inline_segments", segments=items)
     request = VisualAssetRenderRequest(
         projectId=project_id,
         source=source,
         routing=body.routing,
         exports=ExportOptions(svg=body.exportSvg, png=body.exportPng, manifest=True, contactSheet=body.generateContactSheet, generationReport=True),
-        renderer=RenderConfig(provider=provider_id, providerVersion="0.5.0" if provider_id == "code_visual_svg" else "0.1.0", providerOptions=({"rendererId": body.rendererId, "themeMode": body.themeMode, "ipPack": body.ipPack} if provider_id == "code_visual_svg" else {})),
+        renderer=RenderConfig(provider=provider_id, providerVersion="0.5.0" if provider_id == "code_visual_svg" else "0.1.0", providerOptions=({"rendererId": body.rendererId, "themeMode": body.themeMode, "ipPack": body.ipPack, "visualFamily": body.visualFamily} if provider_id == "code_visual_svg" else {})),
         behavior=GenerationBehavior(existingOutputPolicy="skip_unchanged", protectManualEdits=True, replaceManualEdits=body.replaceManualEdits, segmentId=single_scene_id),
     )
     run_hash = hash_payload({"projectId": request.projectId, "source": request.source.model_dump(mode="python"), "renderer": request.renderer.model_dump(mode="python"), "exports": request.exports.model_dump(mode="python")})
@@ -292,6 +298,10 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
                     "contentSha256": content_hash,
                     "motionPlan": item.motionHint.get("motionPlan") if item.motionHint else None,
                     "motionLayerIds": item.motionHint.get("layerIds") if item.motionHint else None,
+                    "rendererId": body.rendererId if provider_id == "code_visual_svg" and isinstance(body, CodeVisualRenderBody) else None,
+                    "themeMode": body.themeMode if provider_id == "code_visual_svg" and isinstance(body, CodeVisualRenderBody) else None,
+                    "presentationMode": body.presentationMode if provider_id == "code_visual_svg" and isinstance(body, CodeVisualRenderBody) else "main",
+                    "productionPack": deepcopy(body.productionPack) if provider_id == "code_visual_svg" and isinstance(body, CodeVisualRenderBody) and body.productionPack else None,
                     "manualOverride": False,
                     "transform": {"x": 0.5, "y": 0.46, "scale": 0.9, "rotation": 0, "fit": "contain"},
                 },
@@ -378,7 +388,6 @@ def _run(project_id: str, body: StickmanRenderBody, single_scene_id: str | None 
         "warnings": result.warnings,
         "errors": [error.model_dump(mode="json") for error in result.errors],
     }
-
 
 @router.post("/render")
 def render_stickman_assets(project_id: str, body: StickmanRenderBody):
