@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from agent.lab_runner.recipe_loader import RecipeValidationError, load_recipe_by_id
 from agent.lab_runner.tool_registry import TOOL_SPECS
+from .production_packs import (PACK_EXPORT_FORMAT, PACK_EXPORT_VERSION, ProductionPackCompiler, ProductionPackError, builtin_packs, new_eval_run_id, render_eval_artifact)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = 1
@@ -47,8 +48,11 @@ class DirectorStudioRegistry:
         self.skills_root = self.root / "skills"
         self.packs_root = self.root / "packs"
         self.recipes_root = Path(recipes_root or (REPO_ROOT / "agent" / "recipes"))
+        self.eval_root = self.root / "evals"
+        self.compiler = ProductionPackCompiler()
         self.skills_root.mkdir(parents=True, exist_ok=True)
         self.packs_root.mkdir(parents=True, exist_ok=True)
+        self.eval_root.mkdir(parents=True, exist_ok=True)
         self._ensure_seed_skill()
 
     # ---- Skills ---------------------------------------------------------
@@ -173,92 +177,114 @@ class DirectorStudioRegistry:
 
     # ---- Packs ----------------------------------------------------------
     def list_packs(self) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
+        """List installed private packs plus immutable first-party Packs."""
+        rows: dict[str, dict[str, Any]] = {pack_id: deepcopy(pack) for pack_id, pack in builtin_packs().items()}
         for path in sorted(self.packs_root.glob("*.json")):
-            pack = self._read(path, default=None)
-            if isinstance(pack, dict):
-                rows.append(deepcopy(pack))
-        return sorted(rows, key=lambda item: item.get("updatedAt", ""), reverse=True)
+            raw = self._read(path, default=None)
+            if not isinstance(raw, dict):
+                continue
+            try:
+                pack, migration_warnings = self.compiler.normalize(raw)
+            except ProductionPackError:
+                continue
+            if migration_warnings:
+                pack.setdefault("migration", {})["warnings"] = migration_warnings
+            rows[pack["packId"]] = pack
+        return sorted(rows.values(), key=lambda item: (item.get("source", {}).get("type") != "built_in", item.get("updatedAt", ""), item.get("name", "")), reverse=True)
 
     def get_pack(self, pack_id: str) -> dict[str, Any]:
-        pack = self._read(self.packs_root / f"{pack_id}.json", default=None)
-        if not isinstance(pack, dict):
+        builtin = builtin_packs().get(pack_id)
+        raw = self._read(self.packs_root / f"{pack_id}.json", default=None)
+        if raw is None and builtin is None:
             raise KeyError("pack_not_found")
+        source = raw if isinstance(raw, dict) else builtin
+        try:
+            pack, migration_warnings = self.compiler.normalize(source or {})
+        except ProductionPackError as exc:
+            raise StudioValidationError(str(exc)) from exc
+        if migration_warnings:
+            pack.setdefault("migration", {})["warnings"] = migration_warnings
         return deepcopy(pack)
 
     def save_pack(self, payload: dict[str, Any], *, imported: bool = False) -> dict[str, Any]:
         now = _now()
-        pack_id = str(payload.get("packId") or f"pack_{_slug(str(payload.get('name') or 'director-pack'), 'director-pack')}_{uuid4().hex[:6]}")
-        existing = self._read(self.packs_root / f"{pack_id}.json", default={})
-        pack = {
-            "schemaVersion": SCHEMA_VERSION,
-            "packId": pack_id,
-            "version": int(payload.get("version") or (int(existing.get("version") or 0) + 1) or 1),
-            "name": str(payload.get("name") or existing.get("name") or "未命名导演包").strip()[:120],
-            "description": str(payload.get("description") or existing.get("description") or "").strip()[:800],
-            "recipeId": str(payload.get("recipeId") or existing.get("recipeId") or DEFAULT_RECIPE_ID),
-            "skillPins": self._normalize_skill_pins(payload.get("skillPins") or existing.get("skillPins") or []),
-            "style": self._normalize_style(payload.get("style") or existing.get("style") or {}),
-            "templates": [str(item) for item in (payload.get("templates") or existing.get("templates") or [])][:20],
-            "capabilityIds": [str(item) for item in (payload.get("capabilityIds") or existing.get("capabilityIds") or [])][:30],
-            "status": "installed",
-            "createdAt": existing.get("createdAt") or now,
-            "updatedAt": now,
-            "imported": bool(imported or existing.get("imported")),
-        }
-        checked = self.validate_pack_manifest(pack)
+        requested_id = str(payload.get("packId") or "").strip()
+        pack_id = requested_id or f"pack_{_slug(str(payload.get('name') or 'production-pack'), 'production-pack')}_{uuid4().hex[:6]}"
+        existing = self._read(self.packs_root / f"{pack_id}.json", default=None)
+        base = deepcopy(existing) if isinstance(existing, dict) else deepcopy(builtin_packs().get(pack_id) or {})
+        candidate = {**base, **deepcopy(payload), "packId": pack_id, "schemaVersion": 2}
+        if not candidate.get("createdAt"):
+            candidate["createdAt"] = now
+        candidate["updatedAt"] = now
+        candidate["imported"] = bool(imported or candidate.get("imported"))
+        try:
+            pack, migration_warnings = self.compiler.normalize(candidate)
+        except ProductionPackError as exc:
+            raise StudioValidationError(str(exc)) from exc
+        if migration_warnings:
+            pack.setdefault("migration", {})["warnings"] = migration_warnings
+        checked = self.validate_pack_manifest(pack, require_eval_cases=False)
         if not checked["ok"]:
-            raise StudioValidationError("；".join(checked["errors"]))
+            raise StudioValidationError("；".join(item["message"] for item in checked["errors"]))
         self._write(self.packs_root / f"{pack_id}.json", pack)
         return deepcopy(pack)
 
-    def validate_pack_manifest(self, pack: dict[str, Any]) -> dict[str, Any]:
-        errors: list[str] = []
-        if not str(pack.get("name") or "").strip():
-            errors.append("Director Pack 名称不能为空。")
+    def validate_pack_manifest(self, pack: dict[str, Any], *, require_eval_cases: bool = False) -> dict[str, Any]:
+        errors: list[dict[str, Any]] = []
         recipe_id = str(pack.get("recipeId") or DEFAULT_RECIPE_ID)
         try:
             load_recipe_by_id(recipe_id, self.recipes_root)
         except RecipeValidationError:
-            errors.append(f"Recipe 不存在：{recipe_id}")
-        pins = pack.get("skillPins")
-        if not isinstance(pins, list) or not pins:
-            errors.append("Director Pack 至少固定一个已发布 Skill。")
-        else:
-            for pin in pins:
-                try:
-                    skill = self.get_skill(str(pin.get("skillId")), int(pin.get("version")))
-                    if skill.get("status") != "published":
-                        errors.append(f"Skill 未发布：{skill.get('name')}")
-                except (KeyError, TypeError, ValueError):
-                    errors.append("包含不存在的 Skill 版本。")
-        unknown = sorted(item for item in pack.get("capabilityIds", []) if item not in TOOL_SPECS)
-        if unknown:
-            errors.append(f"包含未注册能力：{', '.join(unknown)}")
-        return {"ok": not errors, "errors": errors, "manifest": deepcopy(pack)}
+            errors.append({"code": "recipe_not_found", "message": f"Recipe 不存在：{recipe_id}"})
+        checked = self.compiler.validate(
+            pack,
+            capabilities=set(TOOL_SPECS),
+            skill_lookup=lambda skill_id, version: self.get_skill(skill_id, version),
+            require_eval_cases=require_eval_cases,
+        )
+        return {
+            "ok": not errors and bool(checked["ok"]),
+            "errors": [*errors, *list(checked["errors"])],
+            "warnings": list(checked["warnings"]),
+            "manifest": deepcopy(checked["pack"] or pack),
+            "registry": checked.get("registry"),
+        }
 
     def export_pack(self, pack_id: str) -> dict[str, Any]:
         pack = self.get_pack(pack_id)
         skills = [self.get_skill(str(pin["skillId"]), int(pin["version"])) for pin in pack["skillPins"]]
-        return {"format": "videoforge-director-pack", "formatVersion": 1, "pack": pack, "skills": skills}
+        return {
+            "format": PACK_EXPORT_FORMAT,
+            "formatVersion": PACK_EXPORT_VERSION,
+            "pack": pack,
+            "skills": skills,
+            "fingerprint": pack["fingerprint"],
+        }
 
     def import_pack(self, document: dict[str, Any]) -> dict[str, Any]:
-        if document.get("format") != "videoforge-director-pack" or int(document.get("formatVersion") or 0) != 1:
-            raise StudioValidationError("不是有效的 VideoForge Director Pack 文件。")
+        source_format = str(document.get("format") or "")
+        source_version = int(document.get("formatVersion") or 0)
+        if (source_format, source_version) not in {(PACK_EXPORT_FORMAT, PACK_EXPORT_VERSION), ("videoforge-director-pack", 1)}:
+            raise StudioValidationError("不是有效的 VideoForge Production Pack 文件。")
         skills = document.get("skills")
-        pack = document.get("pack")
-        if not isinstance(skills, list) or not isinstance(pack, dict):
-            raise StudioValidationError("Director Pack 文件缺少 Skill 或 manifest。")
+        imported_pack = document.get("pack")
+        if not isinstance(skills, list) or not isinstance(imported_pack, dict):
+            raise StudioValidationError("Production Pack 文件缺少 Skill 或 manifest。")
         for skill in skills:
             if not isinstance(skill, dict):
-                raise StudioValidationError("Director Pack 内含无效 Skill。")
-            skill = deepcopy(skill)
-            skill["status"] = "published"
-            skill["updatedAt"] = _now()
-            self._write_skill(skill, current=True)
-        imported = deepcopy(pack)
-        imported.pop("packId", None)  # Avoid overwriting an existing private Pack.
-        return self.save_pack(imported, imported=True)
+                raise StudioValidationError("Production Pack 内含无效 Skill。")
+            pinned = deepcopy(skill)
+            pinned["status"] = "published"
+            pinned["updatedAt"] = _now()
+            self._write_skill(pinned, current=True)
+        candidate = deepcopy(imported_pack)
+        candidate.pop("packId", None)  # An import must never overwrite a private Pack.
+        candidate["migration"] = {
+            "sourceFormat": source_format,
+            "sourceFormatVersion": source_version,
+            "warnings": ["导入包已隔离为新的私有实例。"] if source_format != PACK_EXPORT_FORMAT else [],
+        }
+        return self.save_pack(candidate, imported=True)
 
     def uninstall_pack(self, pack_id: str) -> None:
         path = self.packs_root / f"{pack_id}.json"
@@ -271,32 +297,122 @@ class DirectorStudioRegistry:
         pack = self.get_pack(pack_id)
         checked = self.validate_pack_manifest(pack)
         if not checked["ok"]:
-            raise StudioValidationError("；".join(checked["errors"]))
+            raise StudioValidationError("；".join(item["message"] for item in checked["errors"]))
         skills = [self.get_skill(str(pin["skillId"]), int(pin["version"])) for pin in pack["skillPins"]]
-        return {"pack": pack, "skills": skills}
+        return {"pack": checked["manifest"], "skills": skills, "health": {"status": "ready" if not checked["warnings"] else "warning", "warnings": checked["warnings"], "rendererRegistry": checked.get("registry")}}
 
-    def build_scene_plan(self, subtitles: list[dict[str, Any]], skills: list[dict[str, Any]], pack: dict[str, Any] | None) -> dict[str, Any]:
+    def build_scene_plan(
+        self,
+        subtitles: list[dict[str, Any]],
+        skills: list[dict[str, Any]],
+        pack: dict[str, Any] | None,
+        *,
+        visual_scenes: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         directives = self._merged_directives(skills, pack)
-        signature = " | ".join(filter(None, [str(directives.get("visualStyle") or ""), str(directives.get("sceneRule") or "")]))[:220]
-        scenes: list[dict[str, Any]] = []
-        for index, subtitle in enumerate(subtitles[:80], start=1):
-            text = str(subtitle.get("text") or "").strip()
-            if not text:
-                continue
-            scene_id = str(subtitle.get("id") or f"scene_{index:03d}")
-            scenes.append({
-                "sceneId": scene_id,
-                "start": float(subtitle.get("start") or 0),
-                "end": float(subtitle.get("end") or 0),
-                "text": text,
-                "direction": self._scene_direction(text, directives),
-                "visualStyle": directives.get("visualStyle") or "清晰的信息画面",
-                "assetStrategy": directives.get("assetStrategy") or "优先复用已有素材",
-            })
-        return {"version": 1, "packId": (pack or {}).get("packId"), "styleSignature": signature, "directives": directives, "scenes": scenes}
+        source_scenes: list[dict[str, Any]] = []
+        if visual_scenes:
+            subtitle_map = {str(item.get("id")): item for item in subtitles if isinstance(item, dict)}
+            for index, visual_scene in enumerate(visual_scenes, start=1):
+                ids = [str(item) for item in visual_scene.get("subtitleIds") or []]
+                selected = [subtitle_map[item] for item in ids if item in subtitle_map]
+                source_scenes.append({
+                    "sceneId": str(visual_scene.get("id") or f"scene_{index:03d}"),
+                    "start": float(selected[0].get("start") if selected else visual_scene.get("start") or 0),
+                    "end": float(selected[-1].get("end") if selected else visual_scene.get("end") or 0),
+                    "text": "".join(str(item.get("text") or "") for item in selected) or str(visual_scene.get("summary") or ""),
+                    "direction": self._scene_direction(str(visual_scene.get("summary") or ""), directives),
+                    "metadata": deepcopy(visual_scene.get("metadata") or {}),
+                    "blockType": visual_scene.get("blockType"),
+                })
+        else:
+            for index, subtitle in enumerate(subtitles[:80], start=1):
+                text = str(subtitle.get("text") or "").strip()
+                if not text:
+                    continue
+                source_scenes.append({
+                    "sceneId": str(subtitle.get("id") or f"scene_{index:03d}"),
+                    "start": float(subtitle.get("start") or 0),
+                    "end": float(subtitle.get("end") or 0),
+                    "text": text,
+                    "direction": self._scene_direction(text, directives),
+                    "metadata": deepcopy(subtitle.get("metadata") or {}),
+                })
+        if pack:
+            compiled = self.compiler.compile(
+                pack,
+                source_scenes,
+                capabilities=set(TOOL_SPECS),
+                skill_lookup=lambda skill_id, version: self.get_skill(skill_id, version),
+            )
+            scene_plan = compiled["scenePlan"]
+            scene_plan["directives"] = directives
+            scene_plan["styleSignature"] = " | ".join(filter(None, [str(directives.get("visualStyle") or ""), str(directives.get("sceneRule") or "")]))[:220]
+            scene_plan["warnings"] = compiled["warnings"]
+            return scene_plan
+        return {"version": 1, "packId": None, "styleSignature": " | ".join(filter(None, [str(directives.get("visualStyle") or ""), str(directives.get("sceneRule") or "")]))[:220], "directives": directives, "scenes": source_scenes}
 
     def capabilities(self) -> list[dict[str, Any]]:
         return [{"id": name, "risk": spec.risk, "approvalPolicy": spec.requiredPolicy, "produces": spec.produces} for name, spec in sorted(TOOL_SPECS.items())]
+
+    def renderer_registry(self) -> dict[str, Any]:
+        return self.compiler.registry_loader()
+
+    def migration_preview(self, pack_id: str) -> dict[str, Any]:
+        raw = self._read(self.packs_root / f"{pack_id}.json", default=None)
+        if raw is None:
+            raw = builtin_packs().get(pack_id)
+        if not isinstance(raw, dict):
+            raise KeyError("pack_not_found")
+        pack, warnings = self.compiler.normalize(raw)
+        return {"pack": pack, "warnings": warnings, "willPersistOnSave": bool(warnings)}
+
+    def compile_pack(self, pack_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        resolved = self.resolve_pack(pack_id)
+        subtitles = payload.get("subtitles") if isinstance(payload.get("subtitles"), list) else []
+        visual_scenes = payload.get("visualScenes") if isinstance(payload.get("visualScenes"), list) else None
+        plan = self.build_scene_plan(subtitles, resolved["skills"], resolved["pack"], visual_scenes=visual_scenes)
+        return {"pack": resolved["pack"], "packFingerprint": resolved["pack"]["fingerprint"], "scenePlan": plan, "warnings": [*resolved["health"]["warnings"], *list(plan.get("warnings") or [])], "errors": []}
+
+    def run_pack_eval(self, pack_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        resolved = self.resolve_pack(pack_id)
+        checked = self.validate_pack_manifest(resolved["pack"], require_eval_cases=True)
+        if not checked["ok"]:
+            raise StudioValidationError("；".join(item["message"] for item in checked["errors"]))
+        cases = list(resolved["pack"].get("evalCases") or [])
+        selected_case_id = str(payload.get("caseId") or "").strip()
+        if selected_case_id:
+            cases = [item for item in cases if str(item.get("caseId")) == selected_case_id]
+        if not cases:
+            raise StudioValidationError("找不到请求的 Eval Case。")
+        run_id = new_eval_run_id()
+        run_root = self.eval_root / run_id
+        run_root.mkdir(parents=True, exist_ok=False)
+        result: dict[str, Any] = {"runId": run_id, "packId": resolved["pack"]["packId"], "packVersion": resolved["pack"]["version"], "packFingerprint": resolved["pack"]["fingerprint"], "status": "running", "startedAt": _now(), "cases": [], "warnings": [], "errors": []}
+        for index, case in enumerate(cases, start=1):
+            scene = {"sceneId": f"eval_{index:03d}", "start": 0, "end": 3.2, "text": str(case.get("text") or "")}
+            try:
+                compiled = self.compiler.compile(resolved["pack"], [scene], capabilities=set(TOOL_SPECS), skill_lookup=lambda skill_id, version: self.get_skill(skill_id, version))
+                spec = compiled["scenePlan"]["scenes"][0]["visualSpec"]
+                artifact = render_eval_artifact(spec, scene, run_root / str(case.get("caseId") or f"case_{index:03d}"))
+                row = {"case": deepcopy(case), "visualSpec": spec, "artifact": artifact, "warnings": artifact.get("warnings") or []}
+                result["cases"].append(row)
+                result["warnings"].extend(row["warnings"])
+            except Exception as exc:
+                result["errors"].append({"code": "eval_renderer_failed", "message": str(exc), "recoverable": True, "details": {"caseId": case.get("caseId")}})
+        result["status"] = "succeeded" if result["cases"] and not result["errors"] else ("partial" if result["cases"] else "failed")
+        result["finishedAt"] = _now()
+        self._write(run_root / "result.json", result)
+        return deepcopy(result)
+
+    def get_pack_eval(self, pack_id: str, run_id: str) -> dict[str, Any]:
+        if Path(run_id).name != run_id or not run_id.startswith("pack_eval_"):
+            raise StudioValidationError("无效的 Eval Run ID。")
+        result = self._read(self.eval_root / run_id / "result.json", default=None)
+        if not isinstance(result, dict) or result.get("packId") != pack_id:
+            raise KeyError("pack_eval_not_found")
+        return deepcopy(result)
 
     # ---- internals ------------------------------------------------------
     def _ensure_seed_skill(self) -> None:
@@ -405,9 +521,15 @@ class DirectorStudioRegistry:
             directives = skill.get("directives")
             if isinstance(directives, dict):
                 result.update({key: str(value) for key, value in directives.items() if str(value).strip()})
-        style = (pack or {}).get("style")
+        style = (pack or {}).get("styleKit") or (pack or {}).get("style")
         if isinstance(style, dict):
-            pieces = [str(style.get(key) or "").strip() for key in ("name", "palette", "mood", "layout")]
+            if "identity" in style:
+                identity = style.get("identity") if isinstance(style.get("identity"), dict) else {}
+                palette = style.get("palette") if isinstance(style.get("palette"), dict) else {}
+                composition = style.get("composition") if isinstance(style.get("composition"), dict) else {}
+                pieces = [str(identity.get("name") or "").strip(), str(palette.get("background") or "").strip(), str(composition.get("informationHierarchy") or "").strip()]
+            else:
+                pieces = [str(style.get(key) or "").strip() for key in ("name", "palette", "mood", "layout")]
             if any(pieces):
                 result["visualStyle"] = "；".join(piece for piece in pieces if piece)
         return result
