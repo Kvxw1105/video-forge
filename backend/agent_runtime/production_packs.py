@@ -242,26 +242,33 @@ def builtin_packs() -> dict[str, dict[str, Any]]:
 def renderer_registry() -> dict[str, Any]:
     """Expose installed renderer capabilities as the sole ID authority."""
     from visual_assets.registry import PROVIDERS
+    from visual_assets.rasterizer import ResvgSvgRasterizer
+    from visual_assets.code_visual.provider import FAMILIES
     from visual_assets.code_visual.renderers import REGISTRY
 
     ffmpeg = shutil.which("ffmpeg") is not None
+    rasterizer_available = ResvgSvgRasterizer().is_available()
+    code_visual_families = tuple(FAMILIES)
     entries: list[dict[str, Any]] = []
     for provider_id, provider in sorted(PROVIDERS.items()):
         if provider_id == "code_visual_svg":
             for renderer_id in sorted(REGISTRY):
-                dependencies = [] if ffmpeg else ["ffmpeg"]
+                dependencies = [
+                    *([] if ffmpeg else ["ffmpeg"]),
+                    *([] if rasterizer_available else ["resvg-py"]),
+                ]
                 entries.append({
                     "providerId": provider_id,
                     "rendererId": renderer_id,
-                    "templateIds": [f"{renderer_id}:{family}" for family in ("control", "anxiety", "people_pleasing", "evidence", "awakening", "hidden_path", "trap_detection")],
+                    "templateIds": [f"{renderer_id}:{family}" for family in code_visual_families],
                     "supportedOutputModes": sorted(_KNOWN_OUTPUTS),
                     "supportedPresentationModes": sorted(_KNOWN_PRESENTATIONS),
                     "supportedThemeModes": sorted(_KNOWN_THEMES),
-                    "parameterSchema": {"visualFamily": {"enum": ["control", "anxiety", "people_pleasing", "evidence", "awakening", "hidden_path", "trap_detection"]}, "ipPack": {"enum": ["neutral", "xuanqi", "huicewolf", "ayin"]}, "videoFps": {"minimum": 6, "maximum": 30}},
+                    "parameterSchema": {"visualFamily": {"enum": list(code_visual_families)}, "ipPack": {"enum": ["neutral", "xuanqi", "huicewolf", "ayin"]}, "videoFps": {"minimum": 6, "maximum": 30}},
                     "costClass": "local_free",
                     "requiresNetwork": False,
                     "requiresApproval": False,
-                    "availability": "available" if ffmpeg else "degraded",
+                    "availability": "available" if not dependencies else "degraded",
                     "missingDependencies": dependencies,
                     "providerVersion": getattr(provider, "provider_version", "unknown"),
                 })
