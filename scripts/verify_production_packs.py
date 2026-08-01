@@ -52,9 +52,10 @@ def main() -> None:
     legacy, warnings = migrate_v1_pack({
         "schemaVersion": 1, "packId": "legacy-documentary", "name": "旧版导演包", "recipeId": "structured-knowledge-video",
         "skillPins": [{"skillId": "subtitle_scene_director", "version": 1}], "style": {"name": "纪录片", "palette": "暖棕"},
-        "templates": ["mechanism_diagram"], "capabilityIds": list(CAPABILITIES),
+        "templates": ["mechanism_diagram"], "capabilityIds": list(CAPABILITIES), "migration": {"sourceFormat": "videoforge-director-pack", "warnings": ["原始导入来源保留"]},
     })
     assert legacy["schemaVersion"] == 2 and warnings
+    assert legacy["migration"]["sourceFormat"] == "videoforge-director-pack"
     assert compiler.validate(legacy, capabilities=CAPABILITIES, skill_lookup=published)["ok"]
 
     semantic_cases = {
