@@ -50,11 +50,13 @@ def test_v1_pack_normalizes_without_mutating_source() -> None:
         "templates": ["mechanism_diagram"],
         "skillPins": [{"skillId": "subtitle_scene_director", "version": 1}],
         "capabilityIds": sorted(CAPABILITIES),
+        "migration": {"sourceFormat": "videoforge-director-pack", "warnings": ["imported"]},
     }
     upgraded, warnings = migrate_v1_pack(source)
     assert source["schemaVersion"] == 1
     assert upgraded["schemaVersion"] == 2
     assert warnings and upgraded["rendererBindings"] and upgraded["sceneArchetypes"]
+    assert upgraded["migration"]["sourceFormat"] == "videoforge-director-pack"
     assert _compiler().validate(upgraded, capabilities=CAPABILITIES, skill_lookup=_published)["ok"]
 
 
