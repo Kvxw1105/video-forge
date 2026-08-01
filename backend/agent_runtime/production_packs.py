@@ -313,6 +313,8 @@ def migrate_v1_pack(pack: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     template_values = [str(item) for item in source.get("templates") or [] if str(item).strip()]
     renderer = next((item for item in template_values if item in {"white_sketch", "silhouette", "pixel_rules", "mechanism_diagram"}), "mechanism_diagram")
     binding_id = "legacy-default"
+    previous_migration = source.get("migration") if isinstance(source.get("migration"), dict) else {}
+    migration_warnings = [*list(previous_migration.get("warnings") or []), "已在内存中迁移 V1 Director Pack；主动保存后才会写入 V2 Manifest。"]
     legacy = {
         "schemaVersion": PACK_SCHEMA_VERSION,
         "packId": str(source.get("packId") or "legacy-pack"),
@@ -331,7 +333,7 @@ def migrate_v1_pack(pack: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         "createdAt": source.get("createdAt"),
         "updatedAt": source.get("updatedAt"),
         "imported": bool(source.get("imported")),
-        "migration": {"fromSchemaVersion": int(source.get("schemaVersion") or 1), "warnings": ["已在内存中迁移 V1 Director Pack；主动保存后才会写入 V2 Manifest。"]},
+        "migration": {**_clone(previous_migration), "fromSchemaVersion": int(source.get("schemaVersion") or 1), "warnings": migration_warnings},
     }
     return legacy, list(legacy["migration"]["warnings"])
 
