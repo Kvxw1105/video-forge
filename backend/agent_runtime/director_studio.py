@@ -6,6 +6,7 @@ Recipe/Capability contracts owned by VideoForge.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -403,10 +404,14 @@ class DirectorStudioRegistry:
             try:
                 compiled = self.compiler.compile(resolved["pack"], [scene], capabilities=set(TOOL_SPECS), skill_lookup=lambda skill_id, version: self.get_skill(skill_id, version))
                 spec = compiled["scenePlan"]["scenes"][0]["visualSpec"]
-                artifact = render_eval_artifact(spec, scene, run_root / str(case.get("caseId") or f"case_{index:03d}"))
-                row = {"case": deepcopy(case), "visualSpec": spec, "artifact": artifact, "warnings": artifact.get("warnings") or []}
+                artifact = render_eval_artifact(spec, scene, run_root / str(case.get("caseId") or f"case_{index:03d}"), ratio=str(case.get("ratio") or "9:16"))
+                checks = self._eval_checks(run_root, case, scene, spec, artifact)
+                failed_checks = [check["name"] for check in checks if not check["ok"]]
+                row = {"case": deepcopy(case), "visualSpec": spec, "artifact": artifact, "checks": checks, "warnings": artifact.get("warnings") or []}
                 result["cases"].append(row)
                 result["warnings"].extend(row["warnings"])
+                if failed_checks:
+                    result["errors"].append({"code": "eval_assertion_failed", "message": f"Eval artifact checks failed: {', '.join(failed_checks)}", "recoverable": True, "details": {"caseId": case.get("caseId"), "failedChecks": failed_checks}})
             except Exception as exc:
                 result["errors"].append({"code": "eval_renderer_failed", "message": str(exc), "recoverable": True, "details": {"caseId": case.get("caseId")}})
         result["status"] = "succeeded" if result["cases"] and not result["errors"] else ("partial" if result["cases"] else "failed")
@@ -421,6 +426,37 @@ class DirectorStudioRegistry:
         if not isinstance(result, dict) or result.get("packId") != pack_id:
             raise KeyError("pack_eval_not_found")
         return deepcopy(result)
+
+    @staticmethod
+    def _eval_checks(run_root: Path, case: dict[str, Any], scene: dict[str, Any], spec: dict[str, Any], artifact: dict[str, Any]) -> list[dict[str, Any]]:
+        """Evidence checks recorded with every Eval, never a bare pass boolean."""
+        artifact_path = Path(str(artifact.get("artifactPath") or ""))
+        frame_path = Path(str(artifact.get("representativeFramePath") or ""))
+
+        def inside(path: Path) -> bool:
+            try:
+                path.resolve().relative_to(run_root.resolve())
+                return True
+            except (ValueError, OSError):
+                return False
+
+        artifact_bytes = artifact_path.read_bytes() if artifact_path.is_file() else b""
+        frame_bytes = frame_path.read_bytes() if frame_path.is_file() else b""
+        frame_text = frame_bytes.decode("utf-8", errors="ignore").lower()
+        expected_ratio = str(case.get("ratio") or "9:16")
+        return [
+            {"name": "artifact_in_isolated_run", "ok": inside(artifact_path)},
+            {"name": "artifact_exists_nonzero", "ok": bool(artifact_bytes) and int(artifact.get("byteSize") or 0) == len(artifact_bytes)},
+            {"name": "artifact_sha_matches", "ok": bool(artifact_bytes) and hashlib.sha256(artifact_bytes).hexdigest() == artifact.get("artifactSha256")},
+            {"name": "representative_frame_exists_nonblank", "ok": len(frame_bytes) > 80 and "<svg" in frame_text and any(token in frame_text for token in ("<path", "<rect", "<circle", "<line", "<polygon"))},
+            {"name": "representative_frame_sha_matches", "ok": bool(frame_bytes) and hashlib.sha256(frame_bytes).hexdigest() == artifact.get("representativeFrameSha256")},
+            {"name": "duration_valid", "ok": float(artifact.get("duration") or 0) > 0},
+            {"name": "scene_artifact_mapping", "ok": artifact.get("sceneId") == spec.get("sceneId") == scene.get("sceneId")},
+            {"name": "renderer_matches_visual_spec", "ok": artifact.get("rendererId") == spec.get("rendererId")},
+            {"name": "pack_fingerprint_matches", "ok": artifact.get("packFingerprint") == spec.get("packFingerprint")},
+            {"name": "ratio_applied", "ok": (artifact.get("canvas") or {}).get("ratio") == expected_ratio},
+            {"name": "source_text_present", "ok": bool(str(scene.get("text") or "").strip())},
+        ]
 
     # ---- internals ------------------------------------------------------
     def _ensure_seed_skill(self) -> None:
