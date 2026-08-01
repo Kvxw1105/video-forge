@@ -57,7 +57,7 @@ def _canonical(value: Any) -> str:
 
 def pack_fingerprint(pack: dict[str, Any]) -> str:
     """Fingerprint only normalized declarative pack state, never timestamps."""
-    ignored = {"createdAt", "updatedAt", "imported", "migration", "health", "lastEval", "source"}
+    ignored = {"createdAt", "updatedAt", "imported", "migration", "health", "lastEval", "source", "fingerprint"}
     stable = {key: value for key, value in pack.items() if key not in ignored}
     return hashlib.sha256(_canonical(stable).encode("utf-8")).hexdigest()
 
