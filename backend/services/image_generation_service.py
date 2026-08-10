@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import binascii
+import ipaddress
 import json
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from urllib.parse import urlparse
 
-from models.image_generation import ImageGenerationBatch
+import httpx
+
+from config import CONFIG_DIR
+from models.image_generation import ImageGenerationBatch, ImageProviderSettings
 from services.project_service import _project_dir, get_project, update_project
 from shared.visual_scene import visual_source_hash
 
@@ -18,6 +26,9 @@ class ImageGenerationError(RuntimeError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+_SETTINGS_FILE = CONFIG_DIR / "ai_image_provider.json"
 
 
 def _now() -> str:
@@ -57,6 +68,82 @@ def _write_batch(batch: dict) -> dict:
     return validated.model_dump(mode="json")
 
 
+def load_image_provider_settings() -> ImageProviderSettings:
+    if not _SETTINGS_FILE.is_file():
+        return ImageProviderSettings()
+    try:
+        return ImageProviderSettings.model_validate_json(_SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ImageProviderSettings()
+
+
+def save_image_provider_settings(settings: ImageProviderSettings) -> None:
+    _SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _SETTINGS_FILE.with_suffix(f".json.tmp-{uuid4().hex}")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(settings.model_dump_json(indent=2))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, _SETTINGS_FILE)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def public_image_provider_settings(settings: ImageProviderSettings) -> dict:
+    data = settings.model_dump(mode="json")
+    data["apiKeyConfigured"] = bool(data["apiKey"])
+    data["apiKey"] = ""
+    return data
+
+
+def update_image_provider_settings(payload: dict) -> dict:
+    current = load_image_provider_settings()
+    allowed = set(ImageProviderSettings.model_fields)
+    updates = {key: value for key, value in payload.items() if key in allowed}
+    if not str(updates.get("apiKey") or "").strip():
+        updates.pop("apiKey", None)
+    settings = ImageProviderSettings.model_validate({**current.model_dump(), **updates})
+    save_image_provider_settings(settings)
+    return public_image_provider_settings(settings)
+
+
+def _provider_headers(settings: ImageProviderSettings) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {settings.apiKey}",
+        "Content-Type": "application/json",
+    }
+
+
+def _provider_url(settings: ImageProviderSettings, suffix: str) -> str:
+    base = settings.baseUrl.strip().rstrip("/")
+    if not base:
+        raise ImageGenerationError("provider_not_configured", "AI image provider Base URL is missing")
+    return f"{base}/{suffix.lstrip('/')}"
+
+
+def fetch_image_provider_models(settings: ImageProviderSettings | None = None) -> dict:
+    settings = settings or load_image_provider_settings()
+    if not settings.apiKey:
+        raise ImageGenerationError("provider_not_configured", "AI image provider API Key is missing")
+    try:
+        response = httpx.get(
+            _provider_url(settings, "models"),
+            headers=_provider_headers(settings),
+            timeout=settings.timeoutSeconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ImageGenerationError("provider_connection_failed", f"AI image provider connection failed: {exc}") from exc
+    models = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        models = []
+    return {"ok": True, "models": models, "message": f"Discovered {len(models)} model(s)"}
+
+
 def get_batch(project_id: str, batch_id: str) -> dict:
     target = _batch_path(project_id, batch_id)
     if not target.is_file():
@@ -92,6 +179,11 @@ def _ensure_current(batch: dict):
             "visual_plan_stale", "The image generation batch is stale for the current VisualPlan"
         )
     return project, plan
+
+
+def ensure_batch_current(batch: dict) -> dict:
+    _ensure_current(batch)
+    return batch
 
 
 def _aggregate_status(batch: dict) -> str:
@@ -142,23 +234,21 @@ def _read_image_source(source: Path | bytes) -> bytes:
     return data
 
 
-def upload_agent_candidate(
-    project_id: str,
-    batch_id: str,
-    scene_id: str,
-    input_hash: str,
-    source: Path | bytes,
+def _candidate_from_bytes(
+    batch: dict,
+    item: dict,
+    data: bytes,
     *,
     revised_prompt: str = "",
 ) -> dict:
-    batch = get_batch(project_id, batch_id)
-    _ensure_current(batch)
-    if batch["channel"] != "agent":
-        raise ImageGenerationError("channel_mismatch", "Agent upload requires an Agent image batch")
-    item = _find_item(batch, scene_id)
-    if input_hash != item["inputHash"]:
-        raise ImageGenerationError("input_stale", f"Agent image input is stale for Scene {scene_id}")
-    data = _read_image_source(source)
+    if not data:
+        raise ImageGenerationError("image_empty", "Generated image is empty")
+    settings = load_image_provider_settings()
+    if len(data) > settings.maxDownloadBytes:
+        raise ImageGenerationError(
+            "image_too_large",
+            f"Generated image exceeds the {settings.maxDownloadBytes} byte limit",
+        )
     suffix, mime_type = _image_type(data)
     content_hash = hashlib.sha256(data).hexdigest()
     existing = next(
@@ -167,9 +257,14 @@ def upload_agent_candidate(
     )
     if existing:
         return existing
-    candidate_id = f"candidate_{scene_id}_{content_hash[:12]}"
-    relative = Path("image-generation") / "candidates" / batch_id / f"{candidate_id}{suffix}"
-    target = _project_dir(project_id) / relative
+    candidate_id = f"candidate_{item['sceneId']}_{content_hash[:12]}"
+    relative = (
+        Path("image-generation")
+        / "candidates"
+        / batch["batchId"]
+        / f"{candidate_id}{suffix}"
+    )
+    target = _project_dir(batch["projectId"]) / relative
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(f"{target.suffix}.tmp-{uuid4().hex}")
     try:
@@ -188,11 +283,181 @@ def upload_agent_candidate(
         "createdAt": _now(),
     }
     item["candidates"].append(candidate)
+    return candidate
+
+
+def upload_agent_candidate(
+    project_id: str,
+    batch_id: str,
+    scene_id: str,
+    input_hash: str,
+    source: Path | bytes,
+    *,
+    revised_prompt: str = "",
+) -> dict:
+    batch = get_batch(project_id, batch_id)
+    _ensure_current(batch)
+    if batch["channel"] != "agent":
+        raise ImageGenerationError("channel_mismatch", "Agent upload requires an Agent image batch")
+    item = _find_item(batch, scene_id)
+    if input_hash != item["inputHash"]:
+        raise ImageGenerationError("input_stale", f"Agent image input is stale for Scene {scene_id}")
+    data = _read_image_source(source)
+    candidate = _candidate_from_bytes(batch, item, data, revised_prompt=revised_prompt)
     item["status"] = "generated"
     item["errorCode"] = ""
     item["error"] = ""
     _save_changed(batch)
     return candidate
+
+
+def _safe_remote_image_url(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ImageGenerationError("provider_image_url_invalid", "Provider returned an invalid image URL")
+    host = parsed.hostname.lower()
+    if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
+        raise ImageGenerationError("provider_image_url_blocked", "Provider returned a blocked local image URL")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address and (address.is_private or address.is_loopback or address.is_link_local or address.is_reserved):
+        raise ImageGenerationError("provider_image_url_blocked", "Provider returned a blocked private image URL")
+    return value
+
+
+def _download_provider_image(url: str, settings: ImageProviderSettings) -> bytes:
+    try:
+        response = httpx.get(
+            _safe_remote_image_url(url),
+            timeout=settings.timeoutSeconds,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ImageGenerationError("provider_image_download_failed", f"Unable to download provider image: {exc}") from exc
+    content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].lower()
+    if content_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise ImageGenerationError("provider_image_type_invalid", "Provider URL did not return a supported image")
+    data = response.content
+    if len(data) > settings.maxDownloadBytes:
+        raise ImageGenerationError("image_too_large", "Provider image exceeds the configured download limit")
+    _image_type(data)
+    return data
+
+
+def _generate_provider_images(
+    settings: ImageProviderSettings,
+    item: dict,
+    model: str,
+    candidate_count: int,
+) -> list[tuple[bytes, str]]:
+    prompt = item["finalPrompt"]
+    if item.get("negativePrompt"):
+        prompt = f"{prompt}\nAvoid: {item['negativePrompt']}"
+    try:
+        response = httpx.post(
+            _provider_url(settings, "images/generations"),
+            headers=_provider_headers(settings),
+            json={
+                "model": model,
+                "prompt": prompt,
+                "n": candidate_count,
+                "size": item["size"],
+                "response_format": "b64_json",
+            },
+            timeout=settings.timeoutSeconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ImageGenerationError("provider_generation_failed", f"AI image provider failed: {exc}") from exc
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise ImageGenerationError("provider_response_invalid", "AI image provider returned no images")
+    generated = []
+    for row in rows[:candidate_count]:
+        if not isinstance(row, dict):
+            continue
+        revised = str(row.get("revised_prompt") or "")
+        if row.get("b64_json"):
+            try:
+                data = base64.b64decode(str(row["b64_json"]), validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise ImageGenerationError("provider_response_invalid", "Provider returned invalid base64 image data") from exc
+        elif row.get("url"):
+            data = _download_provider_image(str(row["url"]), settings)
+        else:
+            continue
+        _image_type(data)
+        generated.append((data, revised))
+    if not generated:
+        raise ImageGenerationError("provider_response_invalid", "AI image provider returned no usable images")
+    return generated
+
+
+def run_builtin_batch(project_id: str, batch_id: str, update=None) -> dict:
+    batch = get_batch(project_id, batch_id)
+    _ensure_current(batch)
+    if batch["channel"] != "builtin":
+        raise ImageGenerationError("channel_mismatch", "Only a built-in image batch can call the configured provider")
+    settings = load_image_provider_settings()
+    if not settings.enabled or not settings.apiKey or not settings.baseUrl:
+        raise ImageGenerationError("provider_not_configured", "AI image provider is not fully configured")
+    model = batch.get("model") or settings.model
+    if not model:
+        raise ImageGenerationError("provider_not_configured", "AI image provider model is missing")
+    pending = [item for item in batch["items"] if item["status"] in {"pending", "failed"}]
+    if not pending:
+        return batch
+    for item in pending:
+        item["status"] = "generating"
+        item["attempts"] = int(item.get("attempts") or 0) + 1
+        item["errorCode"] = ""
+        item["error"] = ""
+    batch["status"] = "running"
+    batch["updatedAt"] = _now()
+    _write_batch(batch)
+    completed = 0
+    with ThreadPoolExecutor(max_workers=settings.maxConcurrency) as executor:
+        futures = {
+            executor.submit(
+                _generate_provider_images,
+                settings,
+                item,
+                model,
+                int(batch["candidateCount"]),
+            ): item
+            for item in pending
+        }
+        for future in as_completed(futures):
+            item = futures[future]
+            try:
+                for data, revised_prompt in future.result():
+                    _candidate_from_bytes(batch, item, data, revised_prompt=revised_prompt)
+                item["status"] = "generated"
+            except Exception as exc:
+                item["status"] = "failed"
+                item["errorCode"] = getattr(exc, "code", "provider_generation_failed")
+                item["error"] = str(exc)[:1000]
+            completed += 1
+            _save_changed(batch)
+            if update:
+                update(
+                    completed / len(pending) * 100,
+                    "generating_images",
+                    f"Generated {completed}/{len(pending)} Scene request(s)",
+                )
+    saved = get_batch(project_id, batch_id)
+    selections = [
+        {"sceneId": item["sceneId"], "candidateId": item["candidates"][0]["candidateId"]}
+        for item in saved["items"]
+        if item["status"] == "generated" and item["candidates"]
+    ]
+    if saved.get("autoApprove") and selections:
+        return approve_candidates(project_id, batch_id, selections)["batch"]
+    return saved
 
 
 def record_item_failure(
@@ -360,6 +625,11 @@ def create_batch(
         raise ImageGenerationError("invalid_channel", f"Unsupported image generation channel: {channel}")
     if not 1 <= int(candidate_count) <= 4:
         raise ImageGenerationError("invalid_candidate_count", "candidate_count must be between 1 and 4")
+    if channel == "builtin":
+        provider_settings = load_image_provider_settings()
+        provider_id = provider_id or provider_settings.providerId
+        model = model or provider_settings.model
+        size = size or _default_size(project.canvas.ratio)
 
     selected = set(scene_ids or [])
     unknown = selected - {scene.id for scene in plan.scenes}
