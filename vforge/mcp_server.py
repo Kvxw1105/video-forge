@@ -266,6 +266,48 @@ def continue_agent_video_factory(batch_id: str) -> dict: return _to_json(client.
 
 
 @mcp.tool()
+def create_scene_image_batch(pid: str, data: dict) -> dict:
+    """Create an image batch from the project's current timed VisualPlan. Use channel='agent' when this Agent will generate the images."""
+    return _to_json(client.create_image_generation_batch(pid, data))
+
+
+@mcp.tool()
+def get_scene_image_batch(pid: str, batch_id: str) -> dict:
+    """Read durable Scene image generation state without changing it."""
+    return _to_json(client.get_image_generation_batch(pid, batch_id))
+
+
+@mcp.tool()
+def get_pending_scene_image_requests(pid: str, batch_id: str) -> dict:
+    """Read pending Scene requests. Generate exactly one image per item from finalPrompt, preserve sceneId and inputHash, then call upload_scene_image_candidate."""
+    return _to_json(client.get_pending_image_generation_requests(pid, batch_id))
+
+
+@mcp.tool()
+def upload_scene_image_candidate(
+    pid: str, batch_id: str, scene_id: str, input_hash: str, file_path: str
+) -> dict:
+    """Upload one locally generated PNG/JPEG/WebP for exactly one Scene. input_hash must be copied unchanged from the pending request or the backend rejects the stale image."""
+    return _to_json(
+        client.upload_image_generation_candidate(
+            pid, batch_id, scene_id, input_hash, file_path
+        )
+    )
+
+
+@mcp.tool()
+def approve_scene_image_candidates(pid: str, batch_id: str, selections: list[dict]) -> dict:
+    """Approve explicit {sceneId,candidateId} selections and bind them to the timed VisualPlan Scenes."""
+    return _to_json(client.approve_image_generation_candidates(pid, batch_id, selections))
+
+
+@mcp.tool()
+def retry_scene_image_batch(pid: str, batch_id: str) -> dict:
+    """Reset only failed Scene items; generated candidates and bound Scenes are preserved."""
+    return _to_json(client.retry_image_generation_batch(pid, batch_id))
+
+
+@mcp.tool()
 def list_structured_projects() -> dict:
     """List only projects with Structured Content."""
     return _to_json(client.list_structured_projects())

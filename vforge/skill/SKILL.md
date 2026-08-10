@@ -74,6 +74,10 @@ metadata:
 | `jianying_status` | 剪映目录检测 |
 | `list_templates` / `save_template` | 模板管理 |
 | `get_tts_settings` / `update_tts_settings` | TTS 配置 |
+| `create_scene_image_batch` | 从当前 VisualPlan 创建 Agent 生图批次 |
+| `get_pending_scene_image_requests` | 读取带精确时间与 Prompt 的待生图 Scene |
+| `upload_scene_image_candidate` | 按 `sceneId + inputHash` 回填图片 |
+| `approve_scene_image_candidates` | 批准候选并绑定到时间轴 Scene |
 
 ### 方式 B：CLI（适合 shell 脚本和一次性调用）
 
@@ -143,6 +147,20 @@ python -m vforge run workflow.json
 5. **所有路径用绝对路径**，vforge 不解析 `~` 和相对路径
 6. **错误以 VForgeError 抛出**，status 0 = 网络不通，status 4xx/5xx = 后端业务错误
 7. **不要假设项目结构** — 先 get_project 拿到真实状态再 update
+
+### 使用 Codex/Agent 自身生图额度
+
+当用户选择 AI 生图模式时，Video Forge 后端无法直接读取 Codex 客户端的额度。Agent 应作为生图 Provider，严格执行：
+
+1. 调用 `create_scene_image_batch(pid, {"channel":"agent","providerId":"codex-imagegen"})`。
+2. 调用 `get_pending_scene_image_requests(pid, batch_id)`。
+3. 对每个 Item 使用其完整 `finalPrompt` 调用当前 Agent 的生图工具；不要合并多个 Scene，也不要改变 `sceneId` 或 `inputHash`。
+4. 将输出保存为本地 PNG、JPEG 或 WebP。
+5. 调用 `upload_scene_image_candidate(pid, batch_id, scene_id, input_hash, file_path)`。
+6. 上传全部结果后调用 `approve_scene_image_candidates`，显式传入每个 `{sceneId, candidateId}`。
+7. 回到 Factory 验证素材覆盖，再生成 Preview 与剪映草稿。
+
+如果返回 `input_stale` 或 `visual_plan_stale`，停止上传并重新创建 Batch。不要直接修改 `project.json`，不要把一个 Scene 的图片绑定到另一个 Scene。
 
 ---
 

@@ -155,6 +155,12 @@ def cmd_factory_validate(args): _print(client.factory_validate_visuals(args.batc
 def cmd_factory_resume_item(args): _print(client.factory_resume_item(args.batch_id,args.item_id,args.base))
 def cmd_factory_resume(args): _print(client.factory_resume_batch(args.batch_id,args.base))
 def cmd_factory_continue(args): _print(client.factory_continue(args.batch_id,args.base))
+def cmd_image_batch_create(args): _print(client.create_image_generation_batch(args.pid, _spec(args.data), args.base))
+def cmd_image_batch_status(args): _print(client.get_image_generation_batch(args.pid, args.batch, args.base))
+def cmd_image_batch_pending(args): _print(client.get_pending_image_generation_requests(args.pid, args.batch, args.base))
+def cmd_image_batch_upload(args): _print(client.upload_image_generation_candidate(args.pid, args.batch, args.scene, args.input_hash, args.file, args.base))
+def cmd_image_batch_approve(args): _print(client.approve_image_generation_candidates(args.pid, args.batch, _spec(args.selections), args.base))
+def cmd_image_batch_retry(args): _print(client.retry_image_generation_batch(args.pid, args.batch, args.base))
 
 
 def cmd_tts_get(args):
@@ -235,6 +241,12 @@ COMMAND_MAP = {
     "factory-resume": cmd_factory_resume, "factory-continue": cmd_factory_continue,
     "factory-plan": cmd_batch_plan, "factory-start": cmd_batch_start, "factory-status": cmd_batch_status,
     "factory-manifest": cmd_batch_manifest,
+    "image-batch-create": cmd_image_batch_create,
+    "image-batch-status": cmd_image_batch_status,
+    "image-batch-pending": cmd_image_batch_pending,
+    "image-batch-upload": cmd_image_batch_upload,
+    "image-batch-approve": cmd_image_batch_approve,
+    "image-batch-retry": cmd_image_batch_retry,
     "visual-context": cmd_visual_context, "visual-propose": cmd_visual_propose, "visual-set": cmd_visual_set,
     "visual-validate": cmd_visual_validate, "visual-pack": cmd_visual_pack, "visual-import": cmd_visual_import, "visual-compile": cmd_visual_compile,
     "tts_get": cmd_tts_get, "tts_set": cmd_tts_set,
@@ -323,6 +335,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("factory-start", "启动工厂", spec={"type": str, "required": True}); sp.add_argument("--wait", action="store_true")
     add("factory-status", "读取工厂状态", batch_id={"type": str, "required": True})
     add("factory-manifest", "读取工厂 Manifest", batch_id={"type": str, "required": True}, output={"type": str, "default": ""})
+    add("image-batch-create", "为 VisualPlan 创建 AI 生图批次", pid={"type": str, "required": True}, data={"type": str, "required": True})
+    add("image-batch-status", "读取 AI 生图批次", pid={"type": str, "required": True}, batch={"type": str, "required": True})
+    add("image-batch-pending", "读取 Agent 待生成 Scene", pid={"type": str, "required": True}, batch={"type": str, "required": True})
+    add("image-batch-upload", "回填一个 Agent 生成的 Scene 图片", pid={"type": str, "required": True}, batch={"type": str, "required": True}, scene={"type": str, "required": True}, input_hash={"type": str, "required": True}, file={"type": str, "required": True})
+    add("image-batch-approve", "批准并绑定 Scene 图片候选", pid={"type": str, "required": True}, batch={"type": str, "required": True}, selections={"type": str, "required": True})
+    add("image-batch-retry", "只重试失败的 Scene 生图项", pid={"type": str, "required": True}, batch={"type": str, "required": True})
     add("tts_get", "获取 TTS 设置")
     add("tts_set", "更新 TTS 设置（--data 是 JSON）",
         data={"type": str, "required": True})
