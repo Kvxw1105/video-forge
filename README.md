@@ -53,6 +53,7 @@ python -m pytest tests -q -p no:cacheprovider
 | **全局素材库** | 一次上传反复使用，按文件夹分组管理 |
 | **深色/浅色主题** | 电影感中世纪美学，一键切换 |
 | **AI Agent 接口** | CLI + MCP server，支持 Codex/Claude Code 自动化调用 |
+| **AI 生图 Scene Pipeline** | 文案按配音时间切 Scene，支持外接 API 或 Codex/Agent 生图回填，再生成 Preview 与剪映草稿 |
 
 ## 项目结构
 
@@ -85,6 +86,18 @@ python -m vforge render proj_xxx --output preview.mp4
 # MCP server（Claude Code / Codex）
 python -m vforge mcp
 ```
+
+### AI 生图与精确画面对齐
+
+Factory 素材配对台支持两种 AI 生图方式：Video Forge 直接调用用户配置的 OpenAI-compatible 图片接口，或让 Codex/其他 Agent 使用自身生图能力逐 Scene 回填。每个 Scene 都携带精确字幕时间与防过期 `inputHash`，批准后的图片由 canonical timeline 同步用于 Preview 和剪映草稿。
+
+```bash
+python -m vforge image-batch-create --pid proj_xxx --data '{"channel":"agent","providerId":"codex-imagegen"}'
+python -m vforge image-batch-pending --pid proj_xxx --batch image_batch_xxx
+python -m vforge image-batch-upload --pid proj_xxx --batch image_batch_xxx --scene scene_xxx --input-hash HASH --file image.png
+```
+
+完整说明见 [AI 生图 Scene Pipeline](docs/AI_IMAGE_SCENE_PIPELINE.md)。
 
 ## 技术栈
 
