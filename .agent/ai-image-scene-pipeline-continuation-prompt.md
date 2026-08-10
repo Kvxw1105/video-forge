@@ -10,16 +10,15 @@
 
 - GitHub：`https://github.com/Kvxw1105/video-forge.git`
 - Windows 主目录：`D:\A-Project\video-forge`
-- 本功能 worktree：`D:\A-Project\video-forge\.worktrees\ai-image-scene-pipeline`
-- 功能分支：`codex/ai-image-scene-pipeline`
-- 权威最新版本：先执行 `git fetch origin`，然后以 `origin/codex/ai-image-scene-pipeline` 的 HEAD 为准。
+- 功能已集成到 `main`；`codex/ai-image-scene-pipeline` 仅作为历史功能分支保留。
+- 权威最新版本：先执行 `git fetch origin`，然后以 `origin/main` 的 HEAD 为准。
 - 进入任何修改前必须运行：
 
 ```powershell
 git status --short --branch
 git log --oneline -12
 git rev-parse HEAD
-git rev-parse origin/codex/ai-image-scene-pipeline
+git rev-parse origin/main
 ```
 
 产品目标：
@@ -77,7 +76,7 @@ python -m pytest `
 
 验证证据必须以当前命令输出为准，不要沿用旧的通过数字。没有真实 Provider 凭据时，不得声称真实付费生图已验证；mock Provider、Agent 回填和 no-paid-call smoke 可以验证协议与产品链路。
 
-若发现主目录仍有未提交的 TTS 改动，不要覆盖或丢弃。先比较 feature branch、主目录和远端，再决定如何同步。完成任何新改动后，提交并推送 `codex/ai-image-scene-pipeline`，并清楚报告是否已集成和推送 `main`。
+最近一次合并态基线（2026-08-11）是后端/CLI/MCP `343 passed`，前端生产构建通过；这只是历史证据，接手时仍须重新运行上述命令。火山云 KV 音色和 Markdown 粘贴清洗也已集成到 `main`。完成任何新改动后，提交并推送 `main` 或新的 `codex/*` 功能分支，并清楚报告实际集成级别。
 
 ---
 
