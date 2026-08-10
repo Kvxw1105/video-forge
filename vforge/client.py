@@ -26,6 +26,7 @@ class VForgeError(RuntimeError):
 
 def _request(method: str, path: str, *, base: str = DEFAULT_BASE,
              json_body: Any = None, files: Optional[dict] = None,
+             form: Optional[dict] = None,
              timeout: float = 300.0) -> Any:
     url = base.rstrip("/") + path
     headers = {}
@@ -33,11 +34,16 @@ def _request(method: str, path: str, *, base: str = DEFAULT_BASE,
     if json_body is not None:
         data = json.dumps(json_body).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    if files is not None:
-        # multipart/form-data (minimal: single file per request, like upload_asset)
+    if files is not None or form is not None:
+        # Minimal multipart/form-data encoder for stdlib-only CLI/MCP use.
         boundary = "----vforgeboundary"
         body = bytearray()
-        for key, val in files.items():
+        for key, val in (form or {}).items():
+            body += f"--{boundary}\r\n".encode()
+            body += f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode()
+            body += str(val).encode("utf-8")
+            body += b"\r\n"
+        for key, val in (files or {}).items():
             body += f"--{boundary}\r\n".encode()
             if isinstance(val, tuple):
                 # (filename, bytes)
@@ -226,6 +232,57 @@ def factory_plan(spec: dict, base: str = DEFAULT_BASE) -> dict: return plan_temp
 def factory_start(spec: dict, base: str = DEFAULT_BASE) -> dict: return start_template_batch(spec,base)
 def factory_status(batch_id: str, base: str = DEFAULT_BASE) -> dict: return get_template_batch(batch_id,base)
 def factory_manifest(batch_id: str, base: str = DEFAULT_BASE) -> dict: return get_template_batch_manifest(batch_id,base)
+
+
+# Scene-timed AI image generation. Agents must use the unchanged inputHash
+# when returning an image so the backend can reject stale results.
+def create_image_generation_batch(pid: str, data: dict, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", f"/api/projects/{pid}/image-generation/batches", base=base, json_body=data)
+
+
+def get_image_generation_batch(pid: str, batch_id: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", f"/api/projects/{pid}/image-generation/batches/{batch_id}", base=base)
+
+
+def get_pending_image_generation_requests(pid: str, batch_id: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", f"/api/projects/{pid}/image-generation/batches/{batch_id}/pending", base=base)
+
+
+def upload_image_generation_candidate(
+    pid: str,
+    batch_id: str,
+    scene_id: str,
+    input_hash: str,
+    file_path: str,
+    base: str = DEFAULT_BASE,
+) -> dict:
+    return _request(
+        "POST",
+        f"/api/projects/{pid}/image-generation/batches/{batch_id}/upload",
+        base=base,
+        form={"sceneId": scene_id, "inputHash": input_hash},
+        files={"file": file_path},
+    )
+
+
+def approve_image_generation_candidates(
+    pid: str, batch_id: str, selections: list[dict], base: str = DEFAULT_BASE
+) -> dict:
+    return _request(
+        "POST",
+        f"/api/projects/{pid}/image-generation/batches/{batch_id}/approve",
+        base=base,
+        json_body={"selections": selections},
+    )
+
+
+def retry_image_generation_batch(pid: str, batch_id: str, base: str = DEFAULT_BASE) -> dict:
+    return _request(
+        "POST",
+        f"/api/projects/{pid}/image-generation/batches/{batch_id}/retry",
+        base=base,
+        json_body={},
+    )
 
 
 # ── Settings ─────────────────────────────────────────────

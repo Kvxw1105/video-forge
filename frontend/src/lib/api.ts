@@ -191,4 +191,19 @@ export const api = {
     return response.json()
   },
   unbindFactorySceneVisual: (batchId: string, itemId: string, sceneId: string, deleteProjectAsset = false) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/unbind`, { method: 'POST', body: JSON.stringify({ sceneId, deleteProjectAsset }) }),
+  getAIImageProviderSettings: () => request<any>('/settings/ai-image'),
+  updateAIImageProviderSettings: (data: any) => request<any>('/settings/ai-image', { method: 'PUT', body: JSON.stringify(data) }),
+  testAIImageProvider: (data: any) => request<any>('/settings/ai-image/test', { method: 'POST', body: JSON.stringify(data) }),
+  createImageGenerationBatch: (projectId: string, data: any) => request<any>(`/projects/${projectId}/image-generation/batches`, { method: 'POST', body: JSON.stringify(data) }),
+  getImageGenerationBatch: (projectId: string, batchId: string) => request<any>(`/projects/${projectId}/image-generation/batches/${encodeURIComponent(batchId)}`),
+  getPendingImageGenerationRequests: (projectId: string, batchId: string) => request<any>(`/projects/${projectId}/image-generation/batches/${encodeURIComponent(batchId)}/pending`),
+  runImageGenerationBatch: (projectId: string, batchId: string) => request<any>(`/projects/${projectId}/image-generation/batches/${encodeURIComponent(batchId)}/run`, { method: 'POST', body: JSON.stringify({}) }),
+  approveImageGenerationCandidates: (projectId: string, batchId: string, selections: any[]) => request<any>(`/projects/${projectId}/image-generation/batches/${encodeURIComponent(batchId)}/approve`, { method: 'POST', body: JSON.stringify({ selections }) }),
+  retryImageGenerationBatch: (projectId: string, batchId: string) => request<any>(`/projects/${projectId}/image-generation/batches/${encodeURIComponent(batchId)}/retry`, { method: 'POST', body: JSON.stringify({}) }),
+  uploadImageGenerationCandidate: async (projectId: string, batchId: string, sceneId: string, inputHash: string, file: File) => {
+    const form = new FormData(); form.append('sceneId', sceneId); form.append('inputHash', inputHash); form.append('file', file)
+    const response = await fetch(`${BASE}/projects/${projectId}/image-generation/batches/${encodeURIComponent(batchId)}/upload`, { method: 'POST', body: form })
+    if (!response.ok) { const body = await response.json().catch(() => ({})); const detail = body?.detail; const error: any = new Error(detail?.message || detail || '生图回填失败'); error.body = body; throw error }
+    return response.json()
+  },
 }
