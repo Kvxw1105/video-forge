@@ -6,7 +6,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services import project_service
-from services.image_generation_service import create_batch, get_batch
+import base64
+
+import pytest
+
+from services.image_generation_service import (
+    ImageGenerationError,
+    approve_candidates,
+    create_batch,
+    get_batch,
+    record_item_failure,
+    retry_failed_items,
+    upload_agent_candidate,
+)
 from shared.visual_scene import visual_source_hash
 
 
@@ -106,3 +118,104 @@ def test_agent_batch_uses_subtitle_timing_and_persists(tmp_path, monkeypatch):
         / "batches"
         / f"{batch['batchId']}.json"
     ).is_file()
+
+
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4z8DwHwAF"
+    "AAH/iZk9HQAAAABJRU5ErkJggg=="
+)
+
+
+def test_agent_upload_is_idempotent_and_approval_binds_provenance(tmp_path, monkeypatch):
+    project = _timed_project(tmp_path, monkeypatch)
+    batch = create_batch(project.id, channel="agent", provider_id="codex-imagegen")
+    item = batch["items"][0]
+    image = tmp_path / "generated.png"
+    image.write_bytes(_PNG)
+
+    candidate = upload_agent_candidate(
+        project.id, batch["batchId"], item["sceneId"], item["inputHash"], image
+    )
+    duplicate = upload_agent_candidate(
+        project.id, batch["batchId"], item["sceneId"], item["inputHash"], image
+    )
+
+    assert duplicate["candidateId"] == candidate["candidateId"]
+    assert duplicate["contentHash"] == candidate["contentHash"]
+    result = approve_candidates(
+        project.id,
+        batch["batchId"],
+        [{"sceneId": item["sceneId"], "candidateId": candidate["candidateId"]}],
+    )
+    assert result["bound"] == [
+        {"sceneId": "scene_1", "assetId": "visual_ai_image_scene_1"}
+    ]
+    updated = project_service.get_project(project.id).model_dump(mode="python")
+    scene = updated["structuredContent"]["episode"]["visualPlan"]["scenes"][0]
+    asset = next(value for value in updated["assets"] if value["id"] == scene["primaryAssetId"])
+    assert scene["visualAssetIds"] == ["visual_ai_image_scene_1"]
+    assert asset["metadata"]["generatedBy"] == "ai_image"
+    assert asset["metadata"]["channel"] == "agent"
+    assert asset["metadata"]["inputHash"] == item["inputHash"]
+    assert (tmp_path / project.id / asset["path"]).is_file()
+
+
+def test_upload_and_approval_reject_stale_inputs_without_mutation(tmp_path, monkeypatch):
+    project = _timed_project(tmp_path, monkeypatch)
+    batch = create_batch(project.id, channel="agent")
+    item = batch["items"][0]
+    image = tmp_path / "generated.png"
+    image.write_bytes(_PNG)
+
+    with pytest.raises(ImageGenerationError, match="stale"):
+        upload_agent_candidate(
+            project.id, batch["batchId"], item["sceneId"], "0" * 64, image
+        )
+
+    candidate = upload_agent_candidate(
+        project.id, batch["batchId"], item["sceneId"], item["inputHash"], image
+    )
+    before = project_service.get_project(project.id)
+    blocks = [value.model_dump() for value in before.structuredContent.episode.blocks]
+    blocks[0]["revision"] = 2
+    project_service.update_project(
+        project.id,
+        {
+            "structuredContent": {
+                **before.structuredContent.model_dump(),
+                "episode": {
+                    **before.structuredContent.episode.model_dump(),
+                    "blocks": blocks,
+                },
+            }
+        },
+    )
+
+    with pytest.raises(ImageGenerationError, match="stale"):
+        approve_candidates(
+            project.id,
+            batch["batchId"],
+            [{"sceneId": item["sceneId"], "candidateId": candidate["candidateId"]}],
+        )
+    assert project_service.get_project(project.id).assets == []
+    assert get_batch(project.id, batch["batchId"])["status"] == "stale"
+
+
+def test_retry_only_resets_failed_items(tmp_path, monkeypatch):
+    project = _timed_project(tmp_path, monkeypatch)
+    batch = create_batch(project.id, channel="agent")
+    first, second = batch["items"]
+    image = tmp_path / "generated.png"
+    image.write_bytes(_PNG)
+    upload_agent_candidate(
+        project.id, batch["batchId"], first["sceneId"], first["inputHash"], image
+    )
+    record_item_failure(project.id, batch["batchId"], second["sceneId"], "provider_error", "boom")
+
+    retried = retry_failed_items(project.id, batch["batchId"])
+
+    by_scene = {item["sceneId"]: item for item in retried["items"]}
+    assert by_scene[first["sceneId"]]["status"] == "generated"
+    assert len(by_scene[first["sceneId"]]["candidates"]) == 1
+    assert by_scene[second["sceneId"]]["status"] == "pending"
+    assert by_scene[second["sceneId"]]["error"] == ""
