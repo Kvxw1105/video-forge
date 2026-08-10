@@ -101,4 +101,7 @@ def validate_plan(project: dict, plan: dict) -> list[str]:
 
 def scene_timing(project: dict, scene: dict, block_target_start: float) -> dict:
     episode=project["structuredContent"]["episode"]; bindings={item.get("blockId"):item for item in episode.get("bindings") or []}; subtitles={item.get("id"):item for item in project.get("subtitles") or []}; binding=bindings[scene["blockId"]]; slice_=binding.get("audioSlice") or {}; ids=scene["subtitleIds"]
-    start=float(subtitles[ids[0]]["start"]); end=float(subtitles[ids[-1]]["end"]); source_start=float(slice_.get("sourceStart", 0)); return {"sourceStart": start, "sourceEnd": end, "duration": end-start, "targetStart": block_target_start+start-source_start, "targetEnd": block_target_start+end-source_start}
+    start=float(subtitles[ids[0]]["start"]); end=float(subtitles[ids[-1]]["end"])
+    bound_ids=[item for item in binding.get("subtitleIds") or [] if item in subtitles]
+    block_source_start=float(subtitles[bound_ids[0]]["start"]) if bound_ids else start
+    source_start=float(slice_.get("sourceStart", block_source_start)); return {"sourceStart": start, "sourceEnd": end, "duration": end-start, "targetStart": block_target_start+start-source_start, "targetEnd": block_target_start+end-source_start}
