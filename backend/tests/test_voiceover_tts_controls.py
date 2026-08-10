@@ -1,4 +1,6 @@
+import base64
 import importlib
+import json
 import sys
 import types
 from pathlib import Path
@@ -83,6 +85,94 @@ def test_synthesize_fish_includes_speed(monkeypatch):
     assert data == b"mp3"
     assert captured["json"]["prosody"]["speed"] == 1.4
     assert captured["json"]["reference_id"] == "voice-id"
+
+
+def test_synthesize_volcengine_decodes_streamed_audio(monkeypatch):
+    from engines import voiceover
+
+    captured = {}
+
+    class FakeResponse:
+        headers = {"content-type": "application/json"}
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def iter_text(self):
+            yield json.dumps({"code": 0, "data": base64.b64encode(b"first").decode()})
+            yield "\n" + json.dumps({"code": 0, "data": base64.b64encode(b"second").decode()})
+
+    class FakeStream:
+        def __enter__(self):
+            return FakeResponse()
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_stream(method, url, *, headers=None, json=None, timeout=None):
+        captured.update(method=method, url=url, headers=headers, json=json, timeout=timeout)
+        return FakeStream()
+
+    monkeypatch.setattr(voiceover.httpx, "stream", fake_stream)
+
+    data = voiceover.synthesize_volcengine("你好", api_key="volc-key", speaker_id="S_kv", speech_rate=25)
+
+    assert data == b"firstsecond"
+    assert captured["method"] == "POST"
+    assert captured["url"] == voiceover.VOLC_TTS_URL
+    assert captured["headers"]["X-Api-Key"] == "volc-key"
+    assert captured["headers"]["X-Api-Resource-Id"] == "seed-icl-2.0"
+    assert captured["json"]["req_params"]["speaker"] == "S_kv"
+    assert captured["json"]["req_params"]["audio_params"]["speech_rate"] == 25
+
+
+def test_synthesize_volcengine_accepts_volcengine_success_code(monkeypatch):
+    from engines import voiceover
+
+    class FakeResponse:
+        headers = {"content-type": "application/json"}
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def iter_text(self):
+            yield json.dumps({"code": 20000000, "data": base64.b64encode(b"audio").decode()})
+
+    class FakeStream:
+        def __enter__(self):
+            return FakeResponse()
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr(voiceover.httpx, "stream", lambda *args, **kwargs: FakeStream())
+
+    assert voiceover.synthesize_volcengine("你好", api_key="volc-key", speaker_id="S_kv") == b"audio"
+
+
+def test_synthesize_volcengine_explains_legacy_credential_401(monkeypatch):
+    from engines import voiceover
+
+    class FakeResponse:
+        headers = {"content-type": "application/json"}
+        status_code = 401
+
+        def raise_for_status(self):
+            raise AssertionError("401 should be explained before raise_for_status")
+
+    class FakeStream:
+        def __enter__(self):
+            return FakeResponse()
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr(voiceover.httpx, "stream", lambda *args, **kwargs: FakeStream())
+
+    with pytest.raises(RuntimeError, match="API Key.*Access Token.*Secret Key"):
+        voiceover.synthesize_volcengine("你好", api_key="legacy-token", speaker_id="S_kv")
 
 
 def test_generate_voiceover_custom_uses_requested_speed(monkeypatch, tmp_path):

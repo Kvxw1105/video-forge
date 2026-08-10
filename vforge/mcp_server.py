@@ -89,7 +89,7 @@ def upload_asset(pid: str, file_path: str) -> dict:
 @mcp.tool()
 def generate_voiceover(pid: str, text: str, engine: str = "edge", speed: int = 0) -> dict:
     """生成 AI 配音并自动写回字幕。
-    engine: "edge"(免费微软) / "manbo"(VIP,需配置) / "custom"(自定义) / "none"(只生成字幕)
+    engine: "edge"(免费微软) / "manbo"(VIP,需配置) / "fish_audio" / "volcengine"(KV音色) / "custom" / "none"(只生成字幕)
     speed: -50~50
     返回 {audioPath, duration, subtitleCount, subtitles}。
     """
@@ -142,7 +142,7 @@ def save_template(data: dict) -> dict:
 
 @mcp.tool()
 def get_tts_settings() -> dict:
-    """获取 TTS 引擎配置（edge/manbo/custom 哪个启用，API key 等）。"""
+    """获取 TTS 引擎配置（edge/manbo/fish_audio/volcengine/custom 哪个启用，API key 等）。"""
     return _to_json(client.get_tts_settings())
 
 

@@ -349,6 +349,8 @@ export default function Editor() {
         ? Number(ttsSettings?.edgeRate ?? 0)
         : selectedEngine === 'fish_audio'
           ? Number(ttsSettings?.fishSpeed ?? 1.0)
+          : selectedEngine === 'volcengine'
+            ? Number(ttsSettings?.volcSpeechRate ?? 0)
           : Number(ttsSettings?.customSpeed ?? 0)
       const pitch = selectedEngine === 'edge' ? Number(ttsSettings?.edgePitch ?? 0) : 0
       const result = await api.generateVoiceover(id!, text, speed, pitch, selectedEngine)

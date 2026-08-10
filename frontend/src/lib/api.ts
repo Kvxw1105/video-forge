@@ -82,6 +82,8 @@ export const api = {
   updateTtsSettings: (data: any) => request<any>('/settings/tts', { method: 'PUT', body: JSON.stringify(data) }),
   /** 测试 Fish Audio 接口 */
   testFishAudio: () => request<{ ok: boolean; message: string }>('/settings/tts/test/fish', { method: 'POST' }),
+  /** 测试火山云豆包声音复刻接口 */
+  testVolcengine: () => request<{ ok: boolean; message: string }>('/settings/tts/test/volcengine', { method: 'POST' }),
   /** 测试曼波 VIP 接口 */
   testManbo: () => request<{ ok: boolean; message: string }>('/settings/tts/test/manbo', { method: 'POST' }),
   /** 列出所有配音 */

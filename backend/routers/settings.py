@@ -4,12 +4,13 @@ from pathlib import Path
 from fastapi import APIRouter
 import httpx
 from config import DATA_DIR
+from engines.voiceover import synthesize_volcengine
 from models.tts_settings import TtsSettings
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _SETTINGS_FILE = DATA_DIR / "tts_settings.json"
-_SECRET_FIELDS = ("manboApiKey", "fishApiKey", "customApiKey")
+_SECRET_FIELDS = ("manboApiKey", "fishApiKey", "volcApiKey", "customApiKey")
 
 
 def _load_settings() -> TtsSettings:
@@ -102,6 +103,28 @@ def test_fish_audio():
         return {"ok": False, "message": f"网络错误: {e}"}
     except Exception as e:
         return {"ok": False, "message": f"测试失败: {e}"}
+
+
+@router.post("/tts/test/volcengine")
+def test_volcengine():
+    """测试火山云豆包声音复刻 2.0 的 KV 音色。"""
+    s = _load_settings()
+    if not s.volcApiKey:
+        return {"ok": False, "message": "未配置火山云 API Key"}
+    if not s.volcSpeakerId:
+        return {"ok": False, "message": "未配置 KV 音色的 Speaker ID"}
+    try:
+        audio = synthesize_volcengine(
+            "你好，这是 VideoForge 的 KV 音色测试。",
+            api_key=s.volcApiKey,
+            speaker_id=s.volcSpeakerId,
+            resource_id=s.volcResourceId,
+        )
+        return {"ok": bool(audio), "message": "KV 音色测试通过，可以生成配音"}
+    except httpx.HTTPError as e:
+        return {"ok": False, "message": f"火山云网络错误: {e}"}
+    except Exception as e:
+        return {"ok": False, "message": f"KV 音色测试失败: {e}"}
 
 
 @router.post("/tts/test/manbo")

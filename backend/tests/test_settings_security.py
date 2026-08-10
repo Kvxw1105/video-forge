@@ -12,6 +12,7 @@ def test_tts_settings_response_masks_api_keys(monkeypatch, tmp_path):
     settings._save_settings(TtsSettings(
         fishApiKey="fish-secret",
         manboApiKey="manbo-secret",
+        volcApiKey="volc-secret",
         customApiKey="custom-secret",
     ))
 
@@ -19,9 +20,11 @@ def test_tts_settings_response_masks_api_keys(monkeypatch, tmp_path):
 
     assert public["fishApiKey"] == ""
     assert public["manboApiKey"] == ""
+    assert public["volcApiKey"] == ""
     assert public["customApiKey"] == ""
     assert public["fishApiKeyConfigured"] is True
     assert public["manboApiKeyConfigured"] is True
+    assert public["volcApiKeyConfigured"] is True
     assert public["customApiKeyConfigured"] is True
 
 

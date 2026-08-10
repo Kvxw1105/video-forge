@@ -140,6 +140,13 @@ def check_tts() -> ReadinessCheck:
                 missing.append("fishApiKey")
             if not settings.fishReferenceId:
                 missing.append("fishReferenceId")
+        elif engine == "volcengine":
+            configured = bool(settings.volcApiKey and settings.volcSpeakerId)
+            available, voiceover = False, configured
+            if not settings.volcApiKey:
+                missing.append("volcApiKey")
+            if not settings.volcSpeakerId:
+                missing.append("volcSpeakerId")
         elif engine == "manbo":
             configured = bool(settings.manboApiKey and settings.manboApiUrl)
             available, voiceover = False, configured
@@ -159,7 +166,7 @@ def check_tts() -> ReadinessCheck:
             configured, available, voiceover = False, False, False
             missing.append("engine")
         status = "pass" if configured else "warn"
-        message = "已启用纯字幕模式" if engine == "none" else "TTS引擎已配置" if status == "pass" else "TTS配置不完整" if engine in {"edge", "fish_audio", "manbo", "custom"} else "无法识别当前TTS引擎"
+        message = "已启用纯字幕模式" if engine == "none" else "TTS引擎已配置" if status == "pass" else "TTS配置不完整" if engine in {"edge", "fish_audio", "volcengine", "manbo", "custom"} else "无法识别当前TTS引擎"
         details = {
             "selectedEngine": engine, "configured": configured,
             "availableWithoutExternalKey": available, "voiceoverAvailable": voiceover,

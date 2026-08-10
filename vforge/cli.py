@@ -280,7 +280,7 @@ def build_parser() -> argparse.ArgumentParser:
         pid={"type": str, "required": True},
         text={"type": str, "required": True},
         engine={"type": str, "default": "edge",
-                "choices": ["edge", "manbo", "fish_audio", "custom", "none"]},
+                "choices": ["edge", "manbo", "fish_audio", "volcengine", "custom", "none"]},
         speed={"type": int, "default": 0})
     add("import_srt", "导入 SRT 字幕",
         pid={"type": str, "required": True},

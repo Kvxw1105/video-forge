@@ -41,6 +41,70 @@ const DEFAULT_FISH_PRESETS = [
   { id: 'b255ca2902514f69bc22243436a94e4f', name: '曼波', style: '年轻女声 · 教学 · 明亮活力' },
 ]
 
+const VOLC_API_KEY_URL = 'https://console.volcengine.com/speech/new/setting/apikeys?projectName=default'
+const VOLC_SPEAKER_HELP_URL = 'https://docs.volcengine.com/docs/6561/2535742?lang=zh'
+const FISH_API_KEY_URL = 'https://fish.audio/app/api-keys'
+const FISH_VOICE_HELP_URL = 'https://docs.fish.audio/developer-guide/sdk-guide/python/voice-cloning'
+
+function httpUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : ''
+  } catch {
+    return ''
+  }
+}
+
+function looksLikeMarkdown(text: string): boolean {
+  return /(^|\n)\s{0,3}#{1,6}\s+\S/.test(text)
+    || /(^|\n)\s{0,3}>\s+\S/.test(text)
+    || /(^|\n)\s{0,3}(?:[-*+]\s+|\d+[.)]\s+)\S/.test(text)
+    || /[*_~`]{1,3}\S/.test(text)
+    || /\[[^\]\n]+\]\([^\)\n]+\)/.test(text)
+    || /(^|\n)\s*```/.test(text)
+}
+
+function markdownToNarrationText(source: string): string {
+  let text = source
+    .replace(/\r\n?/g, '\n')
+    .replace(/^\s*---[\s\S]*?---\s*/m, '')
+    .replace(/^\s*```[a-z0-9_-]*\s*\n?/gim, '')
+    .replace(/\n?\s*```\s*$/g, '')
+
+  text = text
+    .replace(/!\[([^\]]*)\]\([^\)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^\)]*\)/g, '$1')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+
+  const lines = text.split('\n').map((line) => {
+    let next = line
+      .replace(/^\s{0,3}#{1,6}\s+/, '')
+      .replace(/^\s{0,3}>\s?/, '')
+      .replace(/^\s{0,3}- \[[ xX]\]\s+/, '')
+      .replace(/^\s{0,3}(?:[-*+]\s+|\d+[.)]\s+)/, '')
+      .replace(/^\s*\|?\s*:?[-]{3,}:?\s*(?:\|\s*:?[-]{3,}:?\s*)+\|?\s*$/, '')
+
+    next = next
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/(^|[^\p{L}\p{N}])\*([^*\n]+)\*/gu, '$1$2')
+      .replace(/(^|[^\p{L}\p{N}])_([^_\n]+)_/gu, '$1$2')
+
+    if (/^\s*\|/.test(next) && /\|\s*$/.test(next)) {
+      next = next.split('|').map(cell => cell.trim()).filter(Boolean).join('，')
+    }
+    return next.trim()
+  })
+
+  return lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 interface TtsSettings {
   engine: string
   manboApiUrl: string
@@ -52,6 +116,12 @@ interface TtsSettings {
   fishModel: string
   fishSpeed: number
   fishVoicePresets?: { id: string; name: string; style: string }[]
+  volcApiKey: string
+  volcApiKeyConfigured?: boolean
+  volcSpeakerId: string
+  volcResourceId: string
+  volcVoiceName: string
+  volcSpeechRate: number
   customApiUrl: string
   customApiKey: string
   customApiKeyConfigured?: boolean
@@ -98,6 +168,7 @@ export default function ScriptPanel({
   const [customVoiceStyle, setCustomVoiceStyle] = useState('')
   const [customVoiceSource, setCustomVoiceSource] = useState('')
   const [testStatus, setTestStatus] = useState<{ ok?: boolean; msg: string } | null>(null)
+  const [pasteNotice, setPasteNotice] = useState('')
   const srtProgress = useProgress()
   const engine = ttsSettings?.engine || 'edge'
 
@@ -115,6 +186,28 @@ export default function ScriptPanel({
   const charCount = text.length
   const draftSubtitles = useMemo(() => splitTextIntoSubtitles(text), [text])
   const isLongText = charCount > 500
+
+  const handleScriptPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = event.clipboardData?.getData('text/plain') || ''
+    if (!pasted || !looksLikeMarkdown(pasted)) return
+
+    const normalized = markdownToNarrationText(pasted)
+    if (!normalized || normalized === pasted) return
+
+    event.preventDefault()
+    const target = event.currentTarget
+    const start = target.selectionStart ?? text.length
+    const end = target.selectionEnd ?? text.length
+    const next = text.slice(0, start) + normalized + text.slice(end)
+    const cursor = start + normalized.length
+    setText(next)
+    setPasteNotice('已自动转换 Markdown 为纯文案')
+    window.setTimeout(() => setPasteNotice(''), 2400)
+    window.requestAnimationFrame(() => {
+      target.focus()
+      target.setSelectionRange(cursor, cursor)
+    })
+  }
 
   const fishPresets = useMemo(() => {
     if (ttsSettings?.fishVoicePresets && ttsSettings.fishVoicePresets.length > 0) {
@@ -145,6 +238,20 @@ export default function ScriptPanel({
     setTestStatus({ msg: '测试中...' })
     try {
       const res = await api.testManbo()
+      setTestStatus({ ok: res.ok, msg: res.message })
+    } catch (e: any) {
+      setTestStatus({ ok: false, msg: `测试失败: ${e.message}` })
+    }
+  }
+
+  const handleTestVolcengine = async () => {
+    if (!(ttsSettings?.volcApiKey || ttsSettings?.volcApiKeyConfigured) || !ttsSettings?.volcSpeakerId) {
+      setTestStatus({ ok: false, msg: '请先填写火山云 API Key 和 KV 音色 Speaker ID' })
+      return
+    }
+    setTestStatus({ msg: '测试中...' })
+    try {
+      const res = await api.testVolcengine()
       setTestStatus({ ok: res.ok, msg: res.message })
     } catch (e: any) {
       setTestStatus({ ok: false, msg: `测试失败: ${e.message}` })
@@ -268,11 +375,17 @@ export default function ScriptPanel({
           aria-label="旁白文案"
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onPaste={handleScriptPaste}
           placeholder="输入旁白文案，生成后会自动对齐字幕..."
           rows={5}
           className="input-cinematic resize-none focus:ring-2 transition-all w-full"
         />
         <div className="absolute bottom-2 right-2 flex items-center gap-2">
+          {pasteNotice && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: 'var(--text-secondary)', background: 'var(--bg-elevated)' }}>
+              {pasteNotice}
+            </span>
+          )}
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
             isLongText ? 'bg-rust/20 text-rust-light' : 'bg-transparent'
           }`}>
@@ -334,7 +447,7 @@ export default function ScriptPanel({
 
       {/* 閰嶉煶寮曟搸閫夋嫨 + 璁剧疆 */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-          {['none', 'edge', 'manbo', 'fish_audio', 'custom'].map(e => (
+          {['none', 'edge', 'manbo', 'fish_audio', 'volcengine', 'custom'].map(e => (
           <button key={e}
             onClick={() => handleEngineChange(e)}
             className={`text-[11px] px-2 py-1 rounded-full border font-medium transition-all whitespace-nowrap ${
@@ -342,7 +455,7 @@ export default function ScriptPanel({
             }`}
             style={engine === e ? undefined : { background: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
           >
-            {e === 'none' ? '无配音' : e === 'edge' ? 'Edge TTS' : e === 'manbo' ? '曼波 VIP' : e === 'fish_audio' ? 'Fish Audio' : '自定义 API'}
+            {e === 'none' ? '无配音' : e === 'edge' ? 'Edge TTS' : e === 'manbo' ? '曼波 VIP' : e === 'fish_audio' ? 'Fish Audio' : e === 'volcengine' ? '火山云' : '自定义 API'}
           </button>
         ))}
         <button onClick={() => setShowSettings(!showSettings)} className="ml-auto text-[11px] underline whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
@@ -388,6 +501,53 @@ export default function ScriptPanel({
         </div>
       )}
 
+      {engine === 'volcengine' && ttsSettings && (
+        <div className="mt-3 rounded-lg p-3 space-y-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
+          <div>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>选择音色</div>
+            <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>豆包声音复刻 2.0 · 使用你在火山云训练的专属音色</div>
+          </div>
+          <button type="button" onClick={() => handleEngineChange('volcengine')}
+            className="w-full text-left rounded-md px-2.5 py-2 text-[11px] selected-surface">
+            <span className="font-semibold flex items-center justify-between">
+              {ttsSettings.volcVoiceName || 'KV 音色'}
+              <Check size={13} weight="bold" />
+            </span>
+            <span className="block text-[9px] mt-0.5 opacity-75">火山云 · 声音复刻 2.0 · 私人音色</span>
+          </button>
+          <div className="rounded-md p-3 space-y-2" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+            <div className="flex items-center justify-between">
+              <label htmlFor="volc-speech-rate" className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>配音语速</label>
+              <span className="rounded px-2 py-0.5 text-xs font-semibold" style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
+                {((100 + Number(ttsSettings.volcSpeechRate ?? 0)) / 100).toFixed(2)}×
+              </span>
+            </div>
+            <input
+              id="volc-speech-rate"
+              type="range"
+              min="-50"
+              max="100"
+              step="5"
+              value={ttsSettings.volcSpeechRate ?? 0}
+              onChange={e => onTtsSettingsChange({ ...ttsSettings, volcSpeechRate: Number(e.target.value) })}
+              className="w-full accent-[var(--accent)] cursor-pointer"
+              aria-label="火山云配音语速"
+            />
+            <div className="grid grid-cols-4 gap-1.5">
+              {[[-25, '0.75×'], [0, '1.0×'], [25, '1.25×'], [50, '1.5×']].map(([value, label]) => (
+                <button key={String(value)} type="button"
+                  onClick={() => onTtsSettingsChange({ ...ttsSettings, volcSpeechRate: Number(value) })}
+                  className={`rounded px-1.5 py-1.5 text-[11px] font-medium transition-all ${Number(ttsSettings.volcSpeechRate ?? 0) === Number(value) ? 'selected-surface' : ''}`}
+                  style={Number(ttsSettings.volcSpeechRate ?? 0) === Number(value) ? undefined : { background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>选择后自动保存；重新生成配音时生效。</p>
+          </div>
+        </div>
+      )}
+
       {/* TTS 閰嶇疆灞曞紑 */}
       {showSettings && ttsSettings && (
         <div className="mt-3 rounded-lg p-3 space-y-2 text-xs" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
@@ -424,6 +584,14 @@ export default function ScriptPanel({
           )}
           {engine === 'manbo' && ttsSettings && (
             <>
+              <div className="rounded-md px-2.5 py-2 text-[10px] leading-relaxed" style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                <span>曼波的 API Key 由当前服务商账户提供；本应用没有可确认的统一官网取 Key 页面。 </span>
+                {httpUrl(ttsSettings.manboApiUrl) ? (
+                  <a href={httpUrl(ttsSettings.manboApiUrl)} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--accent)' }}>打开当前服务地址 ↗</a>
+                ) : (
+                  <span style={{ color: 'var(--text-muted)' }}>先填入服务商给你的 API URL。</span>
+                )}
+              </div>
               <label className="flex items-center justify-between">
                 <span style={{ color: 'var(--text-muted)' }}>API URL</span>
                 <input value={ttsSettings.manboApiUrl} onChange={e => onTtsSettingsChange({ ...ttsSettings, manboApiUrl: e.target.value })}
@@ -470,6 +638,10 @@ export default function ScriptPanel({
           )}
           {engine === 'fish_audio' && ttsSettings && (
             <>
+              <div className="rounded-md px-2.5 py-2 text-[10px] leading-relaxed space-y-1" style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                <p><a href={FISH_API_KEY_URL} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--accent)' }}>获取 Fish Audio API Key ↗</a>：登录后在 API Keys 页面新建或复制。</p>
+                <p><a href={FISH_VOICE_HELP_URL} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--accent)' }}>查看音色 / Reference ID 说明 ↗</a>：把音色的 Reference ID 填在下方。</p>
+              </div>
               <label className="flex items-center justify-between gap-2">
                 <span style={{ color: 'var(--text-muted)' }}>API Key</span>
                 <div className="flex items-center gap-1 w-44">
@@ -540,8 +712,84 @@ export default function ScriptPanel({
               </div>
             </>
           )}
+          {engine === 'volcengine' && ttsSettings && (
+            <>
+              <div className="rounded-md px-2.5 py-2 text-[10px] leading-relaxed space-y-1" style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                <p><a href={VOLC_API_KEY_URL} target="_blank" rel="noreferrer" className="underline font-medium" style={{ color: 'var(--accent)' }}>获取新版火山云 API Key ↗</a>：登录后在“API Key 管理”创建并复制。</p>
+                <p>这里仅填 <strong>新版 API Key</strong>；旧版的 App ID、Access Token、Secret Key 都不是此接口要的凭证，填入会返回 401。</p>
+                <p><a href={VOLC_SPEAKER_HELP_URL} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--accent)' }}>查看音色与 Speaker ID 说明 ↗</a>：KV 音色的 Speaker ID 已为你填好。</p>
+              </div>
+              <label className="flex items-center justify-between gap-2">
+                <span style={{ color: 'var(--text-muted)' }}>API Key</span>
+                <div className="flex items-center gap-1 w-44">
+                  <input
+                    type={showKeys ? 'text' : 'password'}
+                    value={ttsSettings.volcApiKey}
+                    onChange={e => onTtsSettingsChange({ ...ttsSettings, volcApiKey: e.target.value })}
+                    placeholder={ttsSettings.volcApiKeyConfigured ? '已配置，输入新 Key 可替换' : '粘贴火山云 API Key'}
+                    className="flex-1 rounded px-2 py-1 text-[11px] font-mono"
+                    style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+                  />
+                  <button onClick={() => setShowKeys(v => !v)} className="text-[10px] px-1.5 py-1 rounded" style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                    {showKeys ? '隐藏' : '显示'}
+                  </button>
+                </div>
+              </label>
+              <label className="flex items-center justify-between">
+                <span style={{ color: 'var(--text-muted)' }}>KV Speaker ID</span>
+                <input
+                  value={ttsSettings.volcSpeakerId}
+                  onChange={e => onTtsSettingsChange({ ...ttsSettings, volcSpeakerId: e.target.value.trim() })}
+                  placeholder="S_xxxxx（火山云音色库）"
+                  className="w-44 rounded px-2 py-1 text-[11px] font-mono"
+                  style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+                />
+              </label>
+              <label className="flex items-center justify-between">
+                <span style={{ color: 'var(--text-muted)' }}>音色名称</span>
+                <input
+                  value={ttsSettings.volcVoiceName || 'KV 音色'}
+                  onChange={e => onTtsSettingsChange({ ...ttsSettings, volcVoiceName: e.target.value })}
+                  className="w-44 rounded px-2 py-1 text-[11px]"
+                  style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+                />
+              </label>
+              <label className="flex items-center justify-between">
+                <span style={{ color: 'var(--text-muted)' }}>模型</span>
+                <input
+                  value={ttsSettings.volcResourceId || 'seed-icl-2.0'}
+                  onChange={e => onTtsSettingsChange({ ...ttsSettings, volcResourceId: e.target.value.trim() || 'seed-icl-2.0' })}
+                  className="w-44 rounded px-2 py-1 text-[11px] font-mono"
+                  style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+                />
+              </label>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={handleTestVolcengine}
+                  disabled={!(ttsSettings.volcApiKey || ttsSettings.volcApiKeyConfigured) || !ttsSettings.volcSpeakerId}
+                  className="text-[11px] px-3 py-1.5 rounded transition-all disabled:opacity-40"
+                  style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+                >
+                  测试 KV 音色
+                </button>
+                {testStatus && (
+                  <span className={`text-[10px] ${testStatus.ok === false ? 'text-rust-light' : testStatus.ok === true ? 'text-sage' : ''}`} style={{ color: testStatus.ok === undefined ? 'var(--text-muted)' : undefined }}>
+                    {testStatus.msg}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
           {engine === 'custom' && (
             <>
+              <div className="rounded-md px-2.5 py-2 text-[10px] leading-relaxed" style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                自定义 API 的 URL、Key 和音色字段由你选择的服务商定义。请在该服务商控制台获取 Key；
+                {httpUrl(ttsSettings?.customApiUrl || '') ? (
+                  <a href={httpUrl(ttsSettings?.customApiUrl || '')} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--accent)' }}>打开当前接口地址 ↗</a>
+                ) : (
+                  <span style={{ color: 'var(--text-muted)' }}>填入 API URL 后可直接打开该地址。</span>
+                )}
+              </div>
               <label className="flex items-center justify-between">
                 <span style={{ color: 'var(--text-muted)' }}>API URL</span>
                 <input value={ttsSettings.customApiUrl} onChange={e => onTtsSettingsChange({ ...ttsSettings, customApiUrl: e.target.value })}

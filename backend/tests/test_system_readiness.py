@@ -104,6 +104,8 @@ def test_tts_fish_audio_missing_reference_warns_without_key(monkeypatch):
     (dict(engine="fish_audio", fishApiKey="key", fishReferenceId="ref"), ("pass", True, False)),
     (dict(engine="fish_audio", fishApiKey="", fishReferenceId="ref"), ("warn", False, False)),
     (dict(engine="fish_audio", fishApiKey="key", fishReferenceId=""), ("warn", False, False)),
+    (dict(engine="volcengine", volcApiKey="key", volcSpeakerId="S_kv"), ("pass", True, False)),
+    (dict(engine="volcengine", volcApiKey="", volcSpeakerId="S_kv"), ("warn", False, False)),
     (dict(engine="manbo", manboApiKey="key", manboApiUrl="https://example.test/tts"), ("pass", True, False)),
     (dict(engine="manbo", manboApiKey=""), ("warn", False, False)),
     (dict(engine="custom", customApiUrl="https://example.test/tts", customApiKey=""), ("pass", True, True)),

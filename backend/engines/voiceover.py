@@ -1,8 +1,10 @@
 import re
 import asyncio
+import base64
 import httpx
 import tempfile
 import json
+import uuid
 from pathlib import Path
 from config import MANBO_API_KEY, MANBO_API_URL, MANBO_MAX_CHARS
 from process_utils import run as run_process
@@ -253,6 +255,86 @@ def synthesize_fish(
     return resp.content
 
 
+# ── 火山引擎豆包声音复刻 2.0 ──────────────────────────────────
+
+VOLC_TTS_URL = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+VOLC_RESOURCE_ID = "seed-icl-2.0"
+VOLC_MAX_CHARS = 1000
+
+
+def synthesize_volcengine(
+    text: str,
+    api_key: str = "",
+    speaker_id: str = "",
+    resource_id: str = VOLC_RESOURCE_ID,
+    fmt: str = "mp3",
+    speech_rate: int = 0,
+) -> bytes:
+    """调用豆包声音复刻 2.0 单向流式 TTS，并合并 Base64 音频块。"""
+    if not api_key:
+        raise ValueError("火山云 API Key 未配置")
+    if not speaker_id:
+        raise ValueError("火山云 KV 音色的 Speaker ID 未配置")
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Api-Key": api_key,
+        "X-Api-Resource-Id": resource_id or VOLC_RESOURCE_ID,
+        "X-Api-Request-Id": str(uuid.uuid4()),
+        "Connection": "keep-alive",
+    }
+    payload = {
+        "req_params": {
+            "text": text,
+            "speaker": speaker_id,
+            "audio_params": {
+                "format": fmt,
+                "sample_rate": 24000,
+                "speech_rate": max(-50, min(100, int(speech_rate))),
+            },
+        }
+    }
+    audio_chunks: list[bytes] = []
+    decoder = json.JSONDecoder()
+    buffer = ""
+
+    with httpx.stream("POST", VOLC_TTS_URL, headers=headers, json=payload, timeout=120) as response:
+        if response.status_code == 401:
+            raise RuntimeError(
+                "火山云鉴权失败（401）：请在火山云新版控制台的“API Key 管理”创建并复制 API Key。"
+                "这里不能填写旧版的 App ID、Access Token 或 Secret Key。"
+            )
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").lower()
+        if "audio" in content_type or "octet-stream" in content_type:
+            return b"".join(response.iter_bytes())
+
+        for chunk in response.iter_text():
+            buffer += chunk
+            while buffer.strip():
+                candidate = buffer.lstrip()
+                try:
+                    item, end = decoder.raw_decode(candidate)
+                except json.JSONDecodeError:
+                    buffer = candidate
+                    break
+                buffer = candidate[end:]
+                code = item.get("code", 0)
+                # 火山云 V3 使用 20000000 表示成功；部分旧响应会使用 0。
+                if code not in (0, 20000000, None):
+                    raise RuntimeError(f"火山云 TTS 错误 [{code}]: {item.get('message', item)}")
+                encoded_audio = item.get("data")
+                if encoded_audio:
+                    try:
+                        audio_chunks.append(base64.b64decode(encoded_audio))
+                    except (TypeError, ValueError) as exc:
+                        raise RuntimeError("火山云 TTS 返回了无效的音频数据") from exc
+
+    if not audio_chunks:
+        raise RuntimeError("火山云 TTS 未返回音频数据")
+    return b"".join(audio_chunks)
+
+
 # ── 统一接口 ────────────────────────────────────────────────
 
 def generate_voiceover(
@@ -284,6 +366,14 @@ def generate_voiceover(
         return _generate_with_sentences(text, output_dir, "fish_audio", voice=None, speed=speed,
                                          pitch=0, max_chars=FISH_MAX_CHARS, api_key=api_key,
                                          api_url=reference_id, model=model)
+    elif engine == "volcengine":
+        api_key = getattr(settings, "volcApiKey", "") if settings else ""
+        speaker_id = getattr(settings, "volcSpeakerId", "") if settings else ""
+        resource_id = getattr(settings, "volcResourceId", VOLC_RESOURCE_ID) if settings else VOLC_RESOURCE_ID
+        speech_rate = getattr(settings, "volcSpeechRate", speed) if settings else speed
+        return _generate_with_sentences(text, output_dir, "volcengine", voice=None, speed=speech_rate,
+                                         pitch=0, max_chars=VOLC_MAX_CHARS, api_key=api_key,
+                                         api_url=speaker_id, model=resource_id)
     elif engine == "custom":
         if not settings or not settings.customApiUrl:
             raise ValueError("自定义 API 未配置 URL")
@@ -329,6 +419,9 @@ def _generate_with_sentences(
             elif engine == "fish_audio":
                 fish_speed = speed if speed and float(speed) > 0 else 1.0
                 data = synthesize_fish(api_text, api_key, api_url, model=model, speed=fish_speed)
+                part.write_bytes(data)
+            elif engine == "volcengine":
+                data = synthesize_volcengine(api_text, api_key, api_url, resource_id=model, speech_rate=speed)
                 part.write_bytes(data)
             elif engine == "custom":
                 data = synthesize_custom(api_text, api_url, api_key, speed=speed)
