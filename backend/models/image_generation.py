@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-ImageGenerationChannel = Literal["builtin", "agent"]
+ImageGenerationChannel = Literal["builtin", "agent", "local"]
 ImageGenerationItemStatus = Literal[
     "pending", "generating", "generated", "approved", "bound", "failed"
 ]
@@ -43,6 +43,7 @@ class ImageGenerationCandidate(BaseModel):
     mimeType: Literal["image/png", "image/jpeg", "image/webp"]
     status: Literal["generated", "selected", "approved"] = "generated"
     revisedPrompt: str = ""
+    metadata: dict = Field(default_factory=dict)
     createdAt: str
 
 

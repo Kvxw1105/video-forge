@@ -17,6 +17,7 @@ from services.image_generation_service import (
     get_batch,
     record_item_failure,
     retry_failed_items,
+    run_local_batch,
     upload_agent_candidate,
 )
 from shared.visual_scene import visual_source_hash
@@ -219,3 +220,40 @@ def test_retry_only_resets_failed_items(tmp_path, monkeypatch):
     assert len(by_scene[first["sceneId"]]["candidates"]) == 1
     assert by_scene[second["sceneId"]]["status"] == "pending"
     assert by_scene[second["sceneId"]]["error"] == ""
+
+
+def test_local_stickman_batch_generates_deterministic_candidates_and_binds(tmp_path, monkeypatch):
+    project = _timed_project(tmp_path, monkeypatch)
+    batch = create_batch(project.id, channel="local", provider_id="stickman")
+    original_windows = [(item["start"], item["end"]) for item in batch["items"]]
+    result = run_local_batch(project.id, batch["batchId"])
+    assert result["status"] == "awaiting_approval"
+    assert all(item["status"] == "generated" for item in result["items"])
+    for item in result["items"]:
+        candidate = item["candidates"][0]
+        assert candidate["mimeType"] == "image/png"
+        assert candidate["metadata"]["providerId"] == "stickman"
+        assert candidate["metadata"]["sidecars"]
+        assert (tmp_path / project.id / candidate["path"]).read_bytes().startswith(b"\x89PNG")
+        assert (tmp_path / project.id / candidate["metadata"]["sidecars"][0]).is_file()
+    assert [(item["start"], item["end"]) for item in result["items"]] == original_windows
+    approved = approve_candidates(
+        project.id,
+        batch["batchId"],
+        [{"sceneId": item["sceneId"], "candidateId": item["candidates"][0]["candidateId"]} for item in result["items"]],
+    )
+    assert approved["batch"]["status"] == "succeeded"
+    stored = project_service.get_project(project.id)
+    assert all(scene.primaryAssetId.startswith("visual_stickman_") for scene in stored.structuredContent.episode.visualPlan.scenes)
+
+
+def test_local_stickman_honors_candidate_count_with_same_scene_input_hash(tmp_path, monkeypatch):
+    project = _timed_project(tmp_path, monkeypatch)
+    batch = create_batch(project.id, channel="local", provider_id="stickman", candidate_count=4)
+    result = run_local_batch(project.id, batch["batchId"])
+    for item in result["items"]:
+        assert len(item["candidates"]) == 4
+        assert len({candidate["candidateId"] for candidate in item["candidates"]}) == 4
+        assert len({candidate["contentHash"] for candidate in item["candidates"]}) == 4
+        assert {candidate["metadata"]["candidateIndex"] for candidate in item["candidates"]} == {0, 1, 2, 3}
+    assert all(item["inputHash"] == batch["items"][index]["inputHash"] for index, item in enumerate(result["items"]))

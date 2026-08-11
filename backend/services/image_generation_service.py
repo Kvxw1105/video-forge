@@ -20,6 +20,8 @@ from config import CONFIG_DIR
 from models.image_generation import ImageGenerationBatch, ImageProviderSettings
 from services.project_service import _project_dir, get_project, update_project
 from shared.visual_scene import visual_source_hash
+from visual_providers import get_provider
+from visual_providers.contracts import SceneRequest
 
 
 class ImageGenerationError(RuntimeError):
@@ -240,6 +242,7 @@ def _candidate_from_bytes(
     data: bytes,
     *,
     revised_prompt: str = "",
+    metadata: dict | None = None,
 ) -> dict:
     if not data:
         raise ImageGenerationError("image_empty", "Generated image is empty")
@@ -268,8 +271,15 @@ def _candidate_from_bytes(
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(f"{target.suffix}.tmp-{uuid4().hex}")
     try:
-        temporary.write_bytes(data)
-        os.replace(temporary, target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            temporary.write_bytes(data)
+            os.replace(temporary, target)
+        except FileNotFoundError:
+            # Windows may transiently invalidate a temp path under an indexed
+            # test/storage directory; retry once with a fresh destination.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -281,8 +291,43 @@ def _candidate_from_bytes(
         "status": "generated",
         "revisedPrompt": revised_prompt,
         "createdAt": _now(),
+        "metadata": dict(metadata or {}),
     }
     item["candidates"].append(candidate)
+    return candidate
+
+
+def _parse_size(value: str, aspect_ratio: str) -> tuple[int, int]:
+    try:
+        width, height = (int(part) for part in str(value or "").lower().split("x", 1))
+        if width > 0 and height > 0:
+            return width, height
+    except (TypeError, ValueError):
+        pass
+    fallback = _default_size(aspect_ratio)
+    width, height = (int(part) for part in fallback.split("x", 1))
+    return width, height
+
+
+def _write_provider_sidecars(project_id: str, candidate: dict, sidecars: dict[str, bytes]) -> dict:
+    if not sidecars:
+        return candidate
+    candidate_path = _project_dir(project_id) / candidate["path"]
+    stored = []
+    for name, data in sidecars.items():
+        safe_name = Path(str(name)).name
+        if not safe_name:
+            continue
+        target = candidate_path.with_name(f"{candidate_path.stem}.{safe_name}")
+        temporary = target.with_suffix(f"{target.suffix}.tmp-{uuid4().hex}")
+        try:
+            temporary.write_bytes(data)
+            os.replace(temporary, target)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        stored.append((target.relative_to(_project_dir(project_id))).as_posix())
+    candidate.setdefault("metadata", {})["sidecars"] = stored
     return candidate
 
 
@@ -460,6 +505,88 @@ def run_builtin_batch(project_id: str, batch_id: str, update=None) -> dict:
     return saved
 
 
+def run_local_batch(project_id: str, batch_id: str, update=None) -> dict:
+    batch = get_batch(project_id, batch_id)
+    _ensure_current(batch)
+    if batch["channel"] != "local":
+        raise ImageGenerationError("channel_mismatch", "Only local visual-provider batches can run locally")
+    provider_id = batch.get("providerId") or "stickman"
+    try:
+        provider = get_provider(provider_id)
+    except KeyError as exc:
+        raise ImageGenerationError("provider_not_found", f"Local visual provider is not registered: {provider_id}") from exc
+    pending = [item for item in batch["items"] if item["status"] in {"pending", "failed"}]
+    if not pending:
+        return batch
+    for item in pending:
+        item["status"] = "generating"
+        item["attempts"] = int(item.get("attempts") or 0) + 1
+        item["errorCode"] = ""
+        item["error"] = ""
+    batch["status"] = "running"
+    batch["updatedAt"] = _now()
+    _write_batch(batch)
+    completed = 0
+    for item in pending:
+        try:
+            width, height = _parse_size(item.get("size"), item.get("aspectRatio") or "9:16")
+            for candidate_index in range(max(1, int(batch.get("candidateCount") or 1))):
+                result = provider.generate(SceneRequest(
+                    project_id=project_id,
+                    visual_plan_id=batch["visualPlanId"],
+                    scene_id=item["sceneId"],
+                    block_id=item.get("blockId") or "",
+                    subtitle_ids=tuple(item.get("subtitleIds") or ()),
+                    text=item.get("text") or "",
+                    start=float(item["start"]),
+                    end=float(item["end"]),
+                    duration=float(item["duration"]),
+                    input_hash=item["inputHash"],
+                    aspect_ratio=item.get("aspectRatio") or "9:16",
+                    width=width,
+                    height=height,
+                    options={
+                        "finalPrompt": item.get("finalPrompt") or "",
+                        "styleAnchor": item.get("styleAnchor") or "",
+                        "continuityAnchor": item.get("continuityAnchor") or "",
+                        "negativePrompt": item.get("negativePrompt") or "",
+                        "candidateIndex": candidate_index,
+                    },
+                ))
+                if not result.success:
+                    raise ImageGenerationError(result.error_code or "provider_generation_failed", result.error or "Local provider failed")
+                if result.input_hash != item["inputHash"]:
+                    raise ImageGenerationError("provider_input_mismatch", "Local provider returned a mismatched input hash")
+                candidate = _candidate_from_bytes(
+                    batch,
+                    item,
+                    result.data,
+                    metadata={
+                        "providerId": result.provider_id,
+                        "providerVersion": result.provider_version,
+                        **result.metadata,
+                    },
+                )
+                _write_provider_sidecars(project_id, candidate, result.sidecars)
+            item["status"] = "generated"
+        except Exception as exc:
+            item["status"] = "failed"
+            item["errorCode"] = getattr(exc, "code", "provider_generation_failed")
+            item["error"] = str(exc)[:1000]
+        completed += 1
+        _save_changed(batch)
+        if update:
+            update(completed / len(pending) * 100, "generating_local_visuals", f"Generated {completed}/{len(pending)} Scene request(s)")
+    saved = get_batch(project_id, batch_id)
+    selections = [
+        {"sceneId": item["sceneId"], "candidateId": item["candidates"][0]["candidateId"]}
+        for item in saved["items"] if item["status"] == "generated" and item["candidates"]
+    ]
+    if saved.get("autoApprove") and selections:
+        return approve_candidates(project_id, batch_id, selections)["batch"]
+    return saved
+
+
 def record_item_failure(
     project_id: str, batch_id: str, scene_id: str, error_code: str, message: str
 ) -> dict:
@@ -519,8 +646,13 @@ def approve_candidates(project_id: str, batch_id: str, selections: list[dict]) -
     asset_dir.mkdir(parents=True, exist_ok=True)
     for item, scene, candidate, source in selected_candidates:
         suffix = source.suffix.lower()
-        asset_id = f"visual_ai_image_{item['sceneId']}"
-        filename = f"ai_{item['sceneId']}_{candidate['contentHash'][:12]}{suffix}"
+        provider_prefix = str(batch.get("providerId") or "ai_image").replace("-", "_")
+        asset_id = (
+            f"visual_{provider_prefix}_{item['sceneId']}"
+            if batch["channel"] == "local"
+            else f"visual_ai_image_{item['sceneId']}"
+        )
+        filename = f"{provider_prefix if batch['channel'] == 'local' else 'ai'}_{item['sceneId']}_{candidate['contentHash'][:12]}{suffix}"
         destination = asset_dir / filename
         if not destination.exists():
             temporary = destination.with_suffix(f"{destination.suffix}.tmp-{uuid4().hex}")
@@ -538,7 +670,7 @@ def approve_candidates(project_id: str, batch_id: str, selections: list[dict]) -
                 "name": filename,
                 "path": (Path("assets") / filename).as_posix(),
                 "metadata": {
-                    "generatedBy": "ai_image",
+                    "generatedBy": "visual_provider" if batch["channel"] == "local" else "ai_image",
                     "channel": batch["channel"],
                     "provider": batch["providerId"],
                     "model": batch["model"],
@@ -548,6 +680,8 @@ def approve_candidates(project_id: str, batch_id: str, selections: list[dict]) -
                     "prompt": item["finalPrompt"],
                     "negativePrompt": item["negativePrompt"],
                     "candidateId": candidate["candidateId"],
+                    "providerVersion": (candidate.get("metadata") or {}).get("providerVersion", ""),
+                    "sidecars": (candidate.get("metadata") or {}).get("sidecars", []),
                 },
             }
         )
@@ -621,7 +755,7 @@ def create_batch(
     current_source_hash = visual_source_hash(project.model_dump())
     if plan.sourceHash != current_source_hash:
         raise ImageGenerationError("visual_plan_stale", "The VisualPlan is stale; regenerate it before image generation")
-    if channel not in {"builtin", "agent"}:
+    if channel not in {"builtin", "agent", "local"}:
         raise ImageGenerationError("invalid_channel", f"Unsupported image generation channel: {channel}")
     if not 1 <= int(candidate_count) <= 4:
         raise ImageGenerationError("invalid_candidate_count", "candidate_count must be between 1 and 4")
@@ -629,6 +763,9 @@ def create_batch(
         provider_settings = load_image_provider_settings()
         provider_id = provider_id or provider_settings.providerId
         model = model or provider_settings.model
+        size = size or _default_size(project.canvas.ratio)
+    elif channel == "local":
+        provider_id = provider_id or "stickman"
         size = size or _default_size(project.canvas.ratio)
 
     selected = set(scene_ids or [])
