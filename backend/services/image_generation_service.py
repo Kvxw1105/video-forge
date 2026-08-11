@@ -330,10 +330,24 @@ def _write_provider_sidecars(project_id: str, candidate: dict, sidecars: dict[st
         if not safe_name:
             continue
         target = candidate_path.with_name(f"{candidate_path.stem}.{safe_name}")
+        target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_suffix(f"{target.suffix}.tmp-{uuid4().hex}")
         try:
-            temporary.write_bytes(data)
-            os.replace(temporary, target)
+            try:
+                temporary.write_bytes(data)
+                os.replace(temporary, target)
+            except FileNotFoundError:
+                # Windows indexers/cleanup jobs can briefly reclaim a
+                # candidate sidecar directory during a long local batch.
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temporary = target.with_suffix(f"{target.suffix}.tmp-{uuid4().hex}")
+                try:
+                    temporary.write_bytes(data)
+                    os.replace(temporary, target)
+                except FileNotFoundError:
+                    # Sidecars are provenance metadata; failure to persist one
+                    # must not discard an otherwise valid canonical asset.
+                    continue
         finally:
             if temporary.exists():
                 temporary.unlink()
@@ -512,7 +526,13 @@ def run_builtin_batch(project_id: str, batch_id: str, update=None) -> dict:
         if item["status"] == "generated" and item["candidates"]
     ]
     if saved.get("autoApprove") and selections:
-        return approve_candidates(project_id, batch_id, selections)["batch"]
+        return approve_candidates(
+            project_id,
+            batch_id,
+            selections,
+            approval_policy="auto_local_provider",
+            approved_by="videoforge:auto",
+        )["batch"]
     return saved
 
 
@@ -614,7 +634,13 @@ def run_local_batch(project_id: str, batch_id: str, update=None) -> dict:
         for item in saved["items"] if item["status"] == "generated" and item["candidates"]
     ]
     if saved.get("autoApprove") and selections:
-        return approve_candidates(project_id, batch_id, selections)["batch"]
+        return approve_candidates(
+            project_id,
+            batch_id,
+            selections,
+            approval_policy="auto_external_provider",
+            approved_by="videoforge:auto",
+        )["batch"]
     return saved
 
 
@@ -646,7 +672,14 @@ def retry_failed_items(project_id: str, batch_id: str) -> dict:
     return _save_changed(batch)
 
 
-def approve_candidates(project_id: str, batch_id: str, selections: list[dict]) -> dict:
+def approve_candidates(
+    project_id: str,
+    batch_id: str,
+    selections: list[dict],
+    *,
+    approval_policy: str = "manual",
+    approved_by: str = "user",
+) -> dict:
     batch = get_batch(project_id, batch_id)
     project, plan = _ensure_current(batch)
     if not selections:
@@ -728,6 +761,16 @@ def approve_candidates(project_id: str, batch_id: str, selections: list[dict]) -
         candidate["status"] = "approved"
         item["status"] = "bound"
         bound.append({"sceneId": item["sceneId"], "assetId": asset_id})
+        batch.setdefault("approvalAudit", []).append({
+            "who": approved_by,
+            "what": "approve_candidate",
+            "policy": approval_policy,
+            "candidateId": candidate["candidateId"],
+            "provider": item.get("providerId") or batch.get("providerId") or "",
+            "inputHash": item["inputHash"],
+            "sceneId": item["sceneId"],
+            "timestamp": _now(),
+        })
 
     plan_data = plan.model_dump()
     plan_data["scenes"] = [scene_by_id[scene.id] for scene in plan.scenes]

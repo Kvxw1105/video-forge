@@ -110,6 +110,7 @@ class ImageGenerationBatch(BaseModel):
     candidateCount: int = Field(default=1, ge=1, le=4)
     routingMode: ImageGenerationRoutingMode = "auto"
     autoApprove: bool = False
+    approvalAudit: list[dict] = Field(default_factory=list)
     status: ImageGenerationBatchStatus
     items: list[ImageGenerationItem] = Field(default_factory=list)
     createdAt: str

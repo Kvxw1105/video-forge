@@ -116,6 +116,7 @@ export const api = {
   listTemplateProductionBatches: () => request<any[]>('/batches/template-production'),
   getTemplateProductionBatch: (batchId: string) => request<any>(`/batches/template-production/${encodeURIComponent(batchId)}`),
   startTemplateProductionBatch: (spec: any) => request<any>('/batches/template-production', { method: 'POST', body: JSON.stringify(spec) }),
+  getProductionProfiles: () => request<any[]>('/agent-factory/production-profiles'),
   saveTemplate: (data: any) => request<any>('/templates', { method: 'POST', body: JSON.stringify(data) }),
   deleteTemplate: (id: string) => request<any>(`/templates/${id}`, { method: 'DELETE' }),
   /** SRT 导入 */
@@ -184,6 +185,9 @@ export const api = {
   getFactoryItemVisuals: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals`),
   validateFactoryItemVisuals: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/validate`, { method: 'POST', body: JSON.stringify({}) }),
   resumeFactoryItem: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/resume`, { method: 'POST', body: JSON.stringify({}) }),
+  approveAndContinueFactoryItem: (batchId: string, itemId: string, selections: any[]) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/approve-and-continue`, { method: 'POST', body: JSON.stringify({ selections }) }),
+  regenerateFactorySceneVisual: (batchId: string, itemId: string, sceneId: string, providerId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/regenerate-visual`, { method: 'POST', body: JSON.stringify({ sceneId, providerId }) }),
+  editFactorySceneAndRerun: (batchId: string, itemId: string, sceneId: string, text: string, providerId = '') => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/scenes/${encodeURIComponent(sceneId)}/edit-and-rerun`, { method: 'POST', body: JSON.stringify({ text, providerId }) }),
   uploadFactorySceneVisual: async (batchId: string, itemId: string, sceneId: string, file: File, replace = false) => {
     const form = new FormData(); form.append('sceneId', sceneId); form.append('replace', String(replace)); form.append('file', file)
     const response = await fetch(`${BASE}/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/upload`, { method: 'POST', body: form })

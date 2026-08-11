@@ -60,6 +60,12 @@ downloads/
 browser-profile/
 playwright-report/
 test-results/
+.e2e-v3-data/
+.e2e-v3-jianying/
+.e2e-v3-data-fix/
+.e2e-v3-jianying-fix/
+.e2e-v3-data-final/
+.e2e-v3-jianying-final/
 
 # VideoForge local state
 _e2e_state.json

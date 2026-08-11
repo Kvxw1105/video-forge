@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import struct
 import subprocess
 from process_utils import run as run_process
@@ -108,7 +109,20 @@ class DraftMediaPathRewriteError(RuntimeError):
 
 
 def _rename_directory(source: Path, target: Path) -> Path:
-    return source.rename(target)
+    try:
+        return source.rename(target)
+    except OSError as exc:
+        # Windows may place the safe staging directory on the system temp
+        # volume while the configured JianYing draft root lives elsewhere.
+        # Keep the atomic rename fast on one volume, but support a verified
+        # copy-and-remove fallback across volumes.
+        if getattr(exc, "winerror", None) != 17:
+            raise
+        if target.exists():
+            raise
+        shutil.copytree(source, target)
+        shutil.rmtree(source, ignore_errors=True)
+        return target
 
 
 def _validate_source_draft(base_dir: Path, source_draft: str | None) -> Path:
@@ -167,6 +181,7 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     # draft_content.json before media paths are rewritten and published.
     staging_parent = base_dir.parent if direct_export else base_dir
     staging_root = staging_parent / f".videoforge-staging-{uuid4().hex}"
+    stable_staging_root: Path | None = None
     try:
         staging_root.mkdir()
         rendered = _render_jianying_draft(
@@ -183,6 +198,18 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
                 "failed to rewrite generated JianYing media paths: draft_content.json is missing"
             )
         # Focused renderer doubles may intentionally keep serialization in memory.
+        if content_file.exists() and real_jianying_runtime and direct_export and policy == "create_new":
+            # pyJianYingDraft can watch the configured draft parent and move
+            # the just-serialised staging folder before media paths are
+            # rewritten. Keep the renderer call in the expected parent (for
+            # compatibility and observability), then copy the complete draft
+            # to an unmonitored temp volume for the rewrite/publish phase.
+            stable_staging_root = Path(tempfile.gettempdir()) / f"videoforge-jianying-{uuid4().hex}"
+            stable_staging_root.mkdir(parents=True, exist_ok=True)
+            stable_draft = stable_staging_root / staged_draft.name
+            shutil.copytree(staged_draft, stable_draft)
+            staged_draft = stable_draft
+            content_file = staged_draft / "draft_content.json"
         if content_file.exists() and real_jianying_runtime:
             _rewrite_draft_media_paths(
                 draft_dir=staged_draft,
@@ -217,6 +244,8 @@ def generate_jianying_draft(project: dict, output_dir: Path | None = None, cue_p
     finally:
         if staging_root.exists():
             shutil.rmtree(staging_root, ignore_errors=True)
+        if stable_staging_root is not None and stable_staging_root.exists():
+            shutil.rmtree(stable_staging_root, ignore_errors=True)
         if reservation_path is not None and reservation_path.exists():
             reservation_path.rmdir()
 
@@ -636,7 +665,9 @@ def _prepare_short_visual_video(
     if segment.get("type") != "video" or target_duration <= 0:
         return asset_path, target_duration
     actual = probe_media_duration(asset_path)
-    if actual <= 0 or actual + 0.01 >= target_duration:
+    # Do not let a frame-quantised MP4 (often a few milliseconds short) create
+    # a JianYing source timerange beyond the media duration.
+    if actual <= 0 or actual >= target_duration:
         return asset_path, target_duration
     policy = str((segment.get("metadata") or {}).get("durationPolicy") or "fit_scene")
     if policy == "trim":
