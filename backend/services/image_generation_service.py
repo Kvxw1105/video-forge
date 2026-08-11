@@ -20,6 +20,9 @@ from config import CONFIG_DIR
 from models.image_generation import ImageGenerationBatch, ImageProviderSettings
 from services.project_service import _project_dir, get_project, update_project
 from shared.visual_scene import visual_source_hash
+from visual_providers import get_provider
+from visual_providers.contracts import SceneRequest
+from visual_providers.router import route_scene
 
 
 class ImageGenerationError(RuntimeError):
@@ -209,14 +212,19 @@ def _save_changed(batch: dict) -> dict:
     return _write_batch(batch)
 
 
-def _image_type(data: bytes) -> tuple[str, str]:
+def _media_type(data: bytes) -> tuple[str, str]:
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return ".png", "image/png"
     if data.startswith(b"\xff\xd8\xff"):
         return ".jpg", "image/jpeg"
     if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return ".webp", "image/webp"
-    raise ImageGenerationError("image_type_unsupported", "Only PNG, JPEG, and WebP images are supported")
+    if data.startswith(b"\x00\x00\x00") and b"ftyp" in data[:32]:
+        return ".mp4", "video/mp4"
+    raise ImageGenerationError("media_type_unsupported", "Only PNG, JPEG, WebP, and MP4 media are supported")
+
+
+_image_type = _media_type
 
 
 def _read_image_source(source: Path | bytes) -> bytes:
@@ -240,6 +248,9 @@ def _candidate_from_bytes(
     data: bytes,
     *,
     revised_prompt: str = "",
+    metadata: dict | None = None,
+    media_type: str = "",
+    filename: str = "",
 ) -> dict:
     if not data:
         raise ImageGenerationError("image_empty", "Generated image is empty")
@@ -249,7 +260,10 @@ def _candidate_from_bytes(
             "image_too_large",
             f"Generated image exceeds the {settings.maxDownloadBytes} byte limit",
         )
-    suffix, mime_type = _image_type(data)
+    suffix, detected_type = _media_type(data)
+    mime_type = media_type or detected_type
+    if mime_type not in {"image/png", "image/jpeg", "image/webp", "video/mp4"}:
+        raise ImageGenerationError("media_type_unsupported", f"Unsupported provider media type: {mime_type}")
     content_hash = hashlib.sha256(data).hexdigest()
     existing = next(
         (candidate for candidate in item["candidates"] if candidate["contentHash"] == content_hash),
@@ -262,14 +276,21 @@ def _candidate_from_bytes(
         Path("image-generation")
         / "candidates"
         / batch["batchId"]
-        / f"{candidate_id}{suffix}"
+        / f"{candidate_id}{Path(filename).suffix.lower() if filename and Path(filename).suffix else suffix}"
     )
     target = _project_dir(batch["projectId"]) / relative
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(f"{target.suffix}.tmp-{uuid4().hex}")
     try:
-        temporary.write_bytes(data)
-        os.replace(temporary, target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            temporary.write_bytes(data)
+            os.replace(temporary, target)
+        except FileNotFoundError:
+            # Windows may transiently invalidate a temp path under an indexed
+            # test/storage directory; retry once with a fresh destination.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -281,8 +302,43 @@ def _candidate_from_bytes(
         "status": "generated",
         "revisedPrompt": revised_prompt,
         "createdAt": _now(),
+        "metadata": dict(metadata or {}),
     }
     item["candidates"].append(candidate)
+    return candidate
+
+
+def _parse_size(value: str, aspect_ratio: str) -> tuple[int, int]:
+    try:
+        width, height = (int(part) for part in str(value or "").lower().split("x", 1))
+        if width > 0 and height > 0:
+            return width, height
+    except (TypeError, ValueError):
+        pass
+    fallback = _default_size(aspect_ratio)
+    width, height = (int(part) for part in fallback.split("x", 1))
+    return width, height
+
+
+def _write_provider_sidecars(project_id: str, candidate: dict, sidecars: dict[str, bytes]) -> dict:
+    if not sidecars:
+        return candidate
+    candidate_path = _project_dir(project_id) / candidate["path"]
+    stored = []
+    for name, data in sidecars.items():
+        safe_name = Path(str(name)).name
+        if not safe_name:
+            continue
+        target = candidate_path.with_name(f"{candidate_path.stem}.{safe_name}")
+        temporary = target.with_suffix(f"{target.suffix}.tmp-{uuid4().hex}")
+        try:
+            temporary.write_bytes(data)
+            os.replace(temporary, target)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        stored.append((target.relative_to(_project_dir(project_id))).as_posix())
+    candidate.setdefault("metadata", {})["sidecars"] = stored
     return candidate
 
 
@@ -460,6 +516,108 @@ def run_builtin_batch(project_id: str, batch_id: str, update=None) -> dict:
     return saved
 
 
+def run_local_batch(project_id: str, batch_id: str, update=None) -> dict:
+    batch = get_batch(project_id, batch_id)
+    _ensure_current(batch)
+    if batch["channel"] != "local":
+        raise ImageGenerationError("channel_mismatch", "Only local visual-provider batches can run locally")
+    pending = [item for item in batch["items"] if item["status"] in {"pending", "failed"}]
+    if not pending:
+        return batch
+    for item in pending:
+        item["status"] = "generating"
+        item["attempts"] = int(item.get("attempts") or 0) + 1
+        item["errorCode"] = ""
+        item["error"] = ""
+    batch["status"] = "running"
+    batch["updatedAt"] = _now()
+    _write_batch(batch)
+    completed = 0
+    for item in pending:
+        try:
+            provider_id = item.get("providerId") or batch.get("providerId") or "stickman"
+            try:
+                provider = get_provider(provider_id)
+            except KeyError as exc:
+                raise ImageGenerationError("provider_not_found", f"Local visual provider is not registered: {provider_id}") from exc
+            width, height = _parse_size(item.get("size"), item.get("aspectRatio") or "9:16")
+            for candidate_index in range(max(1, int(batch.get("candidateCount") or 1))):
+                result = provider.generate(SceneRequest(
+                    project_id=project_id,
+                    visual_plan_id=batch["visualPlanId"],
+                    scene_id=item["sceneId"],
+                    block_id=item.get("blockId") or "",
+                    subtitle_ids=tuple(item.get("subtitleIds") or ()),
+                    text=item.get("text") or "",
+                    start=float(item["start"]),
+                    end=float(item["end"]),
+                    duration=float(item["duration"]),
+                    input_hash=item["inputHash"],
+                    aspect_ratio=item.get("aspectRatio") or "9:16",
+                    width=width,
+                    height=height,
+                    options={
+                        "finalPrompt": item.get("finalPrompt") or "",
+                        "styleAnchor": item.get("styleAnchor") or "",
+                        "continuityAnchor": item.get("continuityAnchor") or "",
+                        "negativePrompt": item.get("negativePrompt") or "",
+                        "candidateIndex": candidate_index,
+                        "requestedMediaType": item.get("requestedMediaType") or "image",
+                        "outputMode": item.get("outputMode") or ("video" if provider_id == "code_visual" and item.get("durationPolicy") == "exact" and item.get("renderMode") == "video" else "static"),
+                        "durationPolicy": item.get("durationPolicy") or "exact",
+                        "semanticIntent": item.get("sceneIntent") or "",
+                        "routeHints": item.get("routeHints") or {},
+                    },
+                ))
+                if not result.success:
+                    raise ImageGenerationError(result.error_code or "provider_generation_failed", result.error or "Local provider failed")
+                if result.input_hash != item["inputHash"]:
+                    raise ImageGenerationError("provider_input_mismatch", "Local provider returned a mismatched input hash")
+                if result.asset_kind == "video":
+                    provider_duration = float(result.duration or 0)
+                    scene_duration = float(item["duration"])
+                    duration_policy = str(item.get("durationPolicy") or result.duration_policy or "exact")
+                    if provider_duration <= 0:
+                        raise ImageGenerationError("provider_duration_missing", "Dynamic provider did not return a duration")
+                    if duration_policy == "reject" and abs(provider_duration - scene_duration) > 0.05:
+                        raise ImageGenerationError("duration_policy_rejected", "Provider media duration does not match the Scene")
+                    if duration_policy == "exact" and abs(provider_duration - scene_duration) > 0.05:
+                        raise ImageGenerationError("duration_policy_exact_mismatch", "Provider media duration does not match exact Scene timing")
+                candidate = _candidate_from_bytes(
+                    batch,
+                    item,
+                    result.data,
+                    metadata={
+                        "providerId": result.provider_id,
+                        "providerVersion": result.provider_version,
+                        "duration": result.duration,
+                        "durationPolicy": result.duration_policy,
+                        "assetKind": result.asset_kind,
+                        **result.metadata,
+                    },
+                    media_type=result.media_type,
+                    filename=result.filename,
+                )
+                _write_provider_sidecars(project_id, candidate, result.sidecars)
+            item["status"] = "generated"
+        except Exception as exc:
+            item["status"] = "failed"
+            item["errorCode"] = getattr(exc, "code", "provider_generation_failed")
+            item["error"] = str(exc)[:1000]
+        completed += 1
+        _save_changed(batch)
+        if update:
+            update(completed / len(pending) * 100, "generating_local_visuals", f"Generated {completed}/{len(pending)} Scene request(s)")
+    saved = get_batch(project_id, batch_id)
+    selections = [
+        {"sceneId": item["sceneId"], "candidateId": item["candidates"][0]["candidateId"]}
+        for item in saved["items"] if item["status"] == "generated" and item["candidates"]
+    ]
+    if saved.get("autoApprove") and selections:
+        return approve_candidates(project_id, batch_id, selections)["batch"]
+    return saved
+
+
 def record_item_failure(
     project_id: str, batch_id: str, scene_id: str, error_code: str, message: str
 ) -> dict:
@@ -519,8 +677,13 @@ def approve_candidates(project_id: str, batch_id: str, selections: list[dict]) -
     asset_dir.mkdir(parents=True, exist_ok=True)
     for item, scene, candidate, source in selected_candidates:
         suffix = source.suffix.lower()
-        asset_id = f"visual_ai_image_{item['sceneId']}"
-        filename = f"ai_{item['sceneId']}_{candidate['contentHash'][:12]}{suffix}"
+        item_provider = str(item.get("providerId") or batch.get("providerId") or "ai_image").replace("-", "_")
+        asset_id = (
+            f"visual_{item_provider}_{item['sceneId']}"
+            if batch["channel"] == "local"
+            else f"visual_ai_image_{item['sceneId']}"
+        )
+        filename = f"{item_provider if batch['channel'] == 'local' else 'ai'}_{item['sceneId']}_{candidate['contentHash'][:12]}{suffix}"
         destination = asset_dir / filename
         if not destination.exists():
             temporary = destination.with_suffix(f"{destination.suffix}.tmp-{uuid4().hex}")
@@ -534,13 +697,13 @@ def approve_candidates(project_id: str, batch_id: str, selections: list[dict]) -
         assets.append(
             {
                 "id": asset_id,
-                "type": "image",
+                "type": "video" if candidate.get("mimeType") == "video/mp4" else "image",
                 "name": filename,
                 "path": (Path("assets") / filename).as_posix(),
                 "metadata": {
-                    "generatedBy": "ai_image",
+                    "generatedBy": "visual_provider" if batch["channel"] == "local" else "ai_image",
                     "channel": batch["channel"],
-                    "provider": batch["providerId"],
+                    "provider": item.get("providerId") or batch["providerId"],
                     "model": batch["model"],
                     "batchId": batch["batchId"],
                     "sceneId": item["sceneId"],
@@ -548,11 +711,19 @@ def approve_candidates(project_id: str, batch_id: str, selections: list[dict]) -
                     "prompt": item["finalPrompt"],
                     "negativePrompt": item["negativePrompt"],
                     "candidateId": candidate["candidateId"],
+                    "providerVersion": (candidate.get("metadata") or {}).get("providerVersion", ""),
+                    "sidecars": (candidate.get("metadata") or {}).get("sidecars", []),
+                    "routingReason": item.get("routingReason", ""),
+                    "routingConfidence": item.get("routingConfidence", 0.0),
+                    "durationPolicy": item.get("durationPolicy", "exact"),
+                    "assetKind": (candidate.get("metadata") or {}).get("assetKind", "image"),
+                    "duration": (candidate.get("metadata") or {}).get("duration"),
                 },
             }
         )
-        existing_ids = [value for value in scene.get("visualAssetIds") or [] if value != asset_id]
-        scene["visualAssetIds"] = [*existing_ids, asset_id]
+        # A Scene has one current visual binding. Re-generation replaces the
+        # previous provider asset instead of accumulating stale bindings.
+        scene["visualAssetIds"] = [asset_id]
         scene["primaryAssetId"] = asset_id
         candidate["status"] = "approved"
         item["status"] = "bound"
@@ -605,6 +776,7 @@ def create_batch(
     model: str = "",
     size: str = "",
     candidate_count: int = 1,
+    routing_mode: str = "auto",
     auto_approve: bool = False,
     style_anchor: str = "",
     continuity_anchor: str = "",
@@ -621,14 +793,19 @@ def create_batch(
     current_source_hash = visual_source_hash(project.model_dump())
     if plan.sourceHash != current_source_hash:
         raise ImageGenerationError("visual_plan_stale", "The VisualPlan is stale; regenerate it before image generation")
-    if channel not in {"builtin", "agent"}:
+    if channel not in {"builtin", "agent", "local"}:
         raise ImageGenerationError("invalid_channel", f"Unsupported image generation channel: {channel}")
+    if routing_mode not in {"auto", "stickman", "code_visual"}:
+        raise ImageGenerationError("invalid_routing_mode", f"Unsupported visual routing mode: {routing_mode}")
     if not 1 <= int(candidate_count) <= 4:
         raise ImageGenerationError("invalid_candidate_count", "candidate_count must be between 1 and 4")
     if channel == "builtin":
         provider_settings = load_image_provider_settings()
         provider_id = provider_id or provider_settings.providerId
         model = model or provider_settings.model
+        size = size or _default_size(project.canvas.ratio)
+    elif channel == "local":
+        provider_id = provider_id or ("auto" if routing_mode == "auto" else routing_mode)
         size = size or _default_size(project.canvas.ratio)
 
     selected = set(scene_ids or [])
@@ -667,6 +844,42 @@ def create_batch(
         if not final_prompt:
             raise ImageGenerationError("prompt_missing", f"Scene {scene.id} has no image Prompt")
         negative_prompt = str(override.get("negativePrompt") or scene.negativePrompt or "text, watermark, logo")
+        route_request = SceneRequest(
+            project_id=project.id,
+            visual_plan_id=plan.planId,
+            scene_id=scene.id,
+            block_id=scene.blockId,
+            subtitle_ids=tuple(scene.subtitleIds),
+            text=text,
+            start=start,
+            end=end,
+            duration=end - start,
+            input_hash="0" * 64,
+            aspect_ratio=aspect_ratio,
+            width=_parse_size(item_size, aspect_ratio)[0],
+            height=_parse_size(item_size, aspect_ratio)[1],
+            options={
+                "finalPrompt": final_prompt,
+                "requestedMediaType": scene.requestedMediaType,
+                "semanticIntent": str(override.get("semanticIntent") or scene.summary or ""),
+                "routeHints": dict((scene.metadata or {}).get("semantic") or {}),
+            },
+        )
+        override_provider = str(override.get("providerId") or "")
+        route = route_scene(route_request, routing_mode, override_provider)
+        item_provider = route.provider_id if channel == "local" else provider_id
+        item_provider_version = ""
+        if channel == "local":
+            try:
+                item_provider_version = get_provider(item_provider).provider_version
+            except KeyError as exc:
+                raise ImageGenerationError("provider_not_found", f"Local visual provider is not registered: {item_provider}") from exc
+        duration_policy = str(override.get("durationPolicy") or "exact")
+        if duration_policy not in {"exact", "crop", "loop", "speed_adjust", "reject"}:
+            raise ImageGenerationError("invalid_duration_policy", f"Unsupported duration policy: {duration_policy}")
+        output_mode = str(override.get("outputMode") or "static")
+        if output_mode not in {"static", "video"}:
+            raise ImageGenerationError("invalid_output_mode", f"Unsupported visual output mode: {output_mode}")
         hash_payload = {
             "projectId": project.id,
             "visualPlanId": plan.planId,
@@ -680,7 +893,10 @@ def create_batch(
             "negativePrompt": negative_prompt,
             "aspectRatio": aspect_ratio,
             "size": item_size,
-            "providerId": provider_id,
+            "providerId": item_provider,
+            "routingMode": routing_mode,
+            "routingReason": route.reason,
+            "durationPolicy": duration_policy,
             "model": model,
         }
         items.append(
@@ -698,7 +914,15 @@ def create_batch(
                 "aspectRatio": aspect_ratio,
                 "size": item_size,
                 "inputHash": _canonical_hash(hash_payload),
-                "expectedFilename": f"scene_{index:03d}.png",
+                "expectedFilename": f"scene_{index:03d}.mp4" if output_mode == "video" else f"scene_{index:03d}.png",
+                "providerId": item_provider,
+                "providerVersion": item_provider_version,
+                "routingReason": route.reason,
+                "routingConfidence": route.confidence,
+                "durationPolicy": duration_policy,
+                "requestedMediaType": scene.requestedMediaType,
+                "outputMode": output_mode,
+                "routeHints": dict((scene.metadata or {}).get("semantic") or {}),
                 "status": "pending",
                 "candidates": [],
             }
@@ -717,6 +941,7 @@ def create_batch(
         "model": model,
         "size": size,
         "candidateCount": candidate_count,
+        "routingMode": routing_mode,
         "autoApprove": auto_approve,
         "status": "awaiting_agent" if channel == "agent" else "pending",
         "items": items,

@@ -326,6 +326,9 @@ def _run_item_outputs(
             from routers.export import export_jianying_direct
             exported = export_jianying_direct(project_id, policy="create_new")
         result["jianyingDraftPath"] = exported.get("finalPath") or exported.get("path")
+        draft_path = Path(str(result["jianyingDraftPath"]))
+        if not draft_path.is_dir() or not (draft_path / "draft_content.json").is_file():
+            raise BatchError("jianying_draft_incomplete", "JianYing export returned without draft_content.json")
         result.setdefault("outputs", {})["jianying"] = {
             "status": "succeeded", "draftPath": result["jianyingDraftPath"],
             "inputHash": input_hash, "completedAt": _now(),

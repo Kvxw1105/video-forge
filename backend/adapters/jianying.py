@@ -592,6 +592,10 @@ def _rewrite_draft_media_paths(draft_dir: Path, old_root: Path, new_root: Path) 
     try:
         payload = json.loads(content_file.read_text(encoding="utf-8"))
         rewritten = rewrite(payload)
+        # Some JianYing runtimes briefly reclaim an un-published staging
+        # folder after serialization. Recreate the owned parent before the
+        # atomic rewrite so the draft can still be published safely.
+        content_file.parent.mkdir(parents=True, exist_ok=True)
         temp_file = content_file.with_name(
             f".{content_file.name}.videoforge-rewrite-{uuid4().hex}.tmp"
         )

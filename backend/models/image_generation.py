@@ -5,7 +5,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-ImageGenerationChannel = Literal["builtin", "agent"]
+ImageGenerationChannel = Literal["builtin", "agent", "local"]
+ImageGenerationRoutingMode = Literal["auto", "stickman", "code_visual"]
+ImageGenerationDurationPolicy = Literal["exact", "crop", "loop", "speed_adjust", "reject"]
 ImageGenerationItemStatus = Literal[
     "pending", "generating", "generated", "approved", "bound", "failed"
 ]
@@ -40,9 +42,10 @@ class ImageGenerationCandidate(BaseModel):
     candidateId: str = Field(min_length=1, max_length=128)
     path: str = Field(min_length=1)
     contentHash: str = Field(min_length=64, max_length=64)
-    mimeType: Literal["image/png", "image/jpeg", "image/webp"]
+    mimeType: Literal["image/png", "image/jpeg", "image/webp", "video/mp4"]
     status: Literal["generated", "selected", "approved"] = "generated"
     revisedPrompt: str = ""
+    metadata: dict = Field(default_factory=dict)
     createdAt: str
 
 
@@ -74,6 +77,14 @@ class ImageGenerationItem(BaseModel):
     error: str = ""
     attempts: int = Field(default=0, ge=0)
     candidates: list[ImageGenerationCandidate] = Field(default_factory=list)
+    providerId: str = ""
+    providerVersion: str = ""
+    routingReason: str = ""
+    routingConfidence: float = Field(default=0.0, ge=0, le=1)
+    durationPolicy: ImageGenerationDurationPolicy = "exact"
+    requestedMediaType: Literal["image", "video", "either"] = "image"
+    outputMode: Literal["static", "video"] = "static"
+    routeHints: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_timing(self):
@@ -97,6 +108,7 @@ class ImageGenerationBatch(BaseModel):
     model: str = ""
     size: str = ""
     candidateCount: int = Field(default=1, ge=1, le=4)
+    routingMode: ImageGenerationRoutingMode = "auto"
     autoApprove: bool = False
     status: ImageGenerationBatchStatus
     items: list[ImageGenerationItem] = Field(default_factory=list)
@@ -112,6 +124,7 @@ class ImageBatchCreateRequest(BaseModel):
     model: str = ""
     size: str = ""
     candidateCount: int = Field(default=1, ge=1, le=4)
+    routingMode: ImageGenerationRoutingMode = "auto"
     autoApprove: bool = False
     styleAnchor: str = ""
     continuityAnchor: str = ""

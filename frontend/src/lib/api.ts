@@ -192,6 +192,7 @@ export const api = {
   },
   unbindFactorySceneVisual: (batchId: string, itemId: string, sceneId: string, deleteProjectAsset = false) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/unbind`, { method: 'POST', body: JSON.stringify({ sceneId, deleteProjectAsset }) }),
   getAIImageProviderSettings: () => request<any>('/settings/ai-image'),
+  getLocalVisualProviders: () => request<any>('/settings/ai-image/providers'),
   updateAIImageProviderSettings: (data: any) => request<any>('/settings/ai-image', { method: 'PUT', body: JSON.stringify(data) }),
   testAIImageProvider: (data: any) => request<any>('/settings/ai-image/test', { method: 'POST', body: JSON.stringify(data) }),
   createImageGenerationBatch: (projectId: string, data: any) => request<any>(`/projects/${projectId}/image-generation/batches`, { method: 'POST', body: JSON.stringify(data) }),
