@@ -530,42 +530,44 @@ def run_local_batch(project_id: str, batch_id: str, update=None) -> dict:
     for item in pending:
         try:
             width, height = _parse_size(item.get("size"), item.get("aspectRatio") or "9:16")
-            result = provider.generate(SceneRequest(
-                project_id=project_id,
-                visual_plan_id=batch["visualPlanId"],
-                scene_id=item["sceneId"],
-                block_id=item.get("blockId") or "",
-                subtitle_ids=tuple(item.get("subtitleIds") or ()),
-                text=item.get("text") or "",
-                start=float(item["start"]),
-                end=float(item["end"]),
-                duration=float(item["duration"]),
-                input_hash=item["inputHash"],
-                aspect_ratio=item.get("aspectRatio") or "9:16",
-                width=width,
-                height=height,
-                options={
-                    "finalPrompt": item.get("finalPrompt") or "",
-                    "styleAnchor": item.get("styleAnchor") or "",
-                    "continuityAnchor": item.get("continuityAnchor") or "",
-                    "negativePrompt": item.get("negativePrompt") or "",
-                },
-            ))
-            if not result.success:
-                raise ImageGenerationError(result.error_code or "provider_generation_failed", result.error or "Local provider failed")
-            if result.input_hash != item["inputHash"]:
-                raise ImageGenerationError("provider_input_mismatch", "Local provider returned a mismatched input hash")
-            candidate = _candidate_from_bytes(
-                batch,
-                item,
-                result.data,
-                metadata={
-                    "providerId": result.provider_id,
-                    "providerVersion": result.provider_version,
-                    **result.metadata,
-                },
-            )
-            _write_provider_sidecars(project_id, candidate, result.sidecars)
+            for candidate_index in range(max(1, int(batch.get("candidateCount") or 1))):
+                result = provider.generate(SceneRequest(
+                    project_id=project_id,
+                    visual_plan_id=batch["visualPlanId"],
+                    scene_id=item["sceneId"],
+                    block_id=item.get("blockId") or "",
+                    subtitle_ids=tuple(item.get("subtitleIds") or ()),
+                    text=item.get("text") or "",
+                    start=float(item["start"]),
+                    end=float(item["end"]),
+                    duration=float(item["duration"]),
+                    input_hash=item["inputHash"],
+                    aspect_ratio=item.get("aspectRatio") or "9:16",
+                    width=width,
+                    height=height,
+                    options={
+                        "finalPrompt": item.get("finalPrompt") or "",
+                        "styleAnchor": item.get("styleAnchor") or "",
+                        "continuityAnchor": item.get("continuityAnchor") or "",
+                        "negativePrompt": item.get("negativePrompt") or "",
+                        "candidateIndex": candidate_index,
+                    },
+                ))
+                if not result.success:
+                    raise ImageGenerationError(result.error_code or "provider_generation_failed", result.error or "Local provider failed")
+                if result.input_hash != item["inputHash"]:
+                    raise ImageGenerationError("provider_input_mismatch", "Local provider returned a mismatched input hash")
+                candidate = _candidate_from_bytes(
+                    batch,
+                    item,
+                    result.data,
+                    metadata={
+                        "providerId": result.provider_id,
+                        "providerVersion": result.provider_version,
+                        **result.metadata,
+                    },
+                )
+                _write_provider_sidecars(project_id, candidate, result.sidecars)
             item["status"] = "generated"
         except Exception as exc:
             item["status"] = "failed"

@@ -48,7 +48,7 @@ export default function AIImageGenerationPanel({ projectId, scenes, onBound, onM
   const [busy, setBusy] = useState('')
 
   useEffect(() => {
-    setDrafts(scenes.map(scene => ({ ...scene, enabled: !scene.prompt ? false : true })))
+    setDrafts(scenes.map(scene => ({ ...scene, enabled: Boolean(scene.prompt?.trim() || scene.text?.trim()) })))
   }, [scenes])
 
   useEffect(() => {
@@ -66,7 +66,7 @@ export default function AIImageGenerationPanel({ projectId, scenes, onBound, onM
     setSelectedCandidates(selections)
   }, [batch])
 
-  const selectedCount = drafts.filter(scene => scene.enabled && scene.prompt.trim()).length
+  const selectedCount = drafts.filter(scene => scene.enabled && Boolean(scene.prompt.trim() || scene.text.trim())).length
   const generatedCount = useMemo(() => (batch?.items || []).filter((item: any) => item.candidates?.length).length, [batch])
 
   const updateScene = (sceneId: string, patch: Partial<SceneDraft>) => {

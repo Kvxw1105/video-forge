@@ -245,3 +245,15 @@ def test_local_stickman_batch_generates_deterministic_candidates_and_binds(tmp_p
     assert approved["batch"]["status"] == "succeeded"
     stored = project_service.get_project(project.id)
     assert all(scene.primaryAssetId.startswith("visual_stickman_") for scene in stored.structuredContent.episode.visualPlan.scenes)
+
+
+def test_local_stickman_honors_candidate_count_with_same_scene_input_hash(tmp_path, monkeypatch):
+    project = _timed_project(tmp_path, monkeypatch)
+    batch = create_batch(project.id, channel="local", provider_id="stickman", candidate_count=4)
+    result = run_local_batch(project.id, batch["batchId"])
+    for item in result["items"]:
+        assert len(item["candidates"]) == 4
+        assert len({candidate["candidateId"] for candidate in item["candidates"]}) == 4
+        assert len({candidate["contentHash"] for candidate in item["candidates"]}) == 4
+        assert {candidate["metadata"]["candidateIndex"] for candidate in item["candidates"]} == {0, 1, 2, 3}
+    assert all(item["inputHash"] == batch["items"][index]["inputHash"] for index, item in enumerate(result["items"]))

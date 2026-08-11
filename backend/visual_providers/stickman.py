@@ -30,7 +30,8 @@ class StickmanProvider:
                 error="Pillow is required by the local Stickman Provider",
             )
 
-        seed = int(hashlib.sha256(f"{request.input_hash}:{request.scene_id}".encode()).hexdigest()[:8], 16)
+        candidate_index = int(request.options.get("candidateIndex") or 0)
+        seed = int(hashlib.sha256(f"{request.input_hash}:{request.scene_id}:{candidate_index}".encode()).hexdigest()[:8], 16)
         template_id = self._template(request.text, seed)
         width, height = max(64, request.width), max(64, request.height)
         stroke = self._PALETTE[seed % len(self._PALETTE)]
@@ -41,6 +42,10 @@ class StickmanProvider:
         cx, cy = width * 0.5, height * 0.48
 
         self._draw_scene(draw, template_id, cx, cy, scale, stroke, line_width, seed)
+        # Keep candidate identity visible in the bytes even when two seeds
+        # happen to select the same semantic template and geometry.
+        marker = max(2, round(8 * scale))
+        draw.rectangle((marker, marker, marker + candidate_index * 3 + 2, marker + 2), fill=stroke)
         buffer = io.BytesIO()
         image.save(buffer, format="PNG", optimize=True)
         png = buffer.getvalue()
@@ -56,6 +61,7 @@ class StickmanProvider:
             metadata={
                 "templateId": template_id,
                 "seed": seed,
+                "candidateIndex": candidate_index,
                 "renderedAt": "deterministic",
                 "timingSource": "scene_request_read_only",
             },
