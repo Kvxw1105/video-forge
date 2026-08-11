@@ -2,6 +2,8 @@
 
 本地运行的视频生产工具，输入文案 + 素材 → 输出剪映草稿 / MP4 预览视频。
 
+> **给网页端 GPT / Codex / 其他 Agent：**先阅读 [AI 项目入口](docs/START_HERE_FOR_AI.md)。它区分 `main` 已实现能力、实验分支、已设计方向和未来设想，并提供继续分析所需的最短上下文。
+
 ## 快速启动
 
 ```bash
@@ -43,7 +45,7 @@ python -m pytest tests -q -p no:cacheprovider
 
 | 功能 | 说明 |
 |------|------|
-| **文案 → AI 配音** | 支持 Edge TTS（免费）、曼波 VIP、自定义 API |
+| **文案 → AI 配音** | 支持 Edge TTS、Fish Audio、Volcengine、曼波、自定义 API 与纯字幕模式 |
 | **自动字幕** | 配音生成同步字幕，9 个位置可调 |
 | **多图/视频轮播** | 上传文件夹，随机或顺序排列，每张设时长 |
 | **音频智能卡点** | librosa 分析 BPM/能量/重音，4 种卡点模式 |
@@ -52,7 +54,7 @@ python -m pytest tests -q -p no:cacheprovider
 | **剪映草稿导出** | 自动检测剪映目录，一键导入 |
 | **全局素材库** | 一次上传反复使用，按文件夹分组管理 |
 | **深色/浅色主题** | 电影感中世纪美学，一键切换 |
-| **AI Agent 接口** | CLI + MCP server，支持 Codex/Claude Code 自动化调用 |
+| **AI Agent 接口** | HTTP API + CLI + MCP + Skill，支持 Codex/Claude Code/本地 Agent 调用 |
 | **AI 生图 Scene Pipeline** | 文案按配音时间切 Scene，支持外接 API 或 Codex/Agent 生图回填，再生成 Preview 与剪映草稿 |
 
 ## 项目结构
@@ -98,6 +100,8 @@ python -m vforge image-batch-upload --pid proj_xxx --batch image_batch_xxx --sce
 ```
 
 完整说明见 [AI 生图 Scene Pipeline](docs/AI_IMAGE_SCENE_PIPELINE.md)。
+
+导演包、火柴人和矢量代码动画属于“已设计方向 + 实验分支资产”，尚未作为 `main` 的正式功能发布。产品分层与后续集成顺序见 [Director Pack 愿景](docs/DIRECTOR_PACK_VISION.md)。
 
 ## 技术栈
 
