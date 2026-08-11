@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from models.image_generation import ImageBatchCreateRequest
 from services import image_generation_service as service
 from services.jobs import start_job
+from visual_providers import list_providers
 
 
 settings_router = APIRouter(prefix="/api/settings/ai-image", tags=["ai-image"])
@@ -24,6 +25,11 @@ def _raise(error: service.ImageGenerationError):
 @settings_router.get("")
 def get_settings():
     return service.public_image_provider_settings(service.load_image_provider_settings())
+
+
+@settings_router.get("/providers")
+def get_local_visual_providers():
+    return {"routingModes": ["auto", "stickman", "code_visual"], "providers": list_providers()}
 
 
 @settings_router.put("")
@@ -58,6 +64,7 @@ def create(project_id: str, payload: ImageBatchCreateRequest):
             model=payload.model,
             size=payload.size,
             candidate_count=payload.candidateCount,
+            routing_mode=payload.routingMode,
             auto_approve=payload.autoApprove,
             style_anchor=payload.styleAnchor,
             continuity_anchor=payload.continuityAnchor,

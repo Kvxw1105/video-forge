@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,9 @@ class ProviderResult:
     provider_version: str
     input_hash: str
     media_type: str = "image/png"
+    asset_kind: Literal["image", "video"] = "image"
+    duration: float | None = None
+    duration_policy: Literal["exact", "crop", "loop", "speed_adjust", "reject"] = "exact"
     filename: str = "scene.png"
     data: bytes = b""
     sidecars: dict[str, bytes] = field(default_factory=dict)

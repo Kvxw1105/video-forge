@@ -14,8 +14,10 @@ def get_provider(provider_id: str) -> VisualProvider:
     # Import lazily so the registry remains cheap for normal API startup.
     if not _PROVIDERS:
         from .stickman import StickmanProvider
+        from .code_visual import CodeVisualProvider
 
         register_provider(StickmanProvider())
+        register_provider(CodeVisualProvider())
     try:
         return _PROVIDERS[provider_id]
     except KeyError as exc:
