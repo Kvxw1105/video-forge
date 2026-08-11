@@ -36,7 +36,7 @@ const blankProvider = {
 const batchStorageKey = (projectId: string) => `videoforge:image-batch:${projectId}`
 
 export default function AIImageGenerationPanel({ projectId, scenes, onBound, onMessage }: Props) {
-  const [channel, setChannel] = useState<'builtin' | 'agent'>('agent')
+  const [channel, setChannel] = useState<'builtin' | 'agent' | 'local'>('local')
   const [drafts, setDrafts] = useState<SceneDraft[]>([])
   const [provider, setProvider] = useState<any>(blankProvider)
   const [styleAnchor, setStyleAnchor] = useState('cinematic, low-saturation, warm mid-century color palette')
@@ -124,7 +124,7 @@ export default function AIImageGenerationPanel({ projectId, scenes, onBound, onM
       const sceneOverrides = Object.fromEntries(drafts.filter(value => value.enabled).map(value => [value.sceneId, { prompt: value.prompt, negativePrompt: value.negativePrompt }]))
       const created = await api.createImageGenerationBatch(projectId, {
         channel,
-        providerId: channel === 'agent' ? 'codex-imagegen' : provider.providerId,
+        providerId: channel === 'agent' ? 'codex-imagegen' : channel === 'local' ? 'stickman' : provider.providerId,
         model: channel === 'builtin' ? provider.model : '',
         candidateCount,
         styleAnchor,
@@ -177,6 +177,7 @@ export default function AIImageGenerationPanel({ projectId, scenes, onBound, onM
     </div>
     <div className="flex flex-wrap gap-2">
       <button className={channel === 'agent' ? 'btn-gold text-xs' : 'btn-cinematic text-xs'} onClick={() => setChannel('agent')}>Codex / Agent 生图</button>
+      <button className={channel === 'local' ? 'btn-gold text-xs' : 'btn-cinematic text-xs'} onClick={() => setChannel('local')}>本地 Stickman（零额度）</button>
       <button className={channel === 'builtin' ? 'btn-gold text-xs' : 'btn-cinematic text-xs'} onClick={() => setChannel('builtin')}>外接 API 生图</button>
     </div>
     <div className="grid lg:grid-cols-2 gap-3">

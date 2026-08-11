@@ -99,11 +99,12 @@ def run(project_id: str, batch_id: str):
     try:
         batch = service.get_batch(project_id, batch_id)
         service.ensure_batch_current(batch)
-        if batch["channel"] != "builtin":
-            raise service.ImageGenerationError("channel_mismatch", "Only built-in batches can be run by Video Forge")
+        if batch["channel"] not in {"builtin", "local"}:
+            raise service.ImageGenerationError("channel_mismatch", "Only built-in or local visual batches can be run by Video Forge")
+        runner = service.run_local_batch if batch["channel"] == "local" else service.run_builtin_batch
         job = start_job(
-            "ai_image_generation",
-            lambda update: service.run_builtin_batch(project_id, batch_id, update),
+            "local_visual_generation" if batch["channel"] == "local" else "ai_image_generation",
+            lambda update: runner(project_id, batch_id, update),
         )
         return {"batchId": batch_id, "job": job}
     except service.ImageGenerationError as exc:
