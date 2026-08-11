@@ -59,6 +59,9 @@ Video Forge 是一个 local-first 视频生产工作台：把文案、配音、�
 | `codex/stickman-visual-provider` | 火柴人 SVG/PNG、模板、批处理、联系表和 Preview/剪映验证 | 适合作为首个最小 Visual Provider 集成候选 |
 | `codex/mediakit-provider` | 本地媒体处理 Provider 与素材检查 UI | 与视觉 Provider 有继承关系，但不是导演包本身 |
 
+| `codex/code-visual-provider-v1` | Multi-Provider Automatic Visual Production v2：Auto Router、Stickman + Code Visual 混合批次、动态 MP4、candidate approval、Preview/JianYing 浏览器验收 | 新 Draft PR，尚未合并 main；以 [`MULTI_PROVIDER_AUTOMATIC_VISUAL_PRODUCTION_V2.md`](MULTI_PROVIDER_AUTOMATIC_VISUAL_PRODUCTION_V2.md) 为准 |
+| `codex/autonomous-video-factory-v3` | Autonomous Video Factory v3：Quick Start、Production Profile、AUTO/REVIEW、真实本地视觉生成、批量审核、增量 Scene 重跑、Preview/JianYing 编排 | 当前开发分支，尚未合并 main；以 [`AUTONOMOUS_VIDEO_FACTORY_V3.md`](AUTONOMOUS_VIDEO_FACTORY_V3.md) 和该分支测试为准 |
+
 重要说法必须引用具体分支或文件。仅仅在 GitHub 中看到代码，不等于用户当前运行的 `main` 已拥有该功能。
 
 ## DESIGNED / FUTURE：已设计与未来方向

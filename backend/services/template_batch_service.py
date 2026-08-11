@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from services import template_service
 from services.project_service import _deep_merge, _project_dir, create_project, create_project_from_payload, get_project, update_project
 from shared.structured_import import parse_structured_markdown
 from shared.structured_presets import build_blocks, build_default_structured_variants
+from shared.production_profiles import compile_profile
 
 MAX_ASSET_BYTES = 2 * 1024 * 1024 * 1024
 _BATCH_LOCK = Lock()
@@ -57,7 +59,14 @@ def _atomic_json(path: Path, value: dict) -> None:
         with temp.open("w", encoding="utf-8", newline="\n") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2)
             handle.flush(); os.fsync(handle.fileno())
-        os.replace(temp, path)
+        for attempt in range(3):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     finally:
         temp.unlink(missing_ok=True)
 
@@ -168,8 +177,8 @@ def _validate_item(spec: TemplateBatchSpec, item, index: int) -> list[str]:
             raise BatchError("structured_blocks_required", "structured markdown has no valid Blocks")
     _validate_assets(item)
     voice = spec.defaults.voiceover
-    if mode == "structured_markdown" and voice.engine not in {"fish_audio", "none"}:
-        raise BatchError("unsupported_combination", "structured_markdown supports only fish_audio or none")
+    if mode == "structured_markdown" and voice.engine not in {"fish_audio", "edge", "none"}:
+        raise BatchError("unsupported_combination", "structured_markdown supports fish_audio, edge, or none")
     if voice.engine in {"fish_audio", "manbo", "custom"} and spec.defaults.concurrency != 1:
         raise BatchError("paid_tts_concurrency", "paid or Fish voiceover requires concurrency=1")
     return []
@@ -215,7 +224,7 @@ def start(spec_payload: dict, start_job) -> dict:
 
 def _new_manifest(batch_id: str, spec: TemplateBatchSpec, spec_hash: str) -> dict:
     now = _now()
-    return {"schemaVersion": 1, "batchId": batch_id, "name": spec.name, "idempotencyKey": spec.idempotencyKey, "specHash": spec_hash, "status": "queued", "progress": 0, "totalItems": len(spec.items), "succeededItems": 0, "failedItems": 0, "skippedItems": 0, "currentItemId": None, "createdAt": now, "updatedAt": now, "items": [{"itemId": item.itemId, "status": "queued", "phase": "queued", "projectId": None, "previewUrl": None, "jianyingDraftPath": None, "jianyingZipPath": None, "duration": None, "visualPlanId": None, "generationPackPath": None, "expectedScenes": [], "visualCoverage": None, "outputs": {"preview": None, "jianying": None}, "attempts": 0, "errorCode": None, "error": None, "startedAt": None, "finishedAt": None} for item in spec.items]}
+    return {"schemaVersion": 1, "batchId": batch_id, "name": spec.name, "idempotencyKey": spec.idempotencyKey, "specHash": spec_hash, "productionMode": spec.productionMode, "productionProfile": spec.productionProfile, "status": "queued", "progress": 0, "totalItems": len(spec.items), "succeededItems": 0, "failedItems": 0, "skippedItems": 0, "currentItemId": None, "createdAt": now, "updatedAt": now, "items": [{"itemId": item.itemId, "status": "queued", "phase": "queued", "projectId": None, "previewUrl": None, "jianyingDraftPath": None, "jianyingZipPath": None, "duration": None, "visualPlanId": None, "generationPackPath": None, "visualBatchId": None, "visualBatchIds": [], "productionProfile": spec.productionProfile, "productionMode": spec.productionMode, "expectedScenes": [], "visualCoverage": None, "outputs": {"preview": None, "jianying": None}, "attempts": 0, "errorCode": None, "error": None, "startedAt": None, "finishedAt": None} for item in spec.items]}
 
 
 def _copy_assets(project_id: str, item) -> dict:
@@ -245,6 +254,40 @@ def _create_structured(spec: TemplateBatchSpec, item, index: int, template_id: s
     return create_project_from_payload(payload).id
 
 
+def _ensure_structured_bindings(project_id: str, voiceover_id: str | None) -> None:
+    """Lower regular TTS subtitles into the same block bindings as Fish alignment."""
+    project = get_project(project_id)
+    if not project or not project.structuredContent or not project.subtitles:
+        return
+    episode = project.structuredContent.episode
+    blocks = list(episode.blocks)
+    subtitles = list(project.subtitles)
+    total_chars = max(1, sum(len(str(block.text or "")) for block in blocks))
+    cursor = 0
+    bindings = []
+    for index, block in enumerate(blocks):
+        if index == len(blocks) - 1:
+            selected = subtitles[cursor:]
+        else:
+            target = max(1, round(len(str(block.text or "")) / total_chars * len(subtitles)))
+            selected = subtitles[cursor:cursor + target]
+        cursor += len(selected)
+        if not selected:
+            continue
+        start = float(selected[0].start)
+        end = float(selected[-1].end)
+        payload = {
+            "blockId": block.id,
+            "subtitleIds": [item.id for item in selected],
+            "duration": max(0.001, end - start),
+            "metadata": {"source": "factory_regular_tts"},
+        }
+        if voiceover_id and project.audio.voiceovers:
+            payload["audioSlice"] = {"voiceoverId": voiceover_id, "sourceStart": start, "sourceEnd": end}
+        bindings.append(payload)
+    update_project(project_id, {"structuredContent": {**project.structuredContent.model_dump(), "episode": {**episode.model_dump(), "bindings": bindings}}})
+
+
 def _process_item(batch_id: str, spec: TemplateBatchSpec, item, index: int, result: dict) -> None:
     outputs: BatchOutputs = item.outputs or spec.defaults.outputs
     template_id = item.templateId or spec.templateId
@@ -266,22 +309,38 @@ def _process_item(batch_id: str, spec: TemplateBatchSpec, item, index: int, resu
     if copied["bgm"]: project_data.setdefault("audio", {}).setdefault("bgm", {})["file"] = copied["bgm"]
     update_project(project_id, project_data)
     voice = spec.defaults.voiceover
-    if voice.enabled and voice.engine != "none":
-        result["phase"] = "voiceover"; _event(batch_id, item.itemId, "voiceover", "started")
+    if voice.enabled:
+        result["phase"] = "generating_voiceover"; _event(batch_id, item.itemId, "generating_voiceover", "started")
         if voice.engine == "fish_audio":
             from routers.structured_audio import generate_fish_aligned
             generate_fish_aligned(project_id, {"referenceId": "", "generateSubtitles": voice.generateSubtitles})
         else:
             from routers.voiceover import generate
-            generate(project_id, {"text": item.script or "", "engine": voice.engine, "speed": voice.speed})
+            source_text = str(item.script or project.script or "")
+            generated = generate(project_id, {"text": source_text, "engine": voice.engine, "speed": voice.speed})
+            if spec.defaults.inputMode == "structured_markdown":
+                _ensure_structured_bindings(project_id, generated.get("voiceoverId"))
     from services import agent_factory_service
+    result["phase"] = "planning_visual_scenes"
+    _event(batch_id, item.itemId, "planning_visual_scenes", "started")
     stage = agent_factory_service.prepare_item_visual_stage(batch_id, spec, item, result)
     result.update(stage.patch)
     if stage.outcome == "awaiting_visual_assets":
         result.update({"status":"awaiting_visual_assets","phase":"awaiting_visual_assets","finishedAt":None})
         _event(batch_id,item.itemId,"awaiting_visual_assets","paused")
         return
-    _run_item_outputs(batch_id, item.itemId, project_id, outputs, result)
+    if stage.outcome == "awaiting_visual_approval":
+        result.update({"status":"awaiting_visual_approval","phase":"awaiting_visual_approval","finishedAt":None})
+        _event(batch_id, item.itemId, "awaiting_visual_approval", "paused")
+        return
+    output_kwargs = {}
+    if spec.productionMode in {"auto", "review"} and spec.productionProfile:
+        current_project = get_project(project_id)
+        current_plan = current_project.structuredContent.episode.visualPlan if current_project and current_project.structuredContent else None
+        if current_project and current_project.structuredContent and current_plan:
+            variant_id = current_project.structuredContent.episode.activeVariantId or "publish"
+            output_kwargs = {"structured_variant_id": variant_id, "input_hash": agent_factory_service.factory_output_hash(current_project, variant_id, current_plan, outputs)}
+    _run_item_outputs(batch_id, item.itemId, project_id, outputs, result, **output_kwargs)
     result.update({"status": "succeeded", "phase": "done", "finishedAt": _now()}); _event(batch_id, item.itemId, "done", "ok")
 
 
@@ -326,6 +385,9 @@ def _run_item_outputs(
             from routers.export import export_jianying_direct
             exported = export_jianying_direct(project_id, policy="create_new")
         result["jianyingDraftPath"] = exported.get("finalPath") or exported.get("path")
+        draft_path = Path(str(result["jianyingDraftPath"]))
+        if not draft_path.is_dir() or not (draft_path / "draft_content.json").is_file():
+            raise BatchError("jianying_draft_incomplete", "JianYing export returned without draft_content.json")
         result.setdefault("outputs", {})["jianying"] = {
             "status": "succeeded", "draftPath": result["jianyingDraftPath"],
             "inputHash": input_hash, "completedAt": _now(),
@@ -335,6 +397,7 @@ def _run_item_outputs(
 def _aggregate_batch_status(items: list[dict]) -> str:
     states=[item.get("status") for item in items]
     if "running" in states: return "running"
+    if "awaiting_visual_approval" in states: return "awaiting_visual_approval"
     if "awaiting_visual_assets" in states: return "awaiting_visual_assets"
     if "ready_to_resume" in states: return "ready_to_resume"
     if states and all(state=="succeeded" for state in states): return "succeeded"

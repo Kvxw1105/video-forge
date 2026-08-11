@@ -5,8 +5,13 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from services import agent_factory_service as factory
 from services import template_batch_service as batches
 from services.project_service import _project_dir
+from shared.production_profiles import list_profiles
 
 router=APIRouter(prefix="/api/agent-factory",tags=["agent-factory"])
+
+@router.get("/production-profiles")
+def production_profiles():
+    return [profile.model_dump(mode="json") for profile in list_profiles()]
 
 def _call(fn,*args):
     try: return fn(*args)
@@ -50,6 +55,15 @@ def unbind_visual(batch_id: str, item_id: str, data: dict): return _call(factory
 def validate_visuals(batch_id:str,item_id:str): return _call(factory.validate_visuals,batch_id,item_id)
 @router.post("/batches/{batch_id}/items/{item_id}/resume")
 def resume_item(batch_id:str,item_id:str): return _call(factory.resume_item,batch_id,item_id)
+@router.post("/batches/{batch_id}/items/{item_id}/approve-and-continue")
+def approve_and_continue(batch_id: str, item_id: str, data: dict):
+    return _call(factory.approve_and_continue, batch_id, item_id, list(data.get("selections") or []))
+@router.post("/batches/{batch_id}/items/{item_id}/regenerate-visual")
+def regenerate_visual(batch_id: str, item_id: str, data: dict):
+    return _call(factory.regenerate_visual, batch_id, item_id, str(data.get("sceneId") or ""), str(data.get("providerId") or ""))
+@router.post("/batches/{batch_id}/items/{item_id}/scenes/{scene_id}/edit-and-rerun")
+def edit_scene_and_rerun(batch_id: str, item_id: str, scene_id: str, data: dict):
+    return _call(factory.edit_scene_and_rerun, batch_id, item_id, scene_id, str(data.get("text") or ""), str(data.get("providerId") or ""))
 @router.post("/batches/{batch_id}/resume")
 def resume_batch(batch_id:str): return _call(factory.resume_batch,batch_id)
 @router.post("/batches/{batch_id}/continue")

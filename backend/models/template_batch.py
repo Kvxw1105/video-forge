@@ -76,6 +76,8 @@ class TemplateBatchSpec(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     idempotencyKey: str = Field(min_length=1, max_length=128)
     templateId: str | None = None
+    productionMode: Literal["auto", "review"] | None = None
+    productionProfile: str | None = None
     defaults: BatchDefaults = Field(default_factory=BatchDefaults)
     items: list[TemplateBatchItem] = Field(min_length=1, max_length=500)
     visualWorkflow: dict | None = None

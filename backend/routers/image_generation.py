@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from models.image_generation import ImageBatchCreateRequest
 from services import image_generation_service as service
 from services.jobs import start_job
+from visual_providers import list_providers
 
 
 settings_router = APIRouter(prefix="/api/settings/ai-image", tags=["ai-image"])
@@ -24,6 +25,11 @@ def _raise(error: service.ImageGenerationError):
 @settings_router.get("")
 def get_settings():
     return service.public_image_provider_settings(service.load_image_provider_settings())
+
+
+@settings_router.get("/providers")
+def get_local_visual_providers():
+    return {"routingModes": ["auto", "stickman", "code_visual"], "providers": list_providers()}
 
 
 @settings_router.put("")
@@ -58,6 +64,7 @@ def create(project_id: str, payload: ImageBatchCreateRequest):
             model=payload.model,
             size=payload.size,
             candidate_count=payload.candidateCount,
+            routing_mode=payload.routingMode,
             auto_approve=payload.autoApprove,
             style_anchor=payload.styleAnchor,
             continuity_anchor=payload.continuityAnchor,
@@ -99,11 +106,12 @@ def run(project_id: str, batch_id: str):
     try:
         batch = service.get_batch(project_id, batch_id)
         service.ensure_batch_current(batch)
-        if batch["channel"] != "builtin":
-            raise service.ImageGenerationError("channel_mismatch", "Only built-in batches can be run by Video Forge")
+        if batch["channel"] not in {"builtin", "local"}:
+            raise service.ImageGenerationError("channel_mismatch", "Only built-in or local visual batches can be run by Video Forge")
+        runner = service.run_local_batch if batch["channel"] == "local" else service.run_builtin_batch
         job = start_job(
-            "ai_image_generation",
-            lambda update: service.run_builtin_batch(project_id, batch_id, update),
+            "local_visual_generation" if batch["channel"] == "local" else "ai_image_generation",
+            lambda update: runner(project_id, batch_id, update),
         )
         return {"batchId": batch_id, "job": job}
     except service.ImageGenerationError as exc:
