@@ -199,3 +199,70 @@ class DirectorPackManifest(BaseModel):
     fallback: FallbackPolicy
     editable: list[str] = Field(default_factory=list, max_length=32)
     derivedFrom: PackIdentity | None = None
+
+
+# ── Resolved Director Policy (read-only run snapshot) ──
+
+SOURCE_TRUST = Literal["LOCAL", "UNVERIFIED", "TRUSTED_BUILTIN"]
+POLICY_STATUS = Literal["enabled", "enabled_with_degradation", "blocked"]
+
+
+class ResolvedPackIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    version: str
+    manifestDigest: str = ""
+    archiveDigest: str = ""
+    sourceTrust: SOURCE_TRUST = "LOCAL"
+
+
+class ResolvedProvider(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    version: str
+    trust: SOURCE_TRUST = "UNVERIFIED"
+    ready: bool = True
+
+
+class EffectiveApproval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["auto", "review"] = "auto"
+    forceReview: bool = False
+    allowTrustedLocal: bool = True
+    allowExternal: bool = False
+
+
+class ResolvedAuthorization(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    externalAllowed: bool = False
+    paidAllowed: bool = False
+    maxCostPerRun: float = 0.0
+
+
+class ResolvedReferenceAsset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    role: str
+
+
+class ResolvedDirectorPolicy(BaseModel):
+    """Immutable, stateless policy snapshot for a single run.
+
+    May be attached to batch/item manifests for recovery and audit but never
+    contains Scene, candidate, binding or timeline data.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    schemaVersion: Literal[1] = 1
+    compilerVersion: str = "1.0.0"
+    pack: ResolvedPackIdentity
+    providers: list[ResolvedProvider] = Field(default_factory=list)
+    skills: list[dict] = Field(default_factory=list)
+    effectiveRouting: dict[str, list[str]] = Field(default_factory=dict)
+    effectiveApproval: EffectiveApproval = Field(default_factory=EffectiveApproval)
+    effectiveStyle: dict = Field(default_factory=dict)
+    effectiveReferences: list[ResolvedReferenceAsset] = Field(default_factory=list)
+    authorization: ResolvedAuthorization = Field(default_factory=ResolvedAuthorization)
+    degradations: list[str] = Field(default_factory=list)
+    status: POLICY_STATUS = "enabled"
+    resolvedAt: str = ""
