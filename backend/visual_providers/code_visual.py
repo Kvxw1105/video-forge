@@ -22,6 +22,15 @@ class CodeVisualProvider:
 
     provider_id = "code_visual"
     provider_version = "1.0.0"
+    trust = "TRUSTED_BUILTIN"
+    template_ids = (
+        "code_visual/keyword",
+        "code_visual/causal",
+        "code_visual/process",
+        "code_visual/comparison",
+        "code_visual/ranking",
+        "code_visual/topology",
+    )
     _COLORS = {
         "dark": ((9, 9, 9), (245, 242, 233), (198, 60, 50), (189, 184, 172)),
         "light": ((245, 241, 232), (23, 23, 23), (165, 46, 40), (77, 74, 67)),

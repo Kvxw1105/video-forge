@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from shared.director_intents import SCENE_INTENTS
 from .contracts import SceneRequest
 
 
@@ -28,6 +29,10 @@ _CODE_RULES = {
     "keyword": ("关键词", "概念", "核心", "重点", "keyword", "concept", "definition", "highlight"),
 }
 
+# Rule keys are the single Scene intent vocabulary; a key outside the shared
+# enum would make ProviderRoute.rules_hit useless to the policy resolver.
+assert set(_STICKMAN_RULES) | set(_CODE_RULES) <= set(SCENE_INTENTS), "router rules must use shared scene intents"
+
 
 def _contains(value: str, terms: tuple[str, ...]) -> bool:
     return any(term in value for term in terms)
@@ -49,4 +54,4 @@ def route_scene(request: SceneRequest, mode: str = "auto", override: str = "") -
         return ProviderRoute("code_visual", "semantic_rule_match", min(0.96, 0.68 + 0.06 * len(code_hits)), code_hits)
     if stick_hits:
         return ProviderRoute("stickman", "semantic_rule_match", min(0.94, 0.7 + 0.06 * len(stick_hits)), stick_hits)
-    return ProviderRoute("stickman", "fallback_provider", 0.35, ("fallback",))
+    return ProviderRoute("stickman", "fallback_provider", 0.35, ("generic",))

@@ -48,6 +48,8 @@ class ProviderResult:
 class VisualProvider(Protocol):
     provider_id: str
     provider_version: str
+    trust: Literal["LOCAL", "UNVERIFIED", "TRUSTED_BUILTIN"]
+    template_ids: tuple[str, ...]
 
     def generate(self, request: SceneRequest) -> ProviderResult:
         """Generate a candidate without changing project or timing state."""

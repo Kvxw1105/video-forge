@@ -18,6 +18,7 @@ from engines.renderer import render_preview
 from adapters.jianying import generate_jianying_draft
 from visual_providers.code_visual import CodeVisualProvider
 from visual_providers.contracts import SceneRequest
+from visual_providers.registry import list_providers
 from visual_providers.router import route_scene
 
 
@@ -63,6 +64,13 @@ def test_router_covers_stickman_and_code_visual_semantics():
     assert route_scene(_request("人物在关系冲突中做出选择")).provider_id == "stickman"
     assert route_scene(_request("因果关系导致流程结果")).provider_id == "code_visual"
     assert route_scene(_request("未知抽象内容")).provider_id == "stickman"
+
+
+def test_provider_registry_exposes_trust_and_template_catalog():
+    providers = {item["providerId"]: item for item in list_providers()}
+    assert providers["code_visual"]["trust"] == "TRUSTED_BUILTIN"
+    assert "code_visual/causal" in providers["code_visual"]["templateIds"]
+    assert "stickman/inner_conflict" in providers["stickman"]["templateIds"]
 
 
 def test_code_visual_provider_renders_multiple_structured_templates_and_motion():

@@ -14,6 +14,14 @@ class StickmanProvider:
 
     provider_id = "stickman"
     provider_version = "1.0.0"
+    trust = "TRUSTED_BUILTIN"
+    template_ids = (
+        "stickman/inner_conflict",
+        "stickman/escape_enclosure",
+        "stickman/relationship_tug",
+        "stickman/burden_boulder",
+        "stickman/generic_two_person_relation",
+    )
 
     _PALETTE = ((47, 43, 38, 255), (99, 77, 57, 255), (67, 81, 78, 255))
 
