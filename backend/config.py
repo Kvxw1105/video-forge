@@ -9,12 +9,14 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 LOGS_DIR = DATA_DIR / "logs"
 CONFIG_DIR = DATA_DIR / "config"
 TEMP_DIR = DATA_DIR / "temp"
+DIRECTOR_PACKS_DIR = CONFIG_DIR / "director-packs"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 PROJECTS_DIR.mkdir(exist_ok=True)
 TEMPLATES_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 CONFIG_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
+DIRECTOR_PACKS_DIR.mkdir(exist_ok=True)
 
 MANBO_API_KEY = os.getenv("MANBO_API_KEY", "")  # Set via env var or TTS settings UI
 MANBO_API_URL = "https://api.milorapart.top/apis/mbAIscvip"
