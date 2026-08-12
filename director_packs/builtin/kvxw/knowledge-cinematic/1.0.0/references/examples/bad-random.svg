@@ -1,0 +1,19 @@
+<svg viewBox="0 0 1024 576" width="1024" height="576">
+  <!-- Knowledge Cinematic: negative example — random scatter, no hierarchy -->
+  <rect x="0" y="0" width="1024" height="576" fill="#1a1814"/>
+
+  <!-- overlapping random elements -->
+  <rect x="120" y="80" width="360" height="300" fill="#28231d"/>
+  <rect x="300" y="60" width="220" height="140" fill="#28231d"/>
+  <circle cx="600" cy="120" r="90" fill="#28231d"/>
+  <line x1="80" y1="420" x2="420" y2="260" stroke="#7a6e5a" stroke-width="6"/>
+  <line x1="520" y1="500" x2="840" y2="180" stroke="#7a6e5a" stroke-width="6"/>
+
+  <!-- sizes and tones vary randomly, text collides -->
+  <text x="140" y="150" fill="#d8c3a5" font-size="64">标题</text>
+  <text x="320" y="120" fill="#7a6e5a" font-size="22">无关</text>
+  <text x="80" y="470" fill="#b8956a" font-size="36">大段文字</text>
+  <text x="700" y="420" fill="#d8c3a5" font-size="18">又一处</text>
+  <rect x="640" y="300" width="180" height="50" fill="#1a1814"/>
+  <text x="660" y="332" fill="#7a6e5a" font-size="26">拥挤</text>
+</svg>

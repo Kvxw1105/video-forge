@@ -1,0 +1,28 @@
+<svg viewBox="0 0 1024 576" width="1024" height="576">
+  <!-- Knowledge Cinematic: positive example — structured editorial hierarchy -->
+  <rect x="0" y="0" width="1024" height="576" fill="#1a1814"/>
+
+  <!-- consistent header band -->
+  <rect x="64" y="56" width="896" height="88" fill="#28231d"/>
+  <text x="96" y="116" fill="#d8c3a5" font-size="42">标题</text>
+  <line x1="96" y1="132" x2="300" y2="132" stroke="#b8956a" stroke-width="4"/>
+
+  <!-- diagram panel: mechanism flow, aligned on one axis -->
+  <rect x="96" y="196" width="420" height="180" fill="#28231d"/>
+  <rect x="128" y="232" width="120" height="80" fill="#1a1814" stroke="#b8956a" stroke-width="2"/>
+  <text x="144" y="278" fill="#d8c3a5" font-size="24">原因</text>
+  <line x1="248" y1="272" x2="328" y2="272" stroke="#b8956a" stroke-width="3"/>
+  <rect x="328" y="232" width="120" height="80" fill="#1a1814" stroke="#b8956a" stroke-width="2"/>
+  <text x="344" y="278" fill="#d8c3a5" font-size="24">结果</text>
+
+  <!-- single annotation, consistent accent -->
+  <circle cx="588" cy="212" r="16" fill="#b8956a"/>
+  <text x="616" y="220" fill="#d8c3a5" font-size="22">标注</text>
+
+  <!-- footer caption, muted -->
+  <text x="96" y="432" fill="#7a6e5a" font-size="24">来源与说明</text>
+
+  <!-- consistent margin markers -->
+  <line x1="64" y1="56" x2="64" y2="520" stroke="#7a6e5a" stroke-width="2"/>
+  <line x1="960" y1="56" x2="960" y2="520" stroke="#7a6e5a" stroke-width="2"/>
+</svg>

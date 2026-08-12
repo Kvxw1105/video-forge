@@ -23,6 +23,19 @@ MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
 MAX_EXPANDED_BYTES = 100 * 1024 * 1024
 ENTRYPOINT = "director-pack.yaml"
 
+# SVG members may not carry executable or remote content: a pack without
+# ``.js`` members could otherwise smuggle embedded scripts, remote
+# references or event handlers through a plain ``.svg`` file.
+SVG_FORBIDDEN_PATTERNS = (
+    "<script",
+    "foreignobject",
+    "javascript:",
+    "http://",
+    "https://",
+    "onload=",
+    "onclick=",
+)
+
 
 class DirectorPackArchiveError(Exception):
     def __init__(self, code: str, message: str):
@@ -36,6 +49,24 @@ class InspectedArchive:
     manifest_digest: str
     archive_digest: str
     entries: dict[str, bytes]
+
+
+def validate_svg_content(text: str) -> None:
+    """Reject executable or remote content inside an SVG member.
+
+    The archive suffix whitelist already forbids ``.js`` members, so an
+    attacker could otherwise smuggle embedded scripts, external references
+    or event handlers through a plain ``.svg`` file. Matching is
+    case-insensitive on purpose: ``<SCRIPT>`` and ``onLoad=`` must be caught
+    too. ``http://`` and ``https://`` are rejected even though they can
+    appear in legitimate data — the protocol forbids remote references.
+    """
+    lowered = text.lower()
+    for pattern in SVG_FORBIDDEN_PATTERNS:
+        if pattern in lowered:
+            raise DirectorPackArchiveError(
+                "svg_invalid_content", f"forbidden content in SVG: {pattern!r}"
+            )
 
 
 def _normalize_path(name: str) -> str:
@@ -105,6 +136,14 @@ def inspect_archive(path: Path) -> InspectedArchive:
             data = zf.read(info)
             if len(data) > MAX_FILE_BYTES:
                 raise DirectorPackArchiveError("file_too_large", f"member exceeds {MAX_FILE_BYTES} bytes: {name!r}")
+            if PurePosixPath(normalized).suffix.lower() == ".svg":
+                try:
+                    text = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise DirectorPackArchiveError(
+                        "svg_invalid_content", f"SVG member is not valid UTF-8 text: {name!r}"
+                    ) from None
+                validate_svg_content(text)
             expanded += len(data)
             if expanded > MAX_EXPANDED_BYTES:
                 raise DirectorPackArchiveError("archive_too_large", "expanded archive exceeds size limit")

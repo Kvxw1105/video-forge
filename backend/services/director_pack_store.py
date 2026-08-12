@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import time
 import zipfile
 from copy import deepcopy
@@ -22,6 +23,9 @@ from .director_pack_archive import ENTRYPOINT, DirectorPackArchiveError, inspect
 
 SOURCE_TRUST = ("LOCAL", "UNVERIFIED", "TRUSTED_BUILTIN")
 PACK_STATUS = ("enabled", "enabled_with_degradation", "disabled", "blocked")
+
+# Repository-shipped packs: <repo>/director_packs/builtin/<publisher>/<slug>/<version>/
+BUILTIN_PACKS_DIR = Path(__file__).resolve().parents[2] / "director_packs" / "builtin"
 
 INSTALLATION_FILE = "installation.json"
 _FIXED_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
@@ -108,6 +112,34 @@ def install(pack_path: Path, *, source_trust: str = "LOCAL") -> dict[str, Any]:
         )
     _install_directory(record, inspected.entries, installed_dir)
     return record
+
+
+def install_builtin(pack_id: str, version: str) -> dict[str, Any]:
+    """Install a repository-shipped built-in pack as TRUSTED_BUILTIN.
+
+    Built-in packs live under ``director_packs/builtin/<publisher>/<slug>/<version>/``
+    in the repository. Their files are packaged into a temporary archive with
+    fixed zip timestamps (so the archive digest is stable across installs) and
+    then passed through the normal immutable ``install()`` path.
+    """
+    if "/" not in pack_id:
+        raise DirectorPackStoreError("invalid_pack_id", f"pack id must be publisher/slug: {pack_id!r}")
+    publisher, slug = pack_id.split("/", 1)
+    builtin_dir = BUILTIN_PACKS_DIR / publisher / slug / version
+    if not builtin_dir.is_dir():
+        raise DirectorPackStoreError(
+            "builtin_pack_not_found", f"builtin pack directory not found: {builtin_dir}"
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        zip_path = Path(tmp) / f"{slug}-{version}.vfdirector"
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(builtin_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                arcname = path.relative_to(builtin_dir).as_posix()
+                info = zipfile.ZipInfo(arcname, _FIXED_ZIP_TIMESTAMP)
+                zf.writestr(info, path.read_bytes())
+        return install(zip_path, source_trust="TRUSTED_BUILTIN")
 
 
 def list_packs() -> list[dict[str, Any]]:

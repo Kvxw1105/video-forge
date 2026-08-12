@@ -1,0 +1,10 @@
+# Knowledge Cinematic — fixed palette (v1)
+# Warm cinematic, low-saturation, restrained contrast. Values are fixed for
+# this pack version; derived packs may override via editable fields only.
+background: "#1a1814"
+surface: "#28231d"
+primary: "#d8c3a5"
+accent: "#b8956a"
+muted: "#7a6e5a"
+saturation: low
+contrast: restrained

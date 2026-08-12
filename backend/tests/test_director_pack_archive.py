@@ -64,7 +64,8 @@ def make_pack(tmp_path: Path, *, manifest: str | None = None, extra_entries: dic
     Path(tmp_path).mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive_path, "w") as zf:
         zf.writestr("director-pack.yaml", manifest or VALID_MANIFEST)
-        zf.writestr("references/guide.svg", "<svg xmlns='http://www.w3.org/2000/svg'></svg>")
+        # note: no xmlns URL — the SVG content validator rejects http://
+        zf.writestr("references/guide.svg", "<svg></svg>")
         for name, data in (extra_entries or {}).items():
             zf.writestr(name, data)
     return archive_path
@@ -244,3 +245,116 @@ def test_disable_enable_and_uninstall(tmp_path, monkeypatch):
     with pytest.raises(store.DirectorPackStoreError) as exc:
         store.get_pack("kvxw/knowledge-cinematic", "1.0.0")
     assert exc.value.code == "pack_not_installed"
+
+
+# ── SVG content validation ──
+
+def test_validate_svg_content_accepts_static_svg():
+    static = (
+        "<svg viewBox='0 0 100 100'>"
+        "<rect x='0' y='0' width='50' height='50' fill='#1a1814'/>"
+        "<circle cx='70' cy='70' r='10' fill='#b8956a'/>"
+        "<text x='10' y='90'>标题</text>"
+        "</svg>"
+    )
+    archive.validate_svg_content(static)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "<svg><script>alert(1)</script></svg>",
+        "<svg><SCRIPT>alert(1)</SCRIPT></svg>",
+        "<svg><foreignObject>text</foreignObject></svg>",
+        "<svg><image xlink:href='javascript:alert(1)'/></svg>",
+        "<svg><text>see http://example.com</text></svg>",
+        "<svg><text>see https://example.com</text></svg>",
+        "<svg onload='alert(1)'></svg>",
+        "<svg onLoad='alert(1)'></svg>",
+        "<svg onclick='alert(1)'></svg>",
+    ],
+)
+def test_validate_svg_content_rejects_forbidden_patterns(payload):
+    with pytest.raises(archive.DirectorPackArchiveError) as exc:
+        archive.validate_svg_content(payload)
+    assert exc.value.code == "svg_invalid_content"
+
+
+def test_archive_rejects_svg_with_embedded_script(tmp_path):
+    bad = make_pack(
+        tmp_path,
+        extra_entries={"references/evil.svg": b"<svg><script>alert(1)</script></svg>"},
+    )
+    with pytest.raises(archive.DirectorPackArchiveError) as exc:
+        archive.inspect_archive(bad)
+    assert exc.value.code == "svg_invalid_content"
+
+
+def test_archive_rejects_svg_with_remote_reference(tmp_path):
+    bad = make_pack(
+        tmp_path,
+        extra_entries={"references/remote.svg": b"<svg><image href='http://example.com/x.png'/></svg>"},
+    )
+    with pytest.raises(archive.DirectorPackArchiveError) as exc:
+        archive.inspect_archive(bad)
+    assert exc.value.code == "svg_invalid_content"
+
+
+# ── built-in pack installation ──
+
+def test_install_builtin_knowledge_cinematic(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DIRECTOR_PACKS_DIR", tmp_path / "installed")
+    record = store.install_builtin("kvxw/knowledge-cinematic", "1.0.0")
+    assert record["id"] == "kvxw/knowledge-cinematic"
+    assert record["version"] == "1.0.0"
+    assert record["sourceTrust"] == "TRUSTED_BUILTIN"
+    assert record["status"] == "enabled"
+    assert record["manifestDigest"].startswith("sha256:")
+    assert record["archiveDigest"].startswith("sha256:")
+
+    installed_dir = tmp_path / "installed" / "kvxw" / "knowledge-cinematic" / "1.0.0"
+    assert (installed_dir / "director-pack.yaml").is_file()
+    assert (installed_dir / "references" / "composition-guide.svg").is_file()
+    assert (installed_dir / "references" / "examples" / "good-structured.svg").is_file()
+    assert (installed_dir / "references" / "examples" / "bad-random.svg").is_file()
+    assert (installed_dir / "presets" / "palette.yaml").is_file()
+
+
+def test_install_builtin_is_idempotent_same_digest(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DIRECTOR_PACKS_DIR", tmp_path / "installed")
+    first = store.install_builtin("kvxw/knowledge-cinematic", "1.0.0")
+    second = store.install_builtin("kvxw/knowledge-cinematic", "1.0.0")
+    assert first["archiveDigest"] == second["archiveDigest"]
+    assert second["status"] == "enabled"
+
+
+def test_install_builtin_rejects_unknown_pack(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DIRECTOR_PACKS_DIR", tmp_path / "installed")
+    with pytest.raises(store.DirectorPackStoreError) as exc:
+        store.install_builtin("kvxw/does-not-exist", "1.0.0")
+    assert exc.value.code == "builtin_pack_not_found"
+
+
+def test_install_builtin_rejects_malformed_pack_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DIRECTOR_PACKS_DIR", tmp_path / "installed")
+    with pytest.raises(store.DirectorPackStoreError) as exc:
+        store.install_builtin("missing-slash", "1.0.0")
+    assert exc.value.code == "invalid_pack_id"
+
+
+def test_install_builtin_manifest_passes_strict_model():
+    import yaml
+
+    from models.director_pack import DirectorPackManifest
+
+    manifest_path = store.BUILTIN_PACKS_DIR / "kvxw" / "knowledge-cinematic" / "1.0.0" / "director-pack.yaml"
+    raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest = DirectorPackManifest.model_validate(raw)
+    assert manifest.format == "videoforge.director-pack"
+    assert set(manifest.routing.intents) == {
+        "keyword", "mechanism", "process", "causal", "comparison",
+        "data", "topology", "human_action", "relationship", "generic",
+    }
+    assert manifest.references[0].role == "composition"
+    assert manifest.presets[0].role == "palette"
+    assert all(dep.required is False for dep in manifest.dependencies.providers)
