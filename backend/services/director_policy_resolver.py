@@ -201,6 +201,10 @@ def resolve(
         degradations=degradations,
         status=status,
         resolvedAt=datetime.now(timezone.utc).isoformat(),
+        candidateCount=manifest.candidates.count,
+        motionPreference=manifest.rhythm.motionPreference,
+        durationPolicyVideo=manifest.durationPolicy.video,
+        continuityAnchor=manifest.continuity.anchor,
     )
 
 

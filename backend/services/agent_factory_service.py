@@ -14,7 +14,16 @@ from services.project_service import _project_dir, update_project
 from services import image_generation_service as image_generation
 from shared.visual_scene import visual_source_hash
 from shared.production_profiles import compile_profile
-from services.factory_visual_orchestrator import run_factory_visuals
+from services.factory_visual_orchestrator import (
+    EffectiveVisualPolicy,
+    effective_policy_from_director,
+    resolved_policy_from_profile,
+    run_factory_visuals,
+)
+from services.director_policy_resolver import resolve_installed
+from models.director_pack import ResolvedDirectorPolicy
+
+LOCAL_ONLY_AUTHORIZATION = {"externalAllowed": False, "paidAllowed": False, "maxCostPerRun": 0}
 
 @dataclass(frozen=True)
 class FactoryStageResult:
@@ -48,11 +57,40 @@ def prepare_item_visual_stage(batch_id, spec, item, item_result: dict) -> Factor
     # v3 converts the old visual pause into an executable local production
     # stage.  The same image-generation batch, candidate, approval and bind
     # lifecycle is used; only the Factory policy decides whether to pause.
-    if spec.productionMode in {"auto", "review"} and spec.productionProfile:
-        profile = compile_profile(spec.productionProfile, (workflow.get("profileOverrides") or {}))
-        workflow = {**workflow, "compiledProfile": profile}
-        item_result["productionProfile"] = profile.model_dump(mode="json")
-        item_result["productionMode"] = spec.productionMode
+    director_selection = spec.directorPack.model_dump() if spec.directorPack else None
+    if spec.productionMode in {"auto", "review"} and (spec.productionProfile or director_selection):
+        if director_selection:
+            # A frozen snapshot on the item manifest wins: resume and
+            # incremental reruns must reuse the exact policy that pinned this
+            # Run, never re-resolve a newer pack version.
+            policy: EffectiveVisualPolicy | None = None
+            snapshot = item_result.get("resolvedDirectorPolicy")
+            if isinstance(snapshot, dict):
+                policy = effective_policy_from_director(ResolvedDirectorPolicy.model_validate(snapshot))
+            else:
+                resolved = resolve_installed(
+                    director_selection["id"],
+                    director_selection["version"],
+                    run_mode=spec.productionMode or "review",
+                    authorization=LOCAL_ONLY_AUTHORIZATION,
+                )
+                if resolved.status == "blocked":
+                    raise batches.BatchError(
+                        "director_pack_blocked",
+                        f"Director Pack cannot run: {resolved.degradations}",
+                    )
+                policy = effective_policy_from_director(resolved)
+                item_result["resolvedDirectorPolicy"] = resolved.model_dump(mode="json")
+                item_result["directorPack"] = director_selection
+            workflow = {**workflow, "compiledPolicy": policy}
+            item_result["productionProfile"] = None
+            item_result["productionMode"] = spec.productionMode
+        else:
+            profile = compile_profile(spec.productionProfile, (workflow.get("profileOverrides") or {}))
+            policy = resolved_policy_from_profile(profile)
+            workflow = {**workflow, "compiledPolicy": policy}
+            item_result["productionProfile"] = profile.model_dump(mode="json")
+            item_result["productionMode"] = spec.productionMode
 
         def _progress(phase: str, message: str) -> None:
             item_result["phase"] = phase
@@ -76,7 +114,7 @@ def prepare_item_visual_stage(batch_id, spec, item, item_result: dict) -> Factor
             current_plan = refreshed.structuredContent.episode.visualPlan if refreshed and refreshed.structuredContent else None
             bound_scenes = [scene.id for scene in (current_plan.scenes if current_plan else []) if scene.primaryAssetId]
         coverage = {"totalScenes": len(expected), "boundScenes": len(bound_scenes), "missingScenes": [row["sceneId"] for row in expected if row["sceneId"] not in set(bound_scenes)], "invalidScenes": [], "complete": len(bound_scenes) == len(expected)}
-        patch = {"visualPlanId": plan.planId if hasattr(plan,"planId") else plan["planId"], "generationPackPath": pack["path"], "expectedScenes": expected, "visualBatchId": batch_ids[0] if batch_ids else None, "visualBatchIds": batch_ids, "visualCoverage": coverage, "visualReview": {"required": visual_result.outcome == "awaiting_visual_approval", "candidateCount": profile.candidateCount, "profileId": profile.id}}
+        patch = {"visualPlanId": plan.planId if hasattr(plan,"planId") else plan["planId"], "generationPackPath": pack["path"], "expectedScenes": expected, "visualBatchId": batch_ids[0] if batch_ids else None, "visualBatchIds": batch_ids, "visualCoverage": coverage, "visualReview": {"required": visual_result.outcome == "awaiting_visual_approval", "candidateCount": policy.candidate_count, "profileId": policy.audit_prefix}}
         if visual_result.outcome == "awaiting_visual_approval":
             return FactoryStageResult("awaiting_visual_approval", patch)
         return FactoryStageResult("continue", patch)

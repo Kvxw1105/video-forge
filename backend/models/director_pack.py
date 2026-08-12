@@ -266,3 +266,10 @@ class ResolvedDirectorPolicy(BaseModel):
     degradations: list[str] = Field(default_factory=list)
     status: POLICY_STATUS = "enabled"
     resolvedAt: str = ""
+    # Runtime strategy facts consumed by the Factory orchestrator.  These are
+    # policy-only extensions beyond the protocol minimum; they still carry no
+    # Project/Scene/binding/timeline state.
+    candidateCount: int = Field(default=1, ge=1, le=4)
+    motionPreference: Literal["static", "gentle", "dynamic"] = "static"
+    durationPolicyVideo: Literal["exact", "crop", "loop", "speed_adjust", "reject"] = "reject"
+    continuityAnchor: str = ""

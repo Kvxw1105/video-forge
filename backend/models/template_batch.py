@@ -70,6 +70,12 @@ class TemplateBatchItem(BaseModel):
         return value
 
 
+class DirectorPackSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=128)
+    version: str = Field(min_length=1, max_length=64)
+
+
 class TemplateBatchSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schemaVersion: Literal[1] = 1
@@ -78,6 +84,7 @@ class TemplateBatchSpec(BaseModel):
     templateId: str | None = None
     productionMode: Literal["auto", "review"] | None = None
     productionProfile: str | None = None
+    directorPack: DirectorPackSelection | None = None
     defaults: BatchDefaults = Field(default_factory=BatchDefaults)
     items: list[TemplateBatchItem] = Field(min_length=1, max_length=500)
     visualWorkflow: dict | None = None
@@ -96,4 +103,6 @@ class TemplateBatchSpec(BaseModel):
             raise ValueError("itemId values must be unique")
         if not self.templateId and any(not item.templateId for item in self.items):
             raise ValueError("templateId is required on the batch or every item")
+        if self.productionProfile and self.directorPack:
+            raise ValueError("productionProfile and directorPack are mutually exclusive")
         return self
