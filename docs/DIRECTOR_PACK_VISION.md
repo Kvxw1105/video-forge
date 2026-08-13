@@ -1,6 +1,6 @@
 # Video Forge Director Pack 愿景
 
-状态：`DESIGNED`。仓库中存在相关 `EXPERIMENTAL_BRANCH`，但本页不表示这些能力已经进入 `main`。
+状态：核心 data-only 协议为 `IMPLEMENTED_ON_BRANCH`（`codex/director-pack-protocol-v1`）；第三方 Provider Pack、商店和商业化仍为 `DESIGNED/FUTURE`。本页不表示这些能力已经进入 `main`。
 
 ## 为什么需要导演包
 
@@ -147,18 +147,18 @@ Pi Agent、Codex 和其他本地 Agent 使用同一个协议，不获得绕过�
 | 状态 | 内容 |
 |---|---|
 | `AVAILABLE_ON_MAIN` | Project、结构化 Scene、AI 图片双通道、素材审批绑定、canonical timeline、Preview/剪映、API/CLI/MCP/Skill |
-| `EXPERIMENTAL_BRANCH` | Director Studio、Pack registry、Pi Director、stickman、code-visual、MediaKit |
-| `DESIGNED` | Director Pack / Visual Provider Pack 两层产品模型 |
+| `IMPLEMENTED_ON_BRANCH` | `.vfdirector` data-only 协议、安全安装/派生/导出、参考模板、Resolved Policy、Factory AUTO/REVIEW、HTTP/CLI/MCP/Skill；内置 `knowledge-cinematic` 使用 stickman + code-visual |
+| `EXPERIMENTAL_BRANCH` | Director Studio、Pi Director、MediaKit 和更完整的代码动画模板库 |
+| `DESIGNED` | 第三方可执行 Visual Provider Pack 的安装、权限与分发层 |
 | `FUTURE` | 第三方包签名与沙箱、商店与付费授权、AI 视频 Provider |
 
 实验分支包括 `codex/director-pack-studio-clean`、`codex/pi-video-director`、`codex/code-visual-renderer-pack`、`codex/stickman-visual-provider` 和 `codex/mediakit-provider`。它们不能整枝合入当前 `main`，也不能当作已发布产品能力。
 
-## 推荐集成顺序
+## 后续集成顺序
 
-1. 从实验分支提取稳定的 Visual Provider contracts 与 registry。
-2. 以 `stickman` 做第一个只生成安全本地素材的最小 Provider。
-3. 让声明式 Director Pack 只能引用已注册 Provider。
-4. 验证 Scene → 代码素材 → 候选审批 → canonical timeline → Preview/JianYing。
-5. 再接入更多矢量动画风格、Pi Agent 编排和第三方 Pack 分发。
+1. 合并并稳定 [`DIRECTOR_PACK_PROTOCOL_V1.md`](DIRECTOR_PACK_PROTOCOL_V1.md) 所述主链。
+2. 扩充可复用的矢量动画模板与导演包参考/preset 内容，不改变 Provider lifecycle。
+3. 让 Pi Agent 和其他本地 Agent 通过同一 Resolved Policy 编排现有能力。
+4. 最后设计第三方 Provider Pack 的权限、签名、沙箱与商业分发。
 
 完整设计约束见 [Director Pack 与 GitHub AI 上下文设计](superpowers/specs/2026-08-11-director-pack-context-design.md)。当前产品事实从 [AI / Agent 项目入口](START_HERE_FOR_AI.md) 开始阅读。

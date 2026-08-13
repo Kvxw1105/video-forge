@@ -20,6 +20,8 @@ V3 将“写完文案后还要手工串接配音、字幕、视觉和导出”�
 
 Quick Start 入口为 `/factory/new`，视觉审核入口为 `/factory/batches/:batchId/items/:itemId/visuals`。
 
+在 `codex/director-pack-protocol-v1` 上，Quick Start 还可在 Production Profile 与 Director Pack 之间二选一。二者编译到同一个 Effective Visual Policy，后续生命周期不变；详见 [`DIRECTOR_PACK_PROTOCOL_V1.md`](DIRECTOR_PACK_PROTOCOL_V1.md)。
+
 ## 不新增第二套时间线
 
 Factory 只编排既有生命周期：`SceneRequest → ProviderResult → candidate → approval → asset import → Scene bind → canonical timeline`。它不直接改写 Scene timing；Scene 起止时间仍由配音/字幕决定。Preview 与 JianYing 均从同一个 structured variant / canonical timeline 编译。
@@ -66,6 +68,8 @@ POST /api/agent-factory/batches/:batch/items/:item/resume
 ```
 
 外部 Agent 仍可使用原有 Image Generation API；V3 没有另造 generation lifecycle。
+
+Director Pack 分支另提供 `/api/director-packs` 的安装、解析、导出和派生接口，以及同源 CLI/MCP 能力。Run 会把 Resolved Director Policy（含稳定 `policyDigest`）固定在 batch/item manifest 中。
 
 ## 证据与验收
 
