@@ -428,3 +428,62 @@ def preview_composition(pid: str, base: str = DEFAULT_BASE) -> dict:
 
 def export_composition_to_jianying(pid: str, base: str = DEFAULT_BASE) -> dict:
     return _request("POST", f"/api/projects/{pid}/composition/export/jianying-direct", base=base, json_body={"policy": "create_new"})
+
+
+# ── Director Packs ────────────────────────────────────────
+
+def _pack_parts(pack_id: str) -> tuple[str, str]:
+    """Split 'publisher/slug' into (publisher, slug). Raises ValueError if malformed."""
+    parts = pack_id.split("/", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise ValueError(f"invalid pack id (expected 'publisher/slug'): {pack_id!r}")
+    return parts[0], parts[1]
+
+
+def _pack_path(pack_id: str, version: str) -> str:
+    publisher, slug = _pack_parts(pack_id)
+    return f"/api/director-packs/{publisher}/{slug}/{version}"
+
+
+def list_director_packs(base: str = DEFAULT_BASE) -> list:
+    return _request("GET", "/api/director-packs", base=base)
+
+
+def import_director_pack(file_path: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", "/api/director-packs/import", base=base,
+                    files={"file": file_path})
+
+
+def get_director_pack(pack_id: str, version: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("GET", _pack_path(pack_id, version), base=base)
+
+
+def resolve_director_pack(pack_id: str, version: str, run_mode: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", f"{_pack_path(pack_id, version)}/resolve", base=base,
+                    json_body={"runMode": run_mode})
+
+
+def export_director_pack(pack_id: str, version: str, output_path: str, base: str = DEFAULT_BASE) -> str:
+    """Download the .vfdirector archive and save to output_path. Returns the saved path."""
+    data = _request("GET", f"{_pack_path(pack_id, version)}/export", base=base)
+    Path(output_path).write_bytes(data)
+    return output_path
+
+
+def derive_director_pack(pack_id: str, version: str, data: dict, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", f"{_pack_path(pack_id, version)}/derive", base=base,
+                    json_body=data)
+
+
+def enable_director_pack(pack_id: str, version: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", f"{_pack_path(pack_id, version)}/enable", base=base,
+                    json_body={})
+
+
+def disable_director_pack(pack_id: str, version: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("POST", f"{_pack_path(pack_id, version)}/disable", base=base,
+                    json_body={})
+
+
+def uninstall_director_pack(pack_id: str, version: str, base: str = DEFAULT_BASE) -> dict:
+    return _request("DELETE", _pack_path(pack_id, version), base=base)
