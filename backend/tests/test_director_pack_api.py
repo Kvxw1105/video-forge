@@ -106,6 +106,8 @@ def test_import_list_get_resolve_export_derive_and_lifecycle(client, pack_file):
     listed = client.get("/api/director-packs")
     assert listed.status_code == 200
     assert [pack["id"] for pack in listed.json()] == ["kvxw/knowledge-cinematic"]
+    assert listed.json()[0]["name"] == "Knowledge Cinematic"
+    assert listed.json()[0]["referenceCount"] == 1
 
     # get → detail with parsed manifest
     detail = client.get("/api/director-packs/kvxw/knowledge-cinematic/1.0.0")
@@ -154,6 +156,13 @@ def test_import_list_get_resolve_export_derive_and_lifecycle(client, pack_file):
     assert manifest["id"] == "kvxw/knowledge-cinematic-custom"
     assert manifest["style"]["anchor"] == "cool palette"
     assert manifest["derivedFrom"] == {"id": "kvxw/knowledge-cinematic", "version": "1.0.0"}
+    assert any(pack["id"] == manifest["id"] for pack in client.get("/api/director-packs").json())
+
+    asset = client.get(
+        "/api/director-packs/kvxw/knowledge-cinematic/1.0.0/assets/references/guide.svg"
+    )
+    assert asset.status_code == 200
+    assert asset.headers["content-type"].startswith("image/svg+xml")
 
     # disable → enable
     disabled = client.post("/api/director-packs/kvxw/knowledge-cinematic/1.0.0/disable")

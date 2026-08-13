@@ -155,8 +155,37 @@ def list_packs() -> list[dict[str, Any]]:
             for version_dir in sorted(slug_dir.iterdir()):
                 record_path = version_dir / INSTALLATION_FILE
                 if record_path.is_file():
-                    result.append(json.loads(record_path.read_text(encoding="utf-8")))
+                    record = json.loads(record_path.read_text(encoding="utf-8"))
+                    manifest_path = version_dir / ENTRYPOINT
+                    if manifest_path.is_file():
+                        import yaml
+
+                        manifest = DirectorPackManifest.model_validate(
+                            yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+                        )
+                        record.update(
+                            {
+                                "name": manifest.name,
+                                "description": manifest.description,
+                                "referenceCount": len(manifest.references) + len(manifest.presets),
+                                "providerDependencies": [
+                                    dependency.model_dump(mode="json")
+                                    for dependency in manifest.dependencies.providers
+                                ],
+                            }
+                        )
+                    result.append(record)
     return result
+
+
+def bootstrap_builtins() -> None:
+    """Install shipped packs once while respecting a later user uninstall."""
+    marker = DIRECTOR_PACKS_DIR / ".builtins-v1-initialized"
+    if marker.exists():
+        return
+    DIRECTOR_PACKS_DIR.mkdir(parents=True, exist_ok=True)
+    install_builtin("kvxw/knowledge-cinematic", "1.0.0")
+    marker.write_text(_utc_now(), encoding="utf-8")
 
 
 def get_pack(pack_id: str, version: str) -> dict[str, Any]:
@@ -168,6 +197,21 @@ def get_pack(pack_id: str, version: str) -> dict[str, Any]:
 
         record["manifest"] = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     return record
+
+
+def get_pack_asset(pack_id: str, version: str, asset_path: str) -> Path:
+    installed_dir = _require_installed(pack_id, version).resolve()
+    relative = Path(str(asset_path).replace("\\", "/"))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise DirectorPackStoreError("unsafe_path", "director pack asset path is unsafe")
+    target = (installed_dir / relative).resolve()
+    try:
+        target.relative_to(installed_dir)
+    except ValueError as exc:
+        raise DirectorPackStoreError("unsafe_path", "director pack asset path is unsafe") from exc
+    if not target.is_file() or target.name == INSTALLATION_FILE:
+        raise DirectorPackStoreError("pack_asset_not_found", "director pack asset was not found")
+    return target
 
 
 def _require_installed(pack_id: str, version: str) -> Path:
@@ -293,6 +337,32 @@ def derive_pack(pack_id: str, version: str, changes: dict[str, Any]) -> Director
         else:
             _set_path(merged, path, value)
     return DirectorPackManifest.model_validate(merged)
+
+
+def derive_and_install(
+    pack_id: str, version: str, changes: dict[str, Any]
+) -> tuple[DirectorPackManifest, dict[str, Any]]:
+    """Materialize a derived manifest as a complete immutable local pack."""
+    manifest = derive_pack(pack_id, version, changes)
+    source_dir = _require_installed(pack_id, version)
+    import yaml
+
+    with tempfile.TemporaryDirectory() as tmp:
+        archive_path = Path(tmp) / "derived.vfdirector"
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            manifest_bytes = yaml.safe_dump(
+                manifest.model_dump(mode="json", exclude_none=True),
+                allow_unicode=True,
+                sort_keys=False,
+            ).encode("utf-8")
+            zf.writestr(zipfile.ZipInfo(ENTRYPOINT, _FIXED_ZIP_TIMESTAMP), manifest_bytes)
+            for path in sorted(source_dir.rglob("*")):
+                if not path.is_file() or path.name in {ENTRYPOINT, INSTALLATION_FILE}:
+                    continue
+                info = zipfile.ZipInfo(path.relative_to(source_dir).as_posix(), _FIXED_ZIP_TIMESTAMP)
+                zf.writestr(info, path.read_bytes())
+        record = install(archive_path, source_trust="LOCAL")
+    return manifest, record
 
 
 def _leaf_value(source: dict[str, Any], path: str) -> Any:

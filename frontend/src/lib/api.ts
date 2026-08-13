@@ -1,4 +1,10 @@
+import type { DirectorPackDetail, DirectorPackSummary, ResolvedDirectorPolicy } from '../types/directorPack'
+
 const BASE = '/api'
+const directorPackAssetUrl = (id: string, version: string, path: string) => {
+  const [publisher, slug] = id.split('/', 2)
+  return `${BASE}/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/assets/${path.split('/').map(encodeURIComponent).join('/')}`
+}
 export type JobStatus<T = any> = {
   jobId: string
   kind: string
@@ -117,6 +123,49 @@ export const api = {
   getTemplateProductionBatch: (batchId: string) => request<any>(`/batches/template-production/${encodeURIComponent(batchId)}`),
   startTemplateProductionBatch: (spec: any) => request<any>('/batches/template-production', { method: 'POST', body: JSON.stringify(spec) }),
   getProductionProfiles: () => request<any[]>('/agent-factory/production-profiles'),
+  listDirectorPacks: () => request<DirectorPackSummary[]>('/director-packs'),
+  getDirectorPack: (id: string, version: string) => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<DirectorPackDetail>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}`)
+  },
+  resolveDirectorPack: (id: string, version: string, runMode: 'auto' | 'review' = 'auto') => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<ResolvedDirectorPolicy>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/resolve`, { method: 'POST', body: JSON.stringify({ runMode }) })
+  },
+  directorPackAssetUrl: (id: string, version: string, path: string) => {
+    return directorPackAssetUrl(id, version, path)
+  },
+  getDirectorPackAssetText: async (id: string, version: string, path: string) => {
+    const response = await fetch(directorPackAssetUrl(id, version, path))
+    if (!response.ok) throw new Error('无法读取导演包参考文件')
+    return response.text()
+  },
+  importDirectorPack: async (file: File) => {
+    const form = new FormData(); form.append('file', file)
+    const response = await fetch(`${BASE}/director-packs/import`, { method: 'POST', body: form })
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body?.detail?.message || '导演包导入失败') }
+    return response.json()
+  },
+  setDirectorPackEnabled: (id: string, version: string, enabled: boolean) => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<DirectorPackSummary>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/${enabled ? 'enable' : 'disable'}`, { method: 'POST', body: JSON.stringify({}) })
+  },
+  uninstallDirectorPack: (id: string, version: string) => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<{ ok: boolean }>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}`, { method: 'DELETE' })
+  },
+  deriveDirectorPack: (id: string, version: string, changes: Record<string, unknown>) => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<any>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/derive`, { method: 'POST', body: JSON.stringify(changes) })
+  },
+  exportDirectorPack: async (id: string, version: string) => {
+    const [publisher, slug] = id.split('/', 2)
+    const response = await fetch(`${BASE}/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/export`)
+    if (!response.ok) throw new Error('导演包导出失败')
+    const blob = await response.blob(); const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${slug}-${version}.vfdirector`; anchor.click()
+    URL.revokeObjectURL(url)
+  },
   saveTemplate: (data: any) => request<any>('/templates', { method: 'POST', body: JSON.stringify(data) }),
   deleteTemplate: (id: string) => request<any>(`/templates/${id}`, { method: 'DELETE' }),
   /** SRT 导入 */

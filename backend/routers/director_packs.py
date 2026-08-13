@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import mimetypes
 from pathlib import Path
 from typing import Literal
 
@@ -19,10 +20,11 @@ from starlette.background import BackgroundTask
 from services import director_pack_store as store
 from services import director_policy_resolver as resolver
 from services.director_pack_archive import DirectorPackArchiveError, MAX_ARCHIVE_BYTES
+from config import DIRECTOR_PACKS_DIR as DEFAULT_DIRECTOR_PACKS_DIR
 
 router = APIRouter(prefix="/api/director-packs", tags=["director-packs"])
 
-_NOT_FOUND_CODES = {"pack_not_installed", "builtin_pack_not_found"}
+_NOT_FOUND_CODES = {"pack_not_installed", "builtin_pack_not_found", "pack_asset_not_found"}
 
 
 def _safe_message(message: str) -> str:
@@ -59,6 +61,8 @@ class ResolveRequest(BaseModel):
 
 @router.get("")
 def list_packs():
+    if store.DIRECTOR_PACKS_DIR == DEFAULT_DIRECTOR_PACKS_DIR:
+        store.bootstrap_builtins()
     return store.list_packs()
 
 
@@ -87,6 +91,16 @@ def import_pack(file: UploadFile = File(...)):
 def get_pack(publisher: str, slug: str, version: str):
     try:
         return store.get_pack(f"{publisher}/{slug}", version)
+    except Exception as error:
+        _error(error)
+
+
+@router.get("/{publisher}/{slug}/{version}/assets/{asset_path:path}")
+def get_pack_asset(publisher: str, slug: str, version: str, asset_path: str):
+    try:
+        target = store.get_pack_asset(f"{publisher}/{slug}", version, asset_path)
+        media_type, _ = mimetypes.guess_type(target.name)
+        return FileResponse(target, media_type=media_type or "application/octet-stream")
     except Exception as error:
         _error(error)
 
@@ -128,8 +142,8 @@ def export_pack(publisher: str, slug: str, version: str):
 @router.post("/{publisher}/{slug}/{version}/derive")
 def derive_pack(publisher: str, slug: str, version: str, body: dict):
     try:
-        manifest = store.derive_pack(f"{publisher}/{slug}", version, body)
-        return manifest.model_dump()
+        manifest, installation = store.derive_and_install(f"{publisher}/{slug}", version, body)
+        return {**manifest.model_dump(mode="json"), "installation": installation}
     except Exception as error:
         _error(error)
 
