@@ -1,0 +1,210 @@
+id: structured-knowledge-video
+version: 1
+name: Structured Knowledge Talking Video
+description: Turn a natural or semi-structured knowledge script into a narrated short video.
+inputContract:
+  required:
+    - source_script_or_project_id
+  optional:
+    - projectId
+    - batchSpec
+entry_modes:
+  - director
+  - continue
+required_inputs:
+  - source_script_or_project_id
+facts:
+  timing_authority: subtitles_or_alignment
+  scene_boundary: block
+steps:
+  - id: inspect
+    kind: tool
+    tool: inspect_video_project
+    auto: true
+    required: true
+    inputFrom: []
+    completionCondition: inspection_available
+    retry: safe
+    onError: fail
+    produces:
+      - project_inspection
+    outputs:
+      - project_summary
+      - readiness_report
+  - id: analyze_script
+    kind: inspection
+    auto: true
+    required: true
+    inputFrom:
+      - inspect
+    completionCondition: script_analysis_available
+    onError: fail
+    produces:
+      - script_analysis
+    outputs:
+      - script_analysis
+    policy: analyze_script
+  - id: prepare_structured_script
+    kind: tool
+    tool: prepare_structured_script
+    auto: true
+    required: true
+    inputFrom:
+      - analyze_script
+    completionCondition: structured_script_ready
+    retry: safe
+    onError: fail
+    produces:
+      - structured_episode_proposal
+    outputs:
+      - structured_episode_proposal
+  - id: approve_structured_script
+    kind: approval
+    policy: script_content_change
+    required: true
+    inputFrom:
+      - prepare_structured_script
+    completionCondition: approval_granted
+    onError: pause
+    reason: User must approve source text or structural rewrite before materialization.
+  - id: materialize_audio_and_subtitles
+    kind: tool
+    tool: create_video_factory_job
+    auto: false
+    required: true
+    inputFrom:
+      - approve_structured_script
+    completionCondition: factory_created
+    onError: recoverable
+    approval_required_when:
+      - paid_tts
+      - paid_llm
+      - regenerate_voiceover
+    retry: safe
+    outputs:
+      - batch_ref
+      - subtitle_alignment_ref
+  - id: plan_scenes
+    kind: tool
+    tool: review_visual_scene_plan
+    auto: true
+    required: true
+    inputFrom:
+      - materialize_audio_and_subtitles
+    completionCondition: scene_plan_ready
+    retry: safe
+    onError: recoverable
+    produces:
+      - scene_plan_report
+    constraints:
+      - no_free_start_end
+      - no_cross_block_scenes
+    outputs:
+      - scene_plan_report
+  - id: prepare_visuals
+    kind: tool
+    tool: prepare_visual_generation_pack
+    auto: true
+    required: true
+    inputFrom:
+      - plan_scenes
+    completionCondition: visual_pack_ready
+    retry: safe
+    onError: recoverable
+    produces:
+      - visual_generation_pack
+    outputs:
+      - visual_generation_pack
+      - pending_visuals_report
+  - id: wait_for_assets
+    kind: wait
+    resume_when: visual_coverage_complete
+    waiting_status: waiting_assets
+    required: true
+    inputFrom:
+      - prepare_visuals
+    condition: visual_assets_complete
+    completionCondition: coverage_complete
+    onError: pause
+  - id: bind_assets
+    kind: tool
+    tool: bind_scene_assets
+    auto: true
+    required: true
+    inputFrom:
+      - wait_for_assets
+    completionCondition: assets_bound
+    retry: idempotent
+    onError: recoverable
+    produces:
+      - visual_binding_report
+    approval_required_when:
+      - replace_existing_asset
+    outputs:
+      - visual_binding_report
+  - id: validate_assets
+    kind: tool
+    tool: validate_video_assets
+    auto: true
+    required: true
+    inputFrom:
+      - bind_assets
+    completionCondition: assets_valid
+    retry: safe
+    onError: pause
+    produces:
+      - asset_validation_report
+    outputs:
+      - asset_validation_report
+  - id: preview
+    kind: tool
+    tool: build_video_preview
+    auto: true
+    required: true
+    inputFrom:
+      - validate_assets
+    completionCondition: preview_ready
+    onError: recoverable
+    retry: safe
+    produces:
+      - preview_ref
+    outputs:
+      - preview_ref
+  - id: qa
+    kind: evaluation
+    tool: audit_video_preview
+    auto: true
+    required: true
+    inputFrom:
+      - preview
+    completionCondition: qa_complete
+    retry: safe
+    onError: recoverable
+    produces:
+      - qa_report
+    outputs:
+      - qa_report
+  - id: export
+    kind: tool
+    tool: export_editable_draft
+    auto: true
+    required: true
+    inputFrom:
+      - qa
+    completionCondition: editable_draft_exported
+    retry: idempotent
+    onError: recoverable
+    mode: create_new
+    produces:
+      - draft_export_ref
+    outputs:
+      - draft_export_ref
+completion:
+  requires:
+    - preview_ref
+    - qa_report
+    - draft_export_ref
+failure_handling:
+  missing_assets: pause_waiting_assets
+  stale_project: reinspect_and_retry_affected_step
+  provider_failure: mark_recoverable_without_repeating_paid_step

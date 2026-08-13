@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video-forge.local/agent/contracts/agent-run-log.schema.json",
+  "title": "Video Agent Phase 0 Run Log",
+  "type": "object",
+  "required": ["runId", "recipeId", "status", "steps", "toolCalls", "approvals", "errors", "cost"],
+  "additionalProperties": false,
+  "properties": {
+    "runId": { "type": "string", "minLength": 1 },
+    "recipeId": { "type": "string", "minLength": 1 },
+    "projectId": { "type": ["string", "null"] },
+    "batchId": { "type": ["string", "null"] },
+    "itemId": { "type": ["string", "null"] },
+    "runtime": { "type": "string", "default": "codex_mcp" },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "running", "waiting_user", "waiting_assets", "waiting_external", "paused", "failed", "recoverable", "succeeded", "cancelled"]
+    },
+    "startedAt": { "type": ["string", "null"], "format": "date-time" },
+    "finishedAt": { "type": ["string", "null"], "format": "date-time" },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status"],
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "status": { "type": "string" },
+          "attempt": { "type": "integer", "minimum": 0 },
+          "inputArtifacts": { "type": "array" },
+          "outputArtifacts": { "type": "array" },
+          "errorCode": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "toolCalls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["toolName", "status"],
+        "additionalProperties": true,
+        "properties": {
+          "toolName": { "type": "string" },
+          "idempotencyKey": { "type": ["string", "null"] },
+          "status": { "type": "string" },
+          "startedAt": { "type": ["string", "null"] },
+          "finishedAt": { "type": ["string", "null"] },
+          "resultRef": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation", "status"],
+        "additionalProperties": true,
+        "properties": {
+          "operation": { "type": "string" },
+          "risk": { "type": "string" },
+          "status": { "type": "string" },
+          "costEstimate": { "type": "object" }
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "additionalProperties": true,
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "recoverable": { "type": "boolean" }
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "tokensIn": { "type": "integer", "minimum": 0 },
+        "tokensOut": { "type": "integer", "minimum": 0 },
+        "providerCost": { "type": "number", "minimum": 0 },
+        "ttsCost": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string" }
+      }
+    }
+  }
+}

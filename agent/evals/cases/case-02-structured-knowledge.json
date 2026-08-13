@@ -1,0 +1,45 @@
+{
+  "id": "case-02-structured-knowledge",
+  "category": "structured-knowledge",
+  "recipeId": "structured-knowledge-video",
+  "goal": "Turn a knowledge script into a narrated short video (2/5)",
+  "fixtures": {
+    "projectId": "synthetic_project_02",
+    "batchId": null,
+    "notes": "Synthetic Phase 0 fixture. Do not copy real project data into eval cases."
+  },
+  "expected": {
+    "finalState": "succeeded",
+    "recipeSelected": "structured-knowledge-video",
+    "constraints": [
+      "no_subtitle_timing_mutation",
+      "no_cross_block_scene",
+      "no_paid_provider_without_approval",
+      "no_duplicate_successful_step"
+    ]
+  },
+  "metrics": {
+    "completed": null,
+    "toolCallCount": null,
+    "duplicateToolCallCount": null,
+    "approvalCount": null,
+    "errorCount": null,
+    "recovered": null,
+    "finalPreviewUsable": null,
+    "editableDraftOpenable": null,
+    "tokenCost": null
+  },
+  "executionLevel": "static",
+  "expectedStateTransitions": [
+    "running",
+    "succeeded"
+  ],
+  "expectedPolicies": [
+    "script_content_change"
+  ],
+  "expectedArtifacts": [
+    "run_log",
+    "eval_result"
+  ],
+  "closedLoopExecuted": false
+}

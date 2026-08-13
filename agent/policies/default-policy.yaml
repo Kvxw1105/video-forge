@@ -1,0 +1,45 @@
+id: default-policy
+name: Default Video Director Policy
+version: 0.1.0
+rules:
+  - operation: read_project
+    default: auto
+    reason: Read-only inspection is required for every recipe.
+  - operation: analyze_script
+    default: auto
+    reason: Analysis creates agent artifacts only.
+  - operation: generate_scene_draft
+    default: auto
+    reason: Draft scenes do not mutate project state until persisted through VideoForge validation.
+  - operation: modify_prompt
+    default: auto_save_version
+    reason: Prompt changes are versioned creative artifacts.
+  - operation: modify_source_text
+    default: require_approval
+    reason: Original text is user-authored content.
+  - operation: import_or_bind_new_asset
+    default: auto
+    reason: Binding missing assets is expected after validation.
+  - operation: replace_existing_asset
+    default: require_approval
+    reason: Replacement can change existing user work.
+  - operation: build_preview
+    default: auto
+    reason: Preview is an expected local execution output.
+  - operation: export_editable_draft
+    default: auto_create_new
+    reason: Export must create a new editable draft and not overwrite user work.
+guards:
+  - id: subtitle_timing_is_read_only
+    applies_to:
+      - Subtitle
+      - Alignment
+    enforcement: block_agent_mutation
+  - id: scene_block_boundary
+    applies_to:
+      - Scene
+    enforcement: reject_cross_block_scene
+  - id: inspect_before_write
+    applies_to:
+      - all_write_tools
+    enforcement: require_fresh_inspection

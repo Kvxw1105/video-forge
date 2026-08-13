@@ -1,0 +1,32 @@
+id: destructive-operation-policy
+name: Destructive Operation Policy
+version: 0.1.0
+destructive_operations:
+  - operation: delete_project
+    default: require_strong_approval
+    confirmation_phrase: project_name
+  - operation: delete_asset
+    default: require_approval
+  - operation: overwrite_asset
+    default: require_approval
+  - operation: unbind_asset_and_delete_file
+    default: require_approval
+  - operation: overwrite_editable_draft
+    default: forbidden
+    replacement: export_editable_draft_create_new
+  - operation: overwrite_subtitles
+    default: forbidden_for_agent
+  - operation: mutate_subtitle_timing
+    default: forbidden_for_agent
+  - operation: mutate_project_file_directly
+    default: forbidden
+recovery:
+  safe_resume:
+    default: auto
+    allowed_when:
+      - previous_step_not_succeeded
+      - idempotency_key_matches
+  rerun_successful_step:
+    default: require_approval
+  remove_failed_artifact:
+    default: require_approval

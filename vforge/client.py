@@ -428,3 +428,188 @@ def preview_composition(pid: str, base: str = DEFAULT_BASE) -> dict:
 
 def export_composition_to_jianying(pid: str, base: str = DEFAULT_BASE) -> dict:
     return _request("POST", f"/api/projects/{pid}/composition/export/jianying-direct", base=base, json_body={"policy": "create_new"})
+
+
+# High-level Video Director tools. These are thin wrappers around existing
+# VideoForge APIs so the agent can work at a domain level without owning facts.
+def inspect_video_project(pid: str, base: str = DEFAULT_BASE) -> dict:
+    project = get_project(pid, base=base)
+    visual_context = None
+    visual_plan = None
+    structured = project.get("structuredContent") or {}
+    episode = structured.get("episode") or {}
+    try:
+        visual_context = get_visual_planning_context(pid, base=base)
+    except VForgeError as exc:
+        visual_context = {"error": {"status": exc.status, "detail": exc.detail}}
+    try:
+        visual_plan = get_visual_scene_plan(pid, base=base)
+    except VForgeError as exc:
+        visual_plan = {"error": {"status": exc.status, "detail": exc.detail}}
+    return {
+        "projectId": pid,
+        "name": project.get("name"),
+        "updatedAt": project.get("updated_at"),
+        "canvas": project.get("canvas"),
+        "structured": {
+            "present": bool(structured),
+            "blockCount": len(episode.get("blocks") or []),
+            "variantCount": len(episode.get("variants") or []),
+        },
+        "subtitles": {
+            "count": len(project.get("subtitles") or []),
+            "timed": all(("start" in item and "end" in item) for item in (project.get("subtitles") or [])),
+        },
+        "audio": project.get("audio") or {},
+        "assets": {
+            "count": len(project.get("assets") or []),
+            "types": sorted({str(item.get("type") or "unknown") for item in (project.get("assets") or [])}),
+        },
+        "segments": {"count": len(project.get("segments") or [])},
+        "visualContext": visual_context,
+        "visualPlan": visual_plan,
+    }
+
+
+def create_video_factory_job(spec: dict, base: str = DEFAULT_BASE) -> dict:
+    return start_template_batch(spec, base=base)
+
+
+def prepare_structured_script(spec: dict, base: str = DEFAULT_BASE) -> dict:
+    text = spec.get("text") if isinstance(spec, dict) else None
+    project_id = spec.get("projectId") if isinstance(spec, dict) else None
+    if text:
+        parsed = parse_structured_markdown(str(text), base=base)
+        return {"mode": "parsed_text", "proposal": parsed}
+    if project_id:
+        draft = get_structured_episode_draft(str(project_id), base=base)
+        return {"mode": "project_draft", "projectId": project_id, "proposal": draft}
+    raise VForgeError(422, "prepare_structured_script requires text or projectId")
+
+
+def review_visual_scene_plan(
+    pid: str,
+    settings: dict | None = None,
+    plan: dict | None = None,
+    expected_updated_at: str | None = None,
+    persist: bool = False,
+    base: str = DEFAULT_BASE,
+) -> dict:
+    context = get_visual_planning_context(pid, base=base)
+    if plan is not None and persist:
+        saved = set_visual_scene_plan(pid, plan, expected_updated_at=expected_updated_at, base=base)
+        validation = validate_visual_scene_plan(pid, base=base)
+        return {"projectId": pid, "mode": "persisted", "context": context, "plan": saved, "validation": validation}
+    if plan is not None:
+        return {"projectId": pid, "mode": "draft", "context": context, "plan": plan}
+    if settings is not None:
+        proposed = propose_visual_scene_plan(pid, settings, base=base)
+        return {"projectId": pid, "mode": "proposed", "context": context, "plan": proposed}
+    current = get_visual_scene_plan(pid, base=base)
+    validation = validate_visual_scene_plan(pid, base=base)
+    return {"projectId": pid, "mode": "current", "context": context, "plan": current, "validation": validation}
+
+
+def prepare_visual_generation_pack(pid: str, base: str = DEFAULT_BASE) -> dict:
+    return export_visual_generation_pack(pid, base=base)
+
+
+def inspect_pending_visuals(batch_id: str, base: str = DEFAULT_BASE) -> dict:
+    return factory_pending_visuals(batch_id, base=base)
+
+
+def bind_scene_assets(batch_id: str, item_id: str, data: dict, base: str = DEFAULT_BASE) -> dict:
+    return factory_import_visuals(batch_id, item_id, data, base=base)
+
+
+def validate_video_assets(batch_id: str, item_id: str, base: str = DEFAULT_BASE) -> dict:
+    return factory_validate_visuals(batch_id, item_id, base=base)
+
+
+def validate_video_readiness(pid: str, batch_id: str | None = None, item_id: str | None = None, base: str = DEFAULT_BASE) -> dict:
+    project = inspect_video_project(pid, base=base)
+    checks = [
+        {"id": "project_exists", "ok": True},
+        {"id": "subtitles_present", "ok": project["subtitles"]["count"] > 0},
+        {"id": "subtitle_timing_present", "ok": bool(project["subtitles"]["timed"])},
+        {"id": "audio_present", "ok": bool(project.get("audio"))},
+    ]
+    visual_validation = None
+    try:
+        visual_validation = validate_visual_scene_plan(pid, base=base)
+        checks.append({"id": "visual_scene_plan_valid", "ok": True})
+    except VForgeError as exc:
+        visual_validation = {"error": {"status": exc.status, "detail": exc.detail}}
+        checks.append({"id": "visual_scene_plan_valid", "ok": False, "error": exc.detail})
+    if batch_id and item_id:
+        try:
+            asset_validation = _request("POST", f"/api/agent-factory/batches/{batch_id}/items/{item_id}/visuals/validate", base=base, json_body={})
+            checks.append({"id": "factory_visual_assets_valid", "ok": True})
+        except VForgeError as exc:
+            asset_validation = {"error": {"status": exc.status, "detail": exc.detail}}
+            checks.append({"id": "factory_visual_assets_valid", "ok": False, "error": exc.detail})
+    else:
+        asset_validation = None
+    return {
+        "projectId": pid,
+        "batchId": batch_id,
+        "itemId": item_id,
+        "ready": all(item.get("ok") for item in checks),
+        "checks": checks,
+        "visualValidation": visual_validation,
+        "assetValidation": asset_validation,
+    }
+
+
+def inspect_video_readiness(pid: str, batch_id: str | None = None, item_id: str | None = None, base: str = DEFAULT_BASE) -> dict:
+    return validate_video_readiness(pid, batch_id=batch_id, item_id=item_id, base=base)
+
+
+def build_video_preview(pid: str, base: str = DEFAULT_BASE) -> dict:
+    return render_preview(pid, base=base)
+
+
+def audit_video_preview(pid: str, base: str = DEFAULT_BASE) -> dict:
+    project = get_project(pid, base=base)
+    subtitles = project.get("subtitles") or []
+    assets = project.get("assets") or []
+    audio = project.get("audio") or {}
+    preview = project.get("preview") or project.get("previewPath") or project.get("preview_path")
+    checks = [
+        {"id": "preview_reference_present", "ok": bool(preview)},
+        {"id": "audio_reference_present", "ok": bool(audio)},
+        {"id": "subtitles_present", "ok": len(subtitles) > 0},
+        {"id": "assets_present", "ok": len(assets) > 0},
+    ]
+    issues = []
+    if not preview:
+        issues.append({"sceneId": None, "severity": "major", "type": "preview_missing", "suggestion": "Run build_video_preview after assets validate."})
+    if not audio:
+        issues.append({"sceneId": None, "severity": "major", "type": "audio_missing", "suggestion": "Materialize or import audio before final QA."})
+    if not subtitles:
+        issues.append({"sceneId": None, "severity": "major", "type": "subtitles_missing", "suggestion": "Generate or import subtitles before scene planning."})
+    score = max(0, 100 - 20 * len(issues))
+    return {
+        "projectId": pid,
+        "result": "passed" if not issues else "needs_revision",
+        "score": score,
+        "checks": checks,
+        "issues": issues,
+    }
+
+
+def export_editable_draft(pid: str, base: str = DEFAULT_BASE) -> dict:
+    return export_jianying_direct(pid, base=base)
+
+
+def recover_video_job(batch_id: str, item_id: str | None = None, base: str = DEFAULT_BASE) -> dict:
+    if item_id:
+        return _request("POST", f"/api/agent-factory/batches/{batch_id}/items/{item_id}/resume", base=base, json_body={})
+    return _request("POST", f"/api/agent-factory/batches/{batch_id}/resume", base=base, json_body={})
+
+
+def get_video_job_status(batch_id: str, base: str = DEFAULT_BASE) -> dict:
+    try:
+        return get_template_batch(batch_id, base=base)
+    except VForgeError:
+        return _request("GET", f"/api/agent-factory/batches/{batch_id}/pending-visuals", base=base)

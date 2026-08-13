@@ -79,6 +79,11 @@ handoff/
 
 # Local runtime settings and credentials
 tts_settings.json
+.agent-runs/
+agent/evals/results/latest-summary.json
+agent/evals/results/latest-summary.md
+agent/evals/results/phase0_report.json
+agent/evals/results/phase0_report.md
 
 # Local agent/session state
 .agent-memory/

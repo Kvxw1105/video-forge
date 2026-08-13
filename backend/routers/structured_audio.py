@@ -1,15 +1,36 @@
 from __future__ import annotations
 import json
+import io
+import os
 import threading
+import wave
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from services.project_service import get_project, _project_dir
 from routers.settings import get_tts_settings_raw
-from services.fish_timestamp_tts import request_fish_timestamp, FishTimestampError
+from services.fish_timestamp_tts import request_fish_timestamp, FishTimestampError, ParsedFishTimestamp
 from services.structured_audio_materializer import episode_text, has_structured_alignment, materialize_structured_audio, validate_structured_audio_cache
+from shared.structured_alignment import FishAlignmentSegment
+from shared.text_processing import split_script_for_subtitles
 
 router = APIRouter(prefix="/api/projects/{project_id}/structured/audio", tags=["structured-audio"])
 _PROJECT_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _mock_fish_timestamp(text: str) -> ParsedFishTimestamp:
+    """Local-only deterministic transport for Lab Runner closed-loop verification."""
+    sentences = split_script_for_subtitles(text) or [text]
+    raw = io.BytesIO()
+    with wave.open(raw, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(b"\0\0" * 8000 * len(sentences))
+    segments = tuple(
+        FishAlignmentSegment(sentence, float(index), float(index + 1), 0)
+        for index, sentence in enumerate(sentences)
+    )
+    return ParsedFishTimestamp(raw.getvalue(), segments, {}, float(len(sentences)))
 
 
 @router.get("/status")
@@ -67,7 +88,8 @@ def generate_fish_aligned(project_id: str, data: dict | None = None):
     if not lock.acquire(blocking=False):
         raise HTTPException(409, "该项目已有 Fish Audio 生成任务正在运行")
     try:
-        parsed = request_fish_timestamp(
+        mock_transport = os.environ.get("VIDEOFORGE_FISH_TIMESTAMP_MOCK") == "1"
+        parsed = _mock_fish_timestamp(text) if mock_transport else request_fish_timestamp(
             text, settings.fishApiKey, reference_id,
             model=str(data.get("model") or settings.fishModel or "s2-pro"),
             fmt=str(data.get("format") or "wav"), latency=str(data.get("latency") or "normal"),
@@ -78,7 +100,7 @@ def generate_fish_aligned(project_id: str, data: dict | None = None):
         current = get_project(project_id)
         if not current or current.updated_at != project.updated_at or current.structuredContent.episode.model_dump() != project.structuredContent.episode.model_dump():
             raise HTTPException(409, "structured_project_changed_during_generation")
-        return {"status": "ok", "cached": False, "cacheStatus": cache_status, "liveCallPerformed": True, **materialize_structured_audio(project_id, project_dict, parsed, project_dir=_project_dir(project_id), options=options, block_ids=data.get("blockIds"))}
+        return {"status": "ok", "cached": False, "cacheStatus": cache_status, "liveCallPerformed": not mock_transport, "mockTransport": mock_transport, **materialize_structured_audio(project_id, project_dict, parsed, project_dir=_project_dir(project_id), options=options, block_ids=data.get("blockIds"))}
     except ValueError as exc:
         if str(exc) == "alignment_confidence_too_low":
             raise HTTPException(422, "alignment_confidence_too_low") from exc
