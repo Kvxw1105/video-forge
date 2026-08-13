@@ -182,7 +182,7 @@ def resolve(
     else:
         status = "enabled"
 
-    return ResolvedDirectorPolicy(
+    policy = ResolvedDirectorPolicy(
         pack=ResolvedPackIdentity(
             id=manifest.id,
             version=manifest.version,
@@ -206,6 +206,8 @@ def resolve(
         durationPolicyVideo=manifest.durationPolicy.video,
         continuityAnchor=manifest.continuity.anchor,
     )
+    policy.policyDigest = policy_digest(policy)
+    return policy
 
 
 def resolve_installed(
@@ -224,6 +226,7 @@ def resolve_installed(
         archiveDigest=str(record.get("archiveDigest") or ""),
         sourceTrust=str(record.get("sourceTrust") or "LOCAL"),
     )
+    policy.policyDigest = policy_digest(policy)
     return policy
 
 
@@ -231,5 +234,10 @@ def policy_digest(policy: ResolvedDirectorPolicy) -> str:
     """Deterministic sha256 digest of the frozen policy JSON."""
     import hashlib
 
-    payload = json.dumps(policy.model_dump(), sort_keys=True, ensure_ascii=False).encode("utf-8")
+    payload = json.dumps(
+        policy.model_dump(exclude={"resolvedAt", "policyDigest"}),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
     return "sha256:" + hashlib.sha256(payload).hexdigest()

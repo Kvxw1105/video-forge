@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from main import create_app
 from services import director_pack_store as store
 
-# note: no xmlns URL — the SVG content validator rejects http://
 MANIFEST = """\
 format: videoforge.director-pack
 formatVersion: 1

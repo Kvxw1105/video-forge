@@ -101,6 +101,8 @@ def test_director_pack_run_pins_policy_and_uses_existing_candidates(monkeypatch,
     assert snapshot["pack"]["manifestDigest"].startswith("sha256:")
     assert snapshot["pack"]["sourceTrust"] == "TRUSTED_BUILTIN"
     assert row["visualCoverage"]["complete"] is True
+    assert row["outputs"]["preview"]["inputHash"]
+    assert row["outputs"]["jianying"]["inputHash"] == row["outputs"]["preview"]["inputHash"]
     assert row["status"] == "succeeded"
 
 
@@ -155,14 +157,39 @@ def test_director_pack_batch_manifest_persists_policy_snapshot(monkeypatch, tmp_
     assert manifest["items"][0]["status"] == "succeeded"
 
 
-def test_director_pack_resume_uses_frozen_snapshot_not_new_version(monkeypatch, tmp_path):
-    result = _run_pack_batch(monkeypatch, tmp_path, mode="auto", key="pack_frozen")
-    before = batches.get(result["batchId"])["items"][0]["resolvedDirectorPolicy"]
-    # "Install" a newer version while the old run is frozen; resume must reuse
-    # the old snapshot and succeed without re-resolving.
+def test_director_pack_review_resume_uses_frozen_snapshot_after_pack_uninstall(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from main import create_app
+
+    monkeypatch.setattr(project_service, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr(batches, "PROJECTS_DIR", tmp_path)
     monkeypatch.setattr(store, "DIRECTOR_PACKS_DIR", tmp_path / "installed")
-    resumed = batches.resume(result["batchId"], lambda *_: {"jobId": "job2"})
-    assert resumed["status"] == "succeeded"
-    after = batches.get(result["batchId"])["items"][0]["resolvedDirectorPolicy"]
-    assert after["pack"]["version"] == before["pack"]["version"]
-    assert after["pack"]["manifestDigest"] == before["pack"]["manifestDigest"]
+    _mock_fish(monkeypatch, list(PACK_SENTENCES))
+    monkeypatch.setattr(batches, "_run_item_outputs", _fake_outputs(tmp_path))
+    store.install_builtin("kvxw/knowledge-cinematic", "1.0.0")
+    started = batches.start(
+        _spec("pack_frozen", "review", director_pack={"id": "kvxw/knowledge-cinematic", "version": "1.0.0"}),
+        lambda *_: {"jobId": "job"},
+    )
+    paused = batches.execute(started["batchId"])
+    row = paused["items"][0]
+    assert row["status"] == "awaiting_visual_approval"
+    before = row["resolvedDirectorPolicy"]
+
+    # Removing the installed source after the run starts proves continuation
+    # consumes the frozen item snapshot instead of resolving mutable store state.
+    store.uninstall("kvxw/knowledge-cinematic", "1.0.0")
+    visual_file = Path(tmp_path) / row["projectId"] / "image-generation" / "batches" / f"{row['visualBatchId']}.json"
+    payload = json.loads(visual_file.read_text(encoding="utf-8"))
+    selections = [
+        {"sceneId": item["sceneId"], "candidateId": item["candidates"][0]["candidateId"]}
+        for item in payload["items"]
+    ]
+    response = TestClient(create_app()).post(
+        f"/api/agent-factory/batches/{started['batchId']}/items/video/approve-and-continue",
+        json={"selections": selections},
+    )
+    assert response.status_code == 200, response.text
+    after = batches.get(started["batchId"])["items"][0]
+    assert after["status"] == "succeeded"
+    assert after["resolvedDirectorPolicy"]["policyDigest"] == before["policyDigest"]

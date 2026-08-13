@@ -266,6 +266,7 @@ class ResolvedDirectorPolicy(BaseModel):
     degradations: list[str] = Field(default_factory=list)
     status: POLICY_STATUS = "enabled"
     resolvedAt: str = ""
+    policyDigest: str = ""
     # Runtime strategy facts consumed by the Factory orchestrator.  These are
     # policy-only extensions beyond the protocol minimum; they still carry no
     # Project/Scene/binding/timeline state.

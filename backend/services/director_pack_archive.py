@@ -35,6 +35,10 @@ SVG_FORBIDDEN_PATTERNS = (
     "onload=",
     "onclick=",
 )
+SVG_NAMESPACE_DECLARATIONS = (
+    'xmlns="http://www.w3.org/2000/svg"',
+    "xmlns='http://www.w3.org/2000/svg'",
+)
 
 
 class DirectorPackArchiveError(Exception):
@@ -62,6 +66,11 @@ def validate_svg_content(text: str) -> None:
     appear in legitimate data — the protocol forbids remote references.
     """
     lowered = text.lower()
+    # A standalone SVG loaded through <img> needs the standard SVG namespace
+    # to decode consistently in browsers. This exact declaration is metadata,
+    # not a remote reference; all other http(s) content remains forbidden.
+    for declaration in SVG_NAMESPACE_DECLARATIONS:
+        lowered = lowered.replace(declaration, "")
     for pattern in SVG_FORBIDDEN_PATTERNS:
         if pattern in lowered:
             raise DirectorPackArchiveError(

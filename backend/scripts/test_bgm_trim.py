@@ -1,5 +1,6 @@
 """Smoke test for BGM trim in renderer and jianying adapter."""
 import json
+import importlib
 import shutil
 import tempfile
 from pathlib import Path
@@ -11,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from process_utils import run as run_process
 from engines.renderer import _prepare_multi_bgm, _premix_audio
 from shared.media_probe import probe_media_duration
-from adapters.jianying import generate_jianying_draft
+from adapters import jianying as jianying_adapter
 
 
 def _run(cmd, timeout=30):
@@ -58,6 +59,10 @@ def test_multi_bgm_trim():
 
 
 def test_jianying_bgm_trim():
+    # Focused adapter tests reload this module against temporary fake
+    # pyJianYingDraft modules. Reload here after those fixtures are gone so
+    # this integration smoke test always exercises the installed runtime.
+    importlib.reload(jianying_adapter)
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         bgm = td / "bgm.mp3"
@@ -94,7 +99,9 @@ def test_jianying_bgm_trim():
             "assets": [],
             "exportSettings": {"outputDir": str(td / "export")},
         }
-        draft_dir = generate_jianying_draft(project, output_dir=td / "drafts")
+        draft_dir = jianying_adapter.generate_jianying_draft(
+            project, output_dir=td / "drafts", direct_export=True
+        ).final_path
         draft_content_path = draft_dir / "draft_content.json"
         assert draft_content_path.exists(), "draft_content.json not generated"
         data = json.loads(draft_content_path.read_text(encoding="utf-8"))

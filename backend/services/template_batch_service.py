@@ -335,7 +335,7 @@ def _process_item(batch_id: str, spec: TemplateBatchSpec, item, index: int, resu
         _event(batch_id, item.itemId, "awaiting_visual_approval", "paused")
         return
     output_kwargs = {}
-    if spec.productionMode in {"auto", "review"} and spec.productionProfile:
+    if spec.productionMode in {"auto", "review"} and (spec.productionProfile or spec.directorPack):
         current_project = get_project(project_id)
         current_plan = current_project.structuredContent.episode.visualPlan if current_project and current_project.structuredContent else None
         if current_project and current_project.structuredContent and current_plan:

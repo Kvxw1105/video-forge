@@ -167,7 +167,7 @@ def list_packs() -> list[dict[str, Any]]:
                             {
                                 "name": manifest.name,
                                 "description": manifest.description,
-                                "referenceCount": len(manifest.references) + len(manifest.presets),
+                                "referenceCount": len(manifest.references),
                                 "providerDependencies": [
                                     dependency.model_dump(mode="json")
                                     for dependency in manifest.dependencies.providers

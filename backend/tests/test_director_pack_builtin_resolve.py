@@ -32,3 +32,8 @@ def test_builtin_knowledge_pack_has_real_references_and_mixed_routes(tmp_path, m
         "negative_example",
         "palette",
     }
+    again = resolve_installed(
+        record["id"], record["version"], run_mode="auto", authorization=LOCAL_ONLY_AUTHORIZATION
+    )
+    assert policy.policyDigest.startswith("sha256:")
+    assert again.policyDigest == policy.policyDigest

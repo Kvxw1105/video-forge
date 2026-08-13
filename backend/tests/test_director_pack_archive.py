@@ -251,13 +251,21 @@ def test_disable_enable_and_uninstall(tmp_path, monkeypatch):
 
 def test_validate_svg_content_accepts_static_svg():
     static = (
-        "<svg viewBox='0 0 100 100'>"
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>"
         "<rect x='0' y='0' width='50' height='50' fill='#1a1814'/>"
         "<circle cx='70' cy='70' r='10' fill='#b8956a'/>"
         "<text x='10' y='90'>标题</text>"
         "</svg>"
     )
     archive.validate_svg_content(static)  # must not raise
+
+
+def test_validate_svg_content_only_allows_the_exact_svg_namespace_url():
+    with pytest.raises(archive.DirectorPackArchiveError) as exc:
+        archive.validate_svg_content(
+            '<svg xmlns="http://www.w3.org/2000/svg"><text>http://example.com</text></svg>'
+        )
+    assert exc.value.code == "svg_invalid_content"
 
 
 @pytest.mark.parametrize(
