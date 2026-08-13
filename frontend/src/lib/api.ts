@@ -1,4 +1,10 @@
+import type { DirectorPackDetail, DirectorPackSummary, ResolvedDirectorPolicy } from '../types/directorPack'
+
 const BASE = '/api'
+const directorPackAssetUrl = (id: string, version: string, path: string) => {
+  const [publisher, slug] = id.split('/', 2)
+  return `${BASE}/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/assets/${path.split('/').map(encodeURIComponent).join('/')}`
+}
 export type JobStatus<T = any> = {
   jobId: string
   kind: string
@@ -116,6 +122,50 @@ export const api = {
   listTemplateProductionBatches: () => request<any[]>('/batches/template-production'),
   getTemplateProductionBatch: (batchId: string) => request<any>(`/batches/template-production/${encodeURIComponent(batchId)}`),
   startTemplateProductionBatch: (spec: any) => request<any>('/batches/template-production', { method: 'POST', body: JSON.stringify(spec) }),
+  getProductionProfiles: () => request<any[]>('/agent-factory/production-profiles'),
+  listDirectorPacks: () => request<DirectorPackSummary[]>('/director-packs'),
+  getDirectorPack: (id: string, version: string) => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<DirectorPackDetail>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}`)
+  },
+  resolveDirectorPack: (id: string, version: string, runMode: 'auto' | 'review' = 'auto') => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<ResolvedDirectorPolicy>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/resolve`, { method: 'POST', body: JSON.stringify({ runMode }) })
+  },
+  directorPackAssetUrl: (id: string, version: string, path: string) => {
+    return directorPackAssetUrl(id, version, path)
+  },
+  getDirectorPackAssetText: async (id: string, version: string, path: string) => {
+    const response = await fetch(directorPackAssetUrl(id, version, path))
+    if (!response.ok) throw new Error('无法读取导演包参考文件')
+    return response.text()
+  },
+  importDirectorPack: async (file: File) => {
+    const form = new FormData(); form.append('file', file)
+    const response = await fetch(`${BASE}/director-packs/import`, { method: 'POST', body: form })
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body?.detail?.message || '导演包导入失败') }
+    return response.json()
+  },
+  setDirectorPackEnabled: (id: string, version: string, enabled: boolean) => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<DirectorPackSummary>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/${enabled ? 'enable' : 'disable'}`, { method: 'POST', body: JSON.stringify({}) })
+  },
+  uninstallDirectorPack: (id: string, version: string) => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<{ ok: boolean }>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}`, { method: 'DELETE' })
+  },
+  deriveDirectorPack: (id: string, version: string, changes: Record<string, unknown>) => {
+    const [publisher, slug] = id.split('/', 2)
+    return request<any>(`/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/derive`, { method: 'POST', body: JSON.stringify(changes) })
+  },
+  exportDirectorPack: async (id: string, version: string) => {
+    const [publisher, slug] = id.split('/', 2)
+    const response = await fetch(`${BASE}/director-packs/${encodeURIComponent(publisher)}/${encodeURIComponent(slug)}/${encodeURIComponent(version)}/export`)
+    if (!response.ok) throw new Error('导演包导出失败')
+    const blob = await response.blob(); const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${slug}-${version}.vfdirector`; anchor.click()
+    URL.revokeObjectURL(url)
+  },
   saveTemplate: (data: any) => request<any>('/templates', { method: 'POST', body: JSON.stringify(data) }),
   deleteTemplate: (id: string) => request<any>(`/templates/${id}`, { method: 'DELETE' }),
   /** SRT 导入 */
@@ -184,6 +234,9 @@ export const api = {
   getFactoryItemVisuals: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals`),
   validateFactoryItemVisuals: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/validate`, { method: 'POST', body: JSON.stringify({}) }),
   resumeFactoryItem: (batchId: string, itemId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/resume`, { method: 'POST', body: JSON.stringify({}) }),
+  approveAndContinueFactoryItem: (batchId: string, itemId: string, selections: any[]) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/approve-and-continue`, { method: 'POST', body: JSON.stringify({ selections }) }),
+  regenerateFactorySceneVisual: (batchId: string, itemId: string, sceneId: string, providerId: string) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/regenerate-visual`, { method: 'POST', body: JSON.stringify({ sceneId, providerId }) }),
+  editFactorySceneAndRerun: (batchId: string, itemId: string, sceneId: string, text: string, providerId = '') => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/scenes/${encodeURIComponent(sceneId)}/edit-and-rerun`, { method: 'POST', body: JSON.stringify({ text, providerId }) }),
   uploadFactorySceneVisual: async (batchId: string, itemId: string, sceneId: string, file: File, replace = false) => {
     const form = new FormData(); form.append('sceneId', sceneId); form.append('replace', String(replace)); form.append('file', file)
     const response = await fetch(`${BASE}/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/upload`, { method: 'POST', body: form })
@@ -192,6 +245,7 @@ export const api = {
   },
   unbindFactorySceneVisual: (batchId: string, itemId: string, sceneId: string, deleteProjectAsset = false) => request<any>(`/agent-factory/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/visuals/unbind`, { method: 'POST', body: JSON.stringify({ sceneId, deleteProjectAsset }) }),
   getAIImageProviderSettings: () => request<any>('/settings/ai-image'),
+  getLocalVisualProviders: () => request<any>('/settings/ai-image/providers'),
   updateAIImageProviderSettings: (data: any) => request<any>('/settings/ai-image', { method: 'PUT', body: JSON.stringify(data) }),
   testAIImageProvider: (data: any) => request<any>('/settings/ai-image/test', { method: 'POST', body: JSON.stringify(data) }),
   createImageGenerationBatch: (projectId: string, data: any) => request<any>(`/projects/${projectId}/image-generation/batches`, { method: 'POST', body: JSON.stringify(data) }),

@@ -10,6 +10,7 @@ Video Forge 是一个 local-first 视频生产工作台：把文案、配音、�
 
 - `AVAILABLE_ON_MAIN`：已经位于 `main`，可从代码和测试中复核。
 - `EXPERIMENTAL_BRANCH`：仓库已有实验实现，但尚未集成到 `main`。
+- `IMPLEMENTED_ON_BRANCH`：功能、测试和真实用户路径已在指定分支实现，等待 PR 合并。
 - `DESIGNED`：已有批准设计，尚未成为主产品能力。
 - `FUTURE`：方向性设想，没有实现承诺。
 
@@ -44,7 +45,7 @@ Video Forge 是一个 local-first 视频生产工作台：把文案、配音、�
 ## 明确边界
 
 - 没有真实 Provider 名称、凭据和调用结果时，不得声称真实付费生图已经验证。
-- `main` 目前没有可安装的 Director Pack 商店，也没有第三方可执行扩展的签名、沙箱和付费授权系统。
+- `main` 目前没有可安装的 Director Pack；`codex/director-pack-protocol-v1` 已实现本地 data-only 协议和管理入口，但没有商店、第三方签名、沙箱和付费授权系统。
 - 火柴人、矢量代码动画、Director Studio、Pi Director 和 MediaKit 仍属于实验分支能力。
 - AI 视频 Provider 属于 `FUTURE`，尚未进入当前交付范围。
 - 不允许另建第二套 Project、VisualPlan 或 Timeline；所有视觉能力最终必须回到现有 canonical timeline。
@@ -59,12 +60,17 @@ Video Forge 是一个 local-first 视频生产工作台：把文案、配音、�
 | `codex/stickman-visual-provider` | 火柴人 SVG/PNG、模板、批处理、联系表和 Preview/剪映验证 | 适合作为首个最小 Visual Provider 集成候选 |
 | `codex/mediakit-provider` | 本地媒体处理 Provider 与素材检查 UI | 与视觉 Provider 有继承关系，但不是导演包本身 |
 
+| `codex/code-visual-provider-v1` | Multi-Provider Automatic Visual Production v2：Auto Router、Stickman + Code Visual 混合批次、动态 MP4、candidate approval、Preview/JianYing 浏览器验收 | 新 Draft PR，尚未合并 main；以 [`MULTI_PROVIDER_AUTOMATIC_VISUAL_PRODUCTION_V2.md`](MULTI_PROVIDER_AUTOMATIC_VISUAL_PRODUCTION_V2.md) 为准 |
+| `codex/autonomous-video-factory-v3` | Autonomous Video Factory v3：Quick Start、Production Profile、AUTO/REVIEW、真实本地视觉生成、批量审核、增量 Scene 重跑、Preview/JianYing 编排 | 当前开发分支，尚未合并 main；以 [`AUTONOMOUS_VIDEO_FACTORY_V3.md`](AUTONOMOUS_VIDEO_FACTORY_V3.md) 和该分支测试为准 |
+| `codex/director-pack-protocol-v1` | `IMPLEMENTED_ON_BRANCH`：安全 `.vfdirector`、安装/导出/派生、参考模板、Resolved Policy digest、Factory AUTO/REVIEW、HTTP/CLI/MCP/Skill、Preview/JianYing 浏览器验收 | 等待 Draft PR 合并；以 [`DIRECTOR_PACK_PROTOCOL_V1.md`](DIRECTOR_PACK_PROTOCOL_V1.md) 和当前 PR 检查为准 |
+
 重要说法必须引用具体分支或文件。仅仅在 GitHub 中看到代码，不等于用户当前运行的 `main` 已拥有该功能。
 
 ## DESIGNED / FUTURE：已设计与未来方向
 
-- `DESIGNED`：[Director Pack 与 GitHub AI 上下文设计](superpowers/specs/2026-08-11-director-pack-context-design.md)。
-- `DESIGNED`：[Director Pack 愿景](DIRECTOR_PACK_VISION.md)：声明式 Director Pack 与可执行 Visual Provider Pack 分层。
+- `IMPLEMENTED_ON_BRANCH`：[Director Pack Protocol v1](DIRECTOR_PACK_PROTOCOL_V1.md)：声明式 Director Pack、参考模板、Resolved Policy 与 Agent 接口。
+- `DESIGNED`：[Director Pack 与 GitHub AI 上下文设计](superpowers/specs/2026-08-11-director-pack-context-design.md) 中超出 v1 的 Studio/商业化部分。
+- `DESIGNED`：[Director Pack 愿景](DIRECTOR_PACK_VISION.md) 中可执行 Visual Provider Pack 的第三方分发层。
 - `FUTURE`：第三方 Pack 签名、沙箱、商店、支付和授权。
 - `FUTURE`：AI 视频 Provider 与代码动画、AI 图片的混合镜头策略。
 
@@ -75,6 +81,7 @@ Video Forge 是一个 local-first 视频生产工作台：把文案、配音、�
 - Agent Video Factory：[agent-video-factory.md](structured-content/agent-video-factory.md)
 - Fish 对齐工作流：[fish-aligned-workflow.md](structured-content/fish-aligned-workflow.md)
 - Director Pack 愿景：[DIRECTOR_PACK_VISION.md](DIRECTOR_PACK_VISION.md)
+- Director Pack v1 协议与真实能力：[DIRECTOR_PACK_PROTOCOL_V1.md](DIRECTOR_PACK_PROTOCOL_V1.md)
 - 已批准设计：[2026-08-11-director-pack-context-design.md](superpowers/specs/2026-08-11-director-pack-context-design.md)
 - 网页端 GPT Prompt：[web-gpt-product-review-prompt.md](../.agent/web-gpt-product-review-prompt.md)
 

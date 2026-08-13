@@ -1,4 +1,6 @@
 import uuid
+import math
+import wave
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
@@ -90,7 +92,12 @@ def generate(project_id: str, data: dict):
         # 纯字幕：不调 TTS，按中文语速 ~4字/秒 估算时长
         char_count = len(text.replace("\n", "").replace(" ", ""))
         actual_duration = max(3.0, char_count / 4.0)
-        audio_path = None
+        audio_path = proj_dir / "voiceover_silent.wav"
+        with wave.open(str(audio_path), "wb") as silent:
+            silent.setnchannels(1)
+            silent.setsampwidth(2)
+            silent.setframerate(8000)
+            silent.writeframes(b"\x00\x00" * math.ceil(actual_duration * 8000))
     else:
         try:
             audio_path, actual_duration = generate_voiceover(

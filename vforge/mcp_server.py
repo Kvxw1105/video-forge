@@ -415,6 +415,75 @@ def export_composition_to_jianying(pid: str) -> dict:
     return _to_json(client.export_composition_to_jianying(pid))
 
 
+# ── Director Pack ────────────────────────────────────────
+
+@mcp.tool()
+def list_director_packs() -> dict:
+    """列出所有已安装的 Director Pack（含内置与用户导入）。
+    返回 [{id, version, name, status, manifestDigest}, ...]。
+    status 可能为 enabled / enabled_with_degradation / disabled / blocked。
+    """
+    return _to_json(client.list_director_packs())
+
+
+@mcp.tool()
+def import_director_pack(file_path: str) -> dict:
+    """从本地 .vfdirector 归档文件安装一个 Director Pack。
+    file_path: 归档文件的绝对路径。
+    返回安装 record，含 id / version / manifestDigest / status。
+    安装时会校验 schema、依赖与 capability；失败返回错误详情，不会留下半安装状态。
+    """
+    return _to_json(client.import_director_pack(file_path))
+
+
+@mcp.tool()
+def get_director_pack(pack_id: str, version: str) -> dict:
+    """读取一个已安装 Director Pack 的完整 record（含 manifest）。
+    pack_id: 格式为 publisher/slug，例如 "kvxw/knowledge-cinematic"。
+    version: 语义化版本，例如 "1.0.0"。
+    """
+    return _to_json(client.get_director_pack(pack_id, version))
+
+
+@mcp.tool()
+def resolve_director_pack(pack_id: str, version: str, run_mode: str = "auto") -> dict:
+    """编译该 Pack 的 Resolved Policy——一个只读的运行快照。
+    run_mode: "auto"（自动审批）或 "review"（强制人工审批）；其他值会被拒绝。
+    返回 policy 含 pack.manifestDigest / effectiveRouting / effectiveApproval /
+    effectiveReferences / status。这是只读冻结策略：
+    - 不得通过它绕过审批或权限直接修改绑定；
+    - Provider 信息只暴露 ready/trust/version/templateIds，绝不返回 credential value；
+    - 外部/付费 Provider 默认禁用，V1 只执行本地 Provider 策略。
+    """
+    if run_mode not in ("auto", "review"):
+        raise ValueError(f"run_mode 只能是 auto 或 review，收到: {run_mode!r}")
+    return _to_json(client.resolve_director_pack(pack_id, version, run_mode))
+
+
+@mcp.tool()
+def export_director_pack(pack_id: str, version: str, output_path: str) -> dict:
+    """把已安装的 Director Pack 导出为 .vfdirector 归档。
+    output_path: 目标文件绝对路径。
+    返回保存后的文件路径。
+    """
+    return _to_json(client.export_director_pack(pack_id, version, output_path))
+
+
+@mcp.tool()
+def derive_director_pack(pack_id: str, version: str, changes: dict) -> dict:
+    """基于已安装 Pack 派生一个新 Pack（只允许该 Pack 声明为 editable 的字段）。
+    changes: 变更字段。必须包含新的 id 与 version（publisher 必须与源 Pack 一致）；
+    只有源 manifest 的 editable 列表内字段可改，其余字段会被拒绝。
+    返回派生的新 manifest（含 derivedFrom 指向源 Pack）。派生不建立运行时继承。
+    """
+    if not isinstance(changes, dict):
+        raise ValueError("changes 必须是 dict")
+    missing = [k for k in ("id", "version") if not changes.get(k)]
+    if missing:
+        raise ValueError(f"changes 必须包含新的 id 与 version，缺少: {missing}")
+    return _to_json(client.derive_director_pack(pack_id, version, changes))
+
+
 def run(transport: str = "stdio", port: int = 8765):
     """Run the MCP server.
     transport: 'stdio' (default, for Claude Code/Codex stdio) or

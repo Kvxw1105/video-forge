@@ -13,6 +13,7 @@ import {
   FolderOpen,
   Microphone,
   Moon,
+  Package,
   Plus,
   Sun,
   Trash,
@@ -138,6 +139,10 @@ export default function Home() {
           <button className="btn-cinematic home-action-button" onClick={() => navigate('/factory/new')}>
             <FilmSlate size={15} weight="bold" />
             <span>快速配图产片</span>
+          </button>
+          <button className="btn-cinematic home-action-button" onClick={() => navigate('/director-packs')}>
+            <Package size={15} weight="bold" />
+            <span>导演包</span>
           </button>
           <button className="btn-cinematic home-action-button" onClick={() => setShowTrash(previous => !previous)}>
             <Archive size={15} weight="bold" />

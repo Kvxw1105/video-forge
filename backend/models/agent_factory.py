@@ -18,5 +18,5 @@ class VisualWorkflow(BaseModel):
     missingScenePolicy: Literal["black", "reuse_previous"] = "black"
 
 
-FACTORY_ITEM_PHASES = {"validating", "creating_project", "generating_voiceover", "aligning_subtitles", "planning_visual_scenes", "exporting_generation_pack", "awaiting_visual_assets", "importing_visual_assets", "validating_visual_coverage", "rendering_preview", "exporting_jianying", "done", "failed"}
-FACTORY_BATCH_STATUSES = {"queued", "running", "awaiting_visual_assets", "ready_to_resume", "succeeded", "partial", "failed", "interrupted", "cancelled"}
+FACTORY_ITEM_PHASES = {"validating", "creating_project", "generating_voiceover", "aligning_subtitles", "planning_visual_scenes", "selecting_visual_provider", "generating_visuals", "awaiting_visual_approval", "binding_visuals", "exporting_generation_pack", "awaiting_visual_assets", "importing_visual_assets", "validating_visual_coverage", "rendering_preview", "exporting_jianying", "done", "failed"}
+FACTORY_BATCH_STATUSES = {"queued", "running", "planning_visuals", "generating_visuals", "awaiting_visual_approval", "binding_visuals", "awaiting_visual_assets", "ready_to_resume", "rendering_preview", "exporting_jianying", "succeeded", "partial", "failed", "interrupted", "cancelled"}

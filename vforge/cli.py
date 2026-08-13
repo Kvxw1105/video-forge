@@ -176,6 +176,45 @@ def cmd_tts_set(args):
     _print(client.update_tts_settings(data, args.base))
 
 
+def cmd_director_pack_list(args):
+    _print(client.list_director_packs(args.base))
+
+
+def cmd_director_pack_import(args):
+    _print(client.import_director_pack(args.file, args.base))
+
+
+def cmd_director_pack_show(args):
+    _print(client.get_director_pack(args.id, args.version, args.base))
+
+
+def cmd_director_pack_resolve(args):
+    _print(client.resolve_director_pack(args.id, args.version, args.mode, args.base))
+
+
+def cmd_director_pack_export(args):
+    """Export the .vfdirector archive to --output."""
+    path = client.export_director_pack(args.id, args.version, args.output, args.base)
+    print(f"[+] saved to {path}", file=sys.stderr)
+
+
+def cmd_director_pack_derive(args):
+    """Derive a new Pack. --data is a JSON string or @file.json path."""
+    _print(client.derive_director_pack(args.id, args.version, _spec(args.data), args.base))
+
+
+def cmd_director_pack_enable(args):
+    _print(client.enable_director_pack(args.id, args.version, args.base))
+
+
+def cmd_director_pack_disable(args):
+    _print(client.disable_director_pack(args.id, args.version, args.base))
+
+
+def cmd_director_pack_uninstall(args):
+    _print(client.uninstall_director_pack(args.id, args.version, args.base))
+
+
 def cmd_run(args):
     """Run a multi-step workflow from a JSON file. Format:
     {"steps": [
@@ -250,6 +289,15 @@ COMMAND_MAP = {
     "visual-context": cmd_visual_context, "visual-propose": cmd_visual_propose, "visual-set": cmd_visual_set,
     "visual-validate": cmd_visual_validate, "visual-pack": cmd_visual_pack, "visual-import": cmd_visual_import, "visual-compile": cmd_visual_compile,
     "tts_get": cmd_tts_get, "tts_set": cmd_tts_set,
+    "director-pack-list": cmd_director_pack_list,
+    "director-pack-import": cmd_director_pack_import,
+    "director-pack-show": cmd_director_pack_show,
+    "director-pack-resolve": cmd_director_pack_resolve,
+    "director-pack-export": cmd_director_pack_export,
+    "director-pack-derive": cmd_director_pack_derive,
+    "director-pack-enable": cmd_director_pack_enable,
+    "director-pack-disable": cmd_director_pack_disable,
+    "director-pack-uninstall": cmd_director_pack_uninstall,
 }
 
 
@@ -344,6 +392,33 @@ def build_parser() -> argparse.ArgumentParser:
     add("tts_get", "获取 TTS 设置")
     add("tts_set", "更新 TTS 设置（--data 是 JSON）",
         data={"type": str, "required": True})
+    add("director-pack-list", "列出已安装 Director Packs")
+    add("director-pack-import", "导入 .vfdirector 文件",
+        file={"type": str, "required": True})
+    add("director-pack-show", "查看 Director Pack 详情",
+        id={"type": str, "required": True},
+        version={"type": str, "required": True})
+    add("director-pack-resolve", "编译 Resolved Director Policy",
+        id={"type": str, "required": True},
+        version={"type": str, "required": True},
+        mode={"type": str, "default": "auto", "choices": ["auto", "review"]})
+    add("director-pack-export", "导出 .vfdirector 文件",
+        id={"type": str, "required": True},
+        version={"type": str, "required": True},
+        output={"type": str, "required": True})
+    add("director-pack-derive", "派生新 Pack（--data 是 JSON 或 @file.json）",
+        id={"type": str, "required": True},
+        version={"type": str, "required": True},
+        data={"type": str, "required": True})
+    add("director-pack-enable", "启用 Director Pack",
+        id={"type": str, "required": True},
+        version={"type": str, "required": True})
+    add("director-pack-disable", "禁用 Director Pack",
+        id={"type": str, "required": True},
+        version={"type": str, "required": True})
+    add("director-pack-uninstall", "卸载 Director Pack",
+        id={"type": str, "required": True},
+        version={"type": str, "required": True})
 
     sub.add_parser("mcp", help="启动 MCP server (stdio)")\
         .set_defaults(func=lambda args: None)

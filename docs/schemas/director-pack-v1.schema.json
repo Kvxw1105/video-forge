@@ -1,0 +1,637 @@
+{
+  "$defs": {
+    "ApprovalPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "defaultMode": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "review"
+          ],
+          "title": "Defaultmode",
+          "type": "string"
+        },
+        "auto": {
+          "$ref": "#/$defs/AutoApprovalPolicy"
+        },
+        "review": {
+          "$ref": "#/$defs/ReviewApprovalPolicy"
+        }
+      },
+      "title": "ApprovalPolicy",
+      "type": "object"
+    },
+    "AutoApprovalPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allowTrustedLocal": {
+          "default": true,
+          "title": "Allowtrustedlocal",
+          "type": "boolean"
+        },
+        "allowExternal": {
+          "default": false,
+          "title": "Allowexternal",
+          "type": "boolean"
+        },
+        "reviewOnFallback": {
+          "default": true,
+          "title": "Reviewonfallback",
+          "type": "boolean"
+        },
+        "reviewOnWarnings": {
+          "default": true,
+          "title": "Reviewonwarnings",
+          "type": "boolean"
+        }
+      },
+      "title": "AutoApprovalPolicy",
+      "type": "object"
+    },
+    "CandidatePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "default": 1,
+          "enum": [
+            1,
+            2,
+            4
+          ],
+          "title": "Count",
+          "type": "integer"
+        }
+      },
+      "title": "CandidatePolicy",
+      "type": "object"
+    },
+    "Compatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "directorProtocol": {
+          "default": "1.x",
+          "title": "Directorprotocol",
+          "type": "string"
+        }
+      },
+      "title": "Compatibility",
+      "type": "object"
+    },
+    "ContinuityPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "default": "project",
+          "enum": [
+            "project",
+            "scene"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "anchor": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Anchor",
+          "type": "string"
+        }
+      },
+      "title": "ContinuityPolicy",
+      "type": "object"
+    },
+    "Dependencies": {
+      "additionalProperties": false,
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/ProviderDependency"
+          },
+          "maxItems": 100,
+          "title": "Providers",
+          "type": "array"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/SkillDependency"
+          },
+          "maxItems": 100,
+          "title": "Skills",
+          "type": "array"
+        }
+      },
+      "title": "Dependencies",
+      "type": "object"
+    },
+    "DurationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "const": "hold_to_scene",
+          "default": "hold_to_scene",
+          "title": "Image",
+          "type": "string"
+        },
+        "video": {
+          "default": "reject",
+          "enum": [
+            "exact",
+            "crop",
+            "loop",
+            "speed_adjust",
+            "reject"
+          ],
+          "title": "Video",
+          "type": "string"
+        }
+      },
+      "title": "DurationPolicy",
+      "type": "object"
+    },
+    "FallbackPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "missingOptionalProvider": {
+          "default": "continue",
+          "enum": [
+            "continue",
+            "block"
+          ],
+          "title": "Missingoptionalprovider",
+          "type": "string"
+        },
+        "missingRequiredProvider": {
+          "const": "block",
+          "default": "block",
+          "title": "Missingrequiredprovider",
+          "type": "string"
+        },
+        "providerFailure": {
+          "default": "next_declared",
+          "enum": [
+            "next_declared",
+            "block",
+            "review"
+          ],
+          "title": "Providerfailure",
+          "type": "string"
+        },
+        "exhaustedProviders": {
+          "default": "review",
+          "enum": [
+            "review",
+            "block"
+          ],
+          "title": "Exhaustedproviders",
+          "type": "string"
+        }
+      },
+      "title": "FallbackPolicy",
+      "type": "object"
+    },
+    "PackIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}/[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "title": "PackIdentity",
+      "type": "object"
+    },
+    "PresetAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "role": {
+          "default": "other",
+          "enum": [
+            "palette",
+            "style",
+            "template",
+            "other"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "PresetAsset",
+      "type": "object"
+    },
+    "ProviderDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "default": "",
+          "maxLength": 64,
+          "title": "Version",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "ProviderDependency",
+      "type": "object"
+    },
+    "Publisher": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "Publisher",
+      "type": "object"
+    },
+    "ReferenceAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "role": {
+          "default": "reference",
+          "enum": [
+            "composition",
+            "positive_example",
+            "negative_example",
+            "guide",
+            "reference",
+            "palette"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ReferenceAsset",
+      "type": "object"
+    },
+    "ReviewApprovalPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "requireCandidateSelection": {
+          "default": true,
+          "title": "Requirecandidateselection",
+          "type": "boolean"
+        }
+      },
+      "title": "ReviewApprovalPolicy",
+      "type": "object"
+    },
+    "RhythmPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "visualDensity": {
+          "default": "balanced",
+          "enum": [
+            "light",
+            "balanced",
+            "dense"
+          ],
+          "title": "Visualdensity",
+          "type": "string"
+        },
+        "motionPreference": {
+          "default": "static",
+          "enum": [
+            "static",
+            "gentle",
+            "dynamic"
+          ],
+          "title": "Motionpreference",
+          "type": "string"
+        }
+      },
+      "title": "RhythmPolicy",
+      "type": "object"
+    },
+    "RoutingPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Default"
+        },
+        "intents": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Intents",
+          "type": "object"
+        }
+      },
+      "required": [
+        "default"
+      ],
+      "title": "RoutingPolicy",
+      "type": "object"
+    },
+    "ScenePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "const": "semantic",
+          "default": "semantic",
+          "title": "Strategy",
+          "type": "string"
+        },
+        "visualDensity": {
+          "default": "balanced",
+          "enum": [
+            "light",
+            "balanced",
+            "dense"
+          ],
+          "title": "Visualdensity",
+          "type": "string"
+        },
+        "segmentationProposal": {
+          "default": "unsupported",
+          "enum": [
+            "unsupported",
+            "supported"
+          ],
+          "title": "Segmentationproposal",
+          "type": "string"
+        }
+      },
+      "title": "ScenePolicy",
+      "type": "object"
+    },
+    "SkillDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "default": "",
+          "maxLength": 64,
+          "title": "Version",
+          "type": "string"
+        },
+        "required": {
+          "const": false,
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "role": {
+          "const": "advisory",
+          "default": "advisory",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "SkillDependency",
+      "type": "object"
+    },
+    "StylePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Anchor",
+          "type": "string"
+        },
+        "avoid": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Avoid",
+          "type": "array"
+        }
+      },
+      "title": "StylePolicy",
+      "type": "object"
+    },
+    "TemplateReference": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "useFor": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Usefor",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "provider"
+      ],
+      "title": "TemplateReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "videoforge.director-pack",
+      "title": "Format",
+      "type": "string"
+    },
+    "formatVersion": {
+      "const": 1,
+      "title": "Formatversion",
+      "type": "integer"
+    },
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}/[a-z0-9][a-z0-9_-]{0,63}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?$",
+      "title": "Version",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Description",
+      "type": "string"
+    },
+    "publisher": {
+      "$ref": "#/$defs/Publisher"
+    },
+    "compatibility": {
+      "$ref": "#/$defs/Compatibility"
+    },
+    "scenePolicy": {
+      "$ref": "#/$defs/ScenePolicy"
+    },
+    "routing": {
+      "$ref": "#/$defs/RoutingPolicy"
+    },
+    "style": {
+      "$ref": "#/$defs/StylePolicy"
+    },
+    "rhythm": {
+      "$ref": "#/$defs/RhythmPolicy"
+    },
+    "continuity": {
+      "$ref": "#/$defs/ContinuityPolicy"
+    },
+    "candidates": {
+      "$ref": "#/$defs/CandidatePolicy"
+    },
+    "approval": {
+      "$ref": "#/$defs/ApprovalPolicy"
+    },
+    "durationPolicy": {
+      "$ref": "#/$defs/DurationPolicy"
+    },
+    "templates": {
+      "items": {
+        "$ref": "#/$defs/TemplateReference"
+      },
+      "maxItems": 100,
+      "title": "Templates",
+      "type": "array"
+    },
+    "references": {
+      "items": {
+        "$ref": "#/$defs/ReferenceAsset"
+      },
+      "maxItems": 100,
+      "title": "References",
+      "type": "array"
+    },
+    "presets": {
+      "items": {
+        "$ref": "#/$defs/PresetAsset"
+      },
+      "maxItems": 50,
+      "title": "Presets",
+      "type": "array"
+    },
+    "dependencies": {
+      "$ref": "#/$defs/Dependencies"
+    },
+    "fallback": {
+      "$ref": "#/$defs/FallbackPolicy"
+    },
+    "editable": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Editable",
+      "type": "array"
+    },
+    "derivedFrom": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PackIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "format",
+    "formatVersion",
+    "id",
+    "version",
+    "name",
+    "publisher",
+    "compatibility",
+    "routing",
+    "style",
+    "rhythm",
+    "continuity",
+    "candidates",
+    "approval",
+    "durationPolicy",
+    "dependencies",
+    "fallback"
+  ],
+  "title": "DirectorPackManifest",
+  "type": "object"
+}

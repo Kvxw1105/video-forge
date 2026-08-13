@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 576" width="1024" height="576">
+  <!-- Knowledge Cinematic: safe composition reference -->
+  <rect x="0" y="0" width="1024" height="576" fill="#1a1814"/>
+  <rect x="64" y="48" width="896" height="480" fill="#28231d"/>
+
+  <!-- rule of thirds grid -->
+  <line x1="341" y1="48" x2="341" y2="528" stroke="#7a6e5a" stroke-width="2"/>
+  <line x1="683" y1="48" x2="683" y2="528" stroke="#7a6e5a" stroke-width="2"/>
+  <line x1="64" y1="208" x2="960" y2="208" stroke="#7a6e5a" stroke-width="2"/>
+  <line x1="64" y1="368" x2="960" y2="368" stroke="#7a6e5a" stroke-width="2"/>
+
+  <!-- central subject zone -->
+  <rect x="180" y="110" width="664" height="356" fill="none" stroke="#b8956a" stroke-width="3" stroke-dasharray="14 10"/>
+
+  <!-- primary subject node -->
+  <rect x="380" y="200" width="264" height="120" fill="#28231d" stroke="#d8c3a5" stroke-width="3"/>
+  <circle cx="428" cy="260" r="22" fill="#b8956a"/>
+  <text x="462" y="266" fill="#d8c3a5" font-size="30">主体</text>
+
+  <!-- supporting caption -->
+  <rect x="380" y="356" width="264" height="44" fill="#1a1814"/>
+  <text x="396" y="386" fill="#7a6e5a" font-size="22">主标题区</text>
+
+  <!-- safe-area markers -->
+  <line x1="96" y1="72" x2="928" y2="72" stroke="#b8956a" stroke-width="1"/>
+  <line x1="96" y1="504" x2="928" y2="504" stroke="#b8956a" stroke-width="1"/>
+
+  <!-- palette swatches -->
+  <rect x="64" y="24" width="32" height="16" fill="#d8c3a5"/>
+  <rect x="104" y="24" width="32" height="16" fill="#b8956a"/>
+  <rect x="144" y="24" width="32" height="16" fill="#7a6e5a"/>
+  <text x="188" y="38" fill="#7a6e5a" font-size="20">低饱和 克制对比</text>
+</svg>

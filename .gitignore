@@ -60,6 +60,14 @@ downloads/
 browser-profile/
 playwright-report/
 test-results/
+.e2e-v3-data/
+.e2e-v3-jianying/
+.e2e-v3-data-fix/
+.e2e-v3-jianying-fix/
+.e2e-v3-data-final/
+.e2e-v3-jianying-final/
+.e2e-director-pack/
+.e2e-director-*.log
 
 # VideoForge local state
 _e2e_state.json
@@ -79,6 +87,7 @@ handoff/
 
 # Local runtime settings and credentials
 tts_settings.json
+/config/
 
 # Local agent/session state
 .agent-memory/
